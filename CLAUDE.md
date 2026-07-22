@@ -236,7 +236,31 @@ order):
    this is intentional (every other existing screen test relies on it) but
    means the gate itself is only exercised by `app_gate_test.dart`, which
    pumps the real `App` widget instead.
-6. `tools/build_hash_index.py` — download all card art, compute pHashes, emit `assets/card_hashes.json`
+6. `tools/build_hash_index.py` — download all card art, compute pHashes, emit
+   `assets/card_hashes.json` ← done (host-side Python build tool, not shipped
+   in the app). Single bulk `cardinfo.php` fetch (same endpoint as
+   `lib/data/api/ygoprodeck_client.dart`), then downloads each artwork's
+   **cropped** variant (`image_url_cropped` — art box only, matching the scan
+   crop) and computes `imagehash.phash(hash_size=8)` → 16-hex-char string.
+   **Alt-arts**: every entry in a card's `card_images` array is indexed by its
+   **own** `id` (its own passcode), so the index is richer than the app DB
+   (which stores only `card_images[0]`). Output is a wrapper object
+   (`version`/`algorithm`/`hash_size`/`generated_at`/`count`/`hashes`) so
+   step 8 can validate algo+size before Hamming-comparing; `hashes` is a
+   sorted `passcode -> hex` map for stable diffs. **API-policy-driven design**
+   (`ygoprodeck.com/api-guide/`, documented in `tools/README.md`): images are
+   downloaded once into `tools/.image_cache/` (gitignored) with a conservative
+   default throttle (`--workers 4` + `--delay`), never hotlinked; re-runs and
+   `--incremental` make **zero** CDN hits; the shipped JSON is derived hashes,
+   not redistributed art. Pure functions (`build_image_jobs`, `build_output`)
+   have offline pytest coverage (`tools/test_build_hash_index.py`, no network);
+   `requests`/`Pillow`/`imagehash` in `tools/requirements.txt` are lazy-imported
+   so the tests run without them. Full run produced **14390/14636 hashes**
+   (246 skipped — genuine 404s where YGOPRODeck has no cropped variant; 0 hash
+   failures). `assets/card_hashes.json` is a **committed generated artifact**,
+   registered under `flutter: assets:` in `pubspec.yaml` for step 8;
+   regenerate when the card DB changes. Verified: offline pytest green,
+   `flutter analyze` clean, re-run byte-stable except `generated_at`.
 7. Camera + ML Kit passcode OCR, continuous-scan state machine
 8. pHash art-matching fallback for OCR misses
 9. Settings (default condition, default edition, language, re-sync, theme)

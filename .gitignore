@@ -47,3 +47,7 @@ app.*.map.json
 # Generated code (freezed / json_serializable / riverpod_generator)
 **/*.freezed.dart
 **/*.g.dart
+
+# build_hash_index.py local image cache (large, regenerable from YGOPRODeck).
+# The generated assets/card_hashes.json is committed; the cached art is not.
+tools/.image_cache/

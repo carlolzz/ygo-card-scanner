@@ -6,6 +6,7 @@ class AppRoutes {
   static const String home = '/';
   static const String scan = '/scan';
   static const String collection = '/collection';
+  static const String collectionDetail = '/collection/detail';
   static const String statistics = '/statistics';
   static const String settings = '/settings';
 }

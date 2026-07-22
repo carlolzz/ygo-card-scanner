@@ -21,6 +21,7 @@ abstract class YgoCard with _$YgoCard {
     int? level,
     String? description,
     String? imageUrl,
+    String? localImagePath,
     String? archetype,
   }) = _YgoCard;
 
@@ -36,6 +37,7 @@ abstract class YgoCard with _$YgoCard {
     level: map['level'] as int?,
     description: map['description'] as String?,
     imageUrl: map['image_url'] as String?,
+    localImagePath: map['local_image_path'] as String?,
     archetype: map['archetype'] as String?,
   );
 
@@ -51,6 +53,12 @@ abstract class YgoCard with _$YgoCard {
     'level': level,
     'description': description,
     'image_url': imageUrl,
+    'local_image_path': localImagePath,
     'archetype': archetype,
   };
+
+  /// `type` is YGOPRODeck's own field — "Normal Monster" for true vanillas
+  /// and "Pendulum Normal Monster" for their pendulum counterpart, both of
+  /// which carry flavour text rather than an effect.
+  bool get isNormalMonster => type?.contains('Normal Monster') ?? false;
 }

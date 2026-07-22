@@ -72,3 +72,11 @@ class HomeMenuTokens {
   static const int tileCount = 4;
   static const double tileSpacing = AppSpacing.md;
 }
+
+/// Sizes for [CardThumbnail], keyed by where it's rendered.
+class CardThumbnailSizes {
+  const CardThumbnailSizes._();
+
+  static const double list = 48;
+  static const double detail = 200;
+}

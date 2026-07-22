@@ -1,23 +1,30 @@
 import 'card_condition.dart';
 import 'card_edition.dart';
 import 'collection_entry.dart';
+import 'printing.dart';
 import 'ygo_card.dart';
 
-/// Read-only view model joining a [CollectionEntry] with its [YgoCard], for
-/// list rendering. Built from `CollectionDao.getAll()`'s joined query.
+/// Read-only view model joining a [CollectionEntry] with its [YgoCard] and,
+/// when one was chosen, the [Printing] it was logged under — for list
+/// rendering. Built from `CollectionDao.getAll()`'s joined query.
 ///
 /// Deliberately not freezed: it's a DAO-internal join projection, never
 /// mutated or diffed, so `copyWith`/equality codegen buys nothing here.
 class CollectionEntryWithCard {
-  const CollectionEntryWithCard({required this.entry, required this.card});
+  const CollectionEntryWithCard({
+    required this.entry,
+    required this.card,
+    this.printing,
+  });
 
   final CollectionEntry entry;
   final YgoCard card;
+  final Printing? printing;
 
-  /// Expects a row from a query that selects `collection_entries.*`
-  /// plus `cards` columns aliased with a `card_` prefix (see
-  /// `CollectionDao.getAll`), to avoid column-name collisions between the
-  /// two tables in the flat row map.
+  /// Expects a row from a query that selects `collection_entries.*`,
+  /// `cards` columns aliased with a `card_` prefix, and `printings`
+  /// columns aliased with a `printing_` prefix (see `CollectionDao.getAll`),
+  /// to avoid column-name collisions between the tables in the flat row map.
   factory CollectionEntryWithCard.fromRow(Map<String, Object?> row) {
     final entry = CollectionEntry(
       id: row['id'] as int?,
@@ -43,8 +50,18 @@ class CollectionEntryWithCard {
       level: row['card_level'] as int?,
       description: row['card_description'] as String?,
       imageUrl: row['card_image_url'] as String?,
+      localImagePath: row['card_local_image_path'] as String?,
       archetype: row['card_archetype'] as String?,
     );
-    return CollectionEntryWithCard(entry: entry, card: card);
+    final printing = entry.printingId == null
+        ? null
+        : Printing(
+            id: entry.printingId,
+            passcode: entry.passcode,
+            setCode: row['printing_set_code'] as String?,
+            setName: row['printing_set_name'] as String?,
+            rarity: row['printing_rarity'] as String?,
+          );
+    return CollectionEntryWithCard(entry: entry, card: card, printing: printing);
   }
 }

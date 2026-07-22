@@ -50,7 +50,7 @@ const Map<int, List<String>> kMigrations = {
     'CREATE INDEX idx_entries_passcode ON collection_entries(passcode)',
     'CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT)',
   ],
-  // 2: [ ... ]  <- append future migrations here, never edit version 1.
+  2: ['ALTER TABLE cards ADD COLUMN local_image_path TEXT'],
 };
 
 int get kSchemaVersion => kMigrations.keys.reduce((a, b) => a > b ? a : b);

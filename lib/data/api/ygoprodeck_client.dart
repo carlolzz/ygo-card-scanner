@@ -28,8 +28,13 @@ class YgoProdeckClient {
   ///
   /// Fetch once, not per-card — the API is rate-limited to roughly 20
   /// requests/second.
-  Future<List<YgoProdeckCard>> fetchAllCards() async {
-    final response = await _dio.get<Map<String, Object?>>('/cardinfo.php');
+  Future<List<YgoProdeckCard>> fetchAllCards({
+    void Function(int received, int total)? onReceiveProgress,
+  }) async {
+    final response = await _dio.get<Map<String, Object?>>(
+      '/cardinfo.php',
+      onReceiveProgress: onReceiveProgress,
+    );
     final data = response.data?['data'] as List<Object?>? ?? const [];
     return data
         .map((entry) => _parseEntry(entry! as Map<String, Object?>))

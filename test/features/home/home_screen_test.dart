@@ -19,9 +19,12 @@ void main() {
     expect(find.text(AppStrings.homeTileSettings), findsOneWidget);
   });
 
+  // "My Collection" and "Log Cards" now navigate to real screens rather
+  // than a coming-soon placeholder; that navigation is covered by
+  // test/features/collection/collection_screen_test.dart and
+  // test/features/add_card/add_card_screen_test.dart, which set up the
+  // seeded database those routes need.
   for (final tileLabel in [
-    AppStrings.homeTileLogCards,
-    AppStrings.homeTileMyCollection,
     AppStrings.homeTileStatistics,
     AppStrings.homeTileSettings,
   ]) {

@@ -41,9 +41,12 @@ lib/
       dao/card_dao.dart
       dao/printing_dao.dart
       dao/collection_dao.dart
+      dao/meta_dao.dart
     api/ygoprodeck_client.dart
+    api/card_image_downloader.dart
     repositories/card_repository.dart
     repositories/collection_repository.dart
+    seed/fake_collection_seed.dart
   models/
     ygo_card.dart
     printing.dart
@@ -55,17 +58,24 @@ lib/
     home/
     scan/
     collection/
+    add_card/
+    sync/
     settings/
   shared/widgets/
+    card_thumbnail.dart
 test/
   data/db/
+  data/repositories/
+  data/seed/
   models/
+  features/
+  shared/widgets/
 tools/
   build_hash_index.py
 assets/
 ```
 
-## Database schema (version 1)
+## Database schema (version 2)
 
 ```sql
 CREATE TABLE cards (
@@ -80,6 +90,7 @@ CREATE TABLE cards (
   level         INTEGER,
   description   TEXT,
   image_url     TEXT,
+  local_image_path TEXT, -- v2
   archetype     TEXT
 );
 CREATE INDEX idx_cards_name ON cards(name);
@@ -132,6 +143,12 @@ Notes:
 - Migrations are an ordered map of version -> list of SQL statements in
   `lib/data/db/migrations.dart`, so v2+ can be appended later. `schema_version`
   is mirrored into the `meta` table alongside sqflite's own `user_version`.
+  v2 added `cards.local_image_path` (see `lib/data/db/dao/meta_dao.dart` for
+  the DAO — a plain get/set(key, value), REPLACE semantics).
+- `meta` also carries a `last_sync` key (epoch ms), written at the end of
+  `CardRepository.sync()`'s transaction. `CardRepository.needsSync()`
+  treats a missing `last_sync` OR an empty `cards` table as "needs sync" —
+  see the first-launch sync gate below.
 
 ## Enum persistence rules
 
@@ -163,14 +180,69 @@ order):
 
 1. **Data layer + models + DAO tests** ← done
 2. **Design tokens, theme, home menu shell** ← done (home menu is a fixed non-scrolling 2x2 `Row`/`Column` grid, not `GridView` — a scrollable grid pushed two tiles off-screen on short viewports; see `lib/features/home/home_screen.dart`. Routing via `go_router` — `lib/core/router.dart`/`routes.dart`. Unbuilt destinations render `shared/widgets/coming_soon_screen.dart`.)
-3. Collection screen against seeded fake data (list, filters, detail view, quantity editing) ← next
-4. Manual add-card flow (search by name → pick printing → pick condition → save)
-5. YGOPRODeck sync with progress UI, run on first launch
+3. **Collection screen against seeded fake data** ← done (list with search/condition/edition filters and sort, detail view with quantity +/- and delete; see `lib/features/collection/`. Fixture cards/entries live in `lib/data/seed/fake_collection_seed.dart`, auto-seeded in debug builds via a `kDebugMode`-gated, idempotent Riverpod provider — inert once step 4/5 provide real data. **Gotcha for future widget tests**: any widget test that resolves a Riverpod provider backed by the real DB must wrap interactions in `tester.runAsync()` *and* interleave real `Future.delayed` yields with `tester.pump()` — `sqflite_common_ffi` resolves queries via a background isolate, and plain `pump()`/`pumpAndSettle()` never gives it real wall-clock time to complete, even inside `runAsync()` alone. See the `pumpUntilSettled` helper in `test/features/collection/collection_screen_test.dart`.)
+4. **Manual add-card flow** ← done (single wizard screen at `AppRoutes.scan`/`lib/features/add_card/add_card_screen.dart` — search step → printing step (skipped when `PrintingDao.getForPasscode` returns empty, and always has an explicit "skip / I don't have this printing" button) → condition/edition/quantity step → save, then resets to search for the next card. State lives in `AddCardSelectionController` (`lib/features/add_card/add_card_providers.dart`), not widget state, so the printing-skip logic and save/reset behavior stay out of `build()`. No new DAO/repository methods were needed — reuses `CardDao.searchByName`, `PrintingDao.getForPasscode`, `CollectionRepository.addOrIncrement`. **Gotcha**: any provider that reads from the DB (including this flow's search provider) must `await ref.watch(debugSeedCollectionProvider.future)` before querying, or it can run before the debug seed has populated the DB if that screen is opened before the Collection screen ever was — see `addCardSearchResultsProvider`. Along with this step, `CollectionEntryWithCard` was extended to `LEFT JOIN printings` and carry a nullable `Printing?`, so `collection_list_tile.dart`/`collection_detail_screen.dart` can now show which expansion a card is from — previously the schema tracked this per-entry but no UI surfaced it.)
+5. **YGOPRODeck sync with progress UI, run on first launch** ← done
+   (verified: `flutter analyze` clean + full `flutter test` green, 81 tests).
+   `test/features/sync/app_gate_test.dart` exercises the real `App` widget
+   end-to-end through the gate — sync screen first on a fresh db, then swaps to
+   Home once sync completes; and Home immediately when already synced. Its
+   earlier hang had **nothing** to do with the `MaterialApp(home:)` →
+   `MaterialApp.router` gate swap (a red herring from a prior session): the
+   real cause was opening the `sqflite_common_ffi` db **inside the testWidgets
+   body** (the fake-async zone), which hangs the test at teardown — the db must
+   be opened in `setUp` (a real-async zone), exactly like every DAO/collection
+   test. Chasing it also surfaced and fixed the same latent bug in
+   `card_thumbnail_test.dart` (its real file I/O + `Image.file` decode now run
+   inside `tester.runAsync()`). See the new section in
+   `.claude/skills/flutter-test-troubleshooting.md`. `App`'s `_SplashScreen`
+   was also made animation-free (no indeterminate spinner), matching
+   `InitialSyncScreen`'s transitional-state convention. Ahead of
+   this step, card image download/display was built as its own pass (not a
+   numbered step, but load-bearing for later steps too): YGOPRODeck's API
+   guide prohibits hotlinking card art, so `CardRepository.ensureImageDownloaded`
+   downloads a card's image to `<app documents>/card_images/<passcode>.jpg`
+   the first time it's needed (via `lib/data/api/card_image_downloader.dart`)
+   and persists the local path on `cards.local_image_path`. The trigger is
+   `CollectionRepository.addOrIncrement` itself (fire-and-forget,
+   exception-swallowing) — so it fires for every current and future path
+   that logs a card (manual add today, camera/OCR in step 7 later) without
+   further wiring, and the image is never fetched or shown during the
+   manual add-card wizard, only after a card is actually in the collection
+   (`lib/shared/widgets/card_thumbnail.dart`, wired into
+   `collection_list_tile.dart`/`collection_detail_screen.dart`).
+   For the sync itself: `CardRepository.sync()` (already scaffolded from
+   step 1) now reports real two-phase progress — `SyncPhase.fetching` via
+   Dio's `onReceiveProgress` (0-70%), `SyncPhase.writing` via chunked
+   1000-row `CardDao.insertAll` batches (70-100%) — still inside one
+   `_database.transaction`, so only progress *reporting* is granular, not
+   the write's atomicity. `lib/features/sync/initial_sync_providers.dart` /
+   `initial_sync_screen.dart` gate the app: on first launch (`needsSync()`
+   true), `lib/app.dart` renders `InitialSyncScreen` directly — no router —
+   until sync succeeds; failure shows an error + Retry with no skip
+   (the app has no usable data without `cards` populated). **The gate is
+   bypassed in debug builds** (`debugSyncBypassProvider`, defaults to
+   `kDebugMode`) so a fresh dev/emulator install isn't forced through a
+   real network sync before reaching Home, preserving the offline
+   fixture-seed workflow from step 3 — the bypass is itself overridable via
+   Riverpod, since `flutter test` always runs with `kDebugMode == true` and
+   `test/features/sync/app_gate_test.dart` needs to force real gate
+   evaluation. `debugSeedCollectionProvider` (step 3) was also updated to
+   skip once `!needsSync()` — a real sync only ever populates
+   `cards`/`printings`, never `collection_entries`, so without this check
+   it would silently overwrite real synced rows for the fixture passcodes.
+   **Gotcha**: `test/support/widget_test_harness.dart`'s `pumpApp()` pumps
+   `MaterialApp.router` directly, bypassing `App`/the sync gate entirely —
+   this is intentional (every other existing screen test relies on it) but
+   means the gate itself is only exercised by `app_gate_test.dart`, which
+   pumps the real `App` widget instead.
 6. `tools/build_hash_index.py` — download all card art, compute pHashes, emit `assets/card_hashes.json`
 7. Camera + ML Kit passcode OCR, continuous-scan state machine
 8. pHash art-matching fallback for OCR misses
 9. Settings (default condition, default edition, language, re-sync, theme)
-10. Export to CSV and .ydk; collection statistics
+10. Export to CSV and .ydk; collection statistics. **Requirement**: must include an
+    option to export the entire local database to a CSV file (not just the
+    currently filtered/visible collection view).
 
 ## Standing rules
 

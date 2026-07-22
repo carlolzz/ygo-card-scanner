@@ -53,4 +53,20 @@ void main() {
       'Toon Blue-Eyes White Dragon',
     ]);
   });
+
+  test('updateLocalImagePath sets the column, reflected by getByPasscode', () async {
+    await dao.insertAll([blueEyes]);
+
+    await dao.updateLocalImagePath(blueEyes.passcode, '/tmp/89631139.jpg');
+
+    final result = await dao.getByPasscode(blueEyes.passcode);
+    expect(result?.localImagePath, '/tmp/89631139.jpg');
+  });
+
+  test('updateLocalImagePath is a no-op for an unknown passcode', () async {
+    await expectLater(
+      dao.updateLocalImagePath('00000000', '/tmp/00000000.jpg'),
+      completes,
+    );
+  });
 }

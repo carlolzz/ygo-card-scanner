@@ -289,4 +289,75 @@ void main() {
       expect(await collectionDao.distinctCardCount(), 2);
     });
   });
+
+  group('getAll printing join', () {
+    test('entry with a printing_id returns a populated Printing', () async {
+      await printingDao.insertAll([
+        const Printing(passcode: '89631139', setCode: 'LOB-EN001', setName: 'Legend of Blue Eyes White Dragon', rarity: 'Ultra Rare'),
+      ]);
+      final printing = (await printingDao.getForPasscode('89631139')).single;
+
+      await collectionDao.addOrIncrement(
+        _entry(
+          passcode: _blueEyes.passcode,
+          printingId: printing.id,
+          condition: CardCondition.nearMint,
+        ),
+      );
+
+      final results = await collectionDao.getAll();
+      expect(results.single.printing, isNotNull);
+      expect(results.single.printing!.setCode, 'LOB-EN001');
+      expect(results.single.printing!.setName, 'Legend of Blue Eyes White Dragon');
+      expect(results.single.printing!.rarity, 'Ultra Rare');
+    });
+
+    test('entry with a null printing_id returns a null Printing', () async {
+      await collectionDao.addOrIncrement(
+        _entry(passcode: _blueEyes.passcode, condition: CardCondition.mint),
+      );
+
+      final results = await collectionDao.getAll();
+      expect(results.single.printing, isNull);
+    });
+
+    test(
+      'two entries sharing a passcode but different printing_id stay '
+      'distinct rows with distinct printing data',
+      () async {
+        await printingDao.insertAll([
+          const Printing(passcode: '89631139', setCode: 'MRD-EN094', setName: 'Metal Raiders', rarity: 'Super Rare'),
+          const Printing(passcode: '89631139', setCode: 'DASA-EN059', setName: 'Dark Saviors', rarity: 'Ultra Rare'),
+        ]);
+        final printings = await printingDao.getForPasscode('89631139');
+        final mrd = printings.firstWhere((p) => p.setCode == 'MRD-EN094');
+        final dasa = printings.firstWhere((p) => p.setCode == 'DASA-EN059');
+
+        await collectionDao.addOrIncrement(
+          _entry(passcode: _blueEyes.passcode, printingId: mrd.id, condition: CardCondition.nearMint),
+        );
+        await collectionDao.addOrIncrement(
+          _entry(passcode: _blueEyes.passcode, printingId: dasa.id, condition: CardCondition.nearMint),
+        );
+
+        final results = await collectionDao.getAll();
+        expect(results, hasLength(2));
+        expect(
+          results.map((r) => r.printing!.setCode).toSet(),
+          {'MRD-EN094', 'DASA-EN059'},
+        );
+      },
+    );
+  });
+
+  test('getAll surfaces a card\'s local_image_path through the join', () async {
+    await cardDao.updateLocalImagePath(_blueEyes.passcode, '/tmp/89631139.jpg');
+    await collectionDao.addOrIncrement(
+      _entry(passcode: _blueEyes.passcode, condition: CardCondition.mint),
+    );
+
+    final results = await collectionDao.getAll();
+
+    expect(results.single.card.localImagePath, '/tmp/89631139.jpg');
+  });
 }

@@ -197,9 +197,14 @@ class CollectionDao {
         c.level AS card_level,
         c.description AS card_description,
         c.image_url AS card_image_url,
-        c.archetype AS card_archetype
+        c.local_image_path AS card_local_image_path,
+        c.archetype AS card_archetype,
+        p.set_code AS printing_set_code,
+        p.set_name AS printing_set_name,
+        p.rarity AS printing_rarity
       FROM collection_entries ce
       JOIN cards c ON c.passcode = ce.passcode
+      LEFT JOIN printings p ON p.id = ce.printing_id
       $where
       ORDER BY $orderColumn $direction
     ''', args);

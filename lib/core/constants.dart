@@ -13,4 +13,53 @@ class AppStrings {
   static const String homeTileSettings = 'Settings';
 
   static const String comingSoonMessage = 'Coming soon.';
+
+  static const String collectionSearchHint = 'Search by name';
+  static const String collectionEmptyMessage =
+      'No cards in your collection yet.';
+  static const String collectionFilterAll = 'All';
+  static const String collectionSortByName = 'Name';
+  static const String collectionSortByDateAdded = 'Date added';
+  static const String collectionSortByQuantity = 'Quantity';
+  static const String collectionSortDirectionTooltip = 'Toggle sort direction';
+  static const String collectionQuantityLabel = 'Quantity';
+  static const String collectionSetLabel = 'Set';
+  static const String collectionEditionLabel = 'Edition';
+  static const String collectionLanguageLabel = 'Language';
+  static const String collectionCardTypeLabel = 'Type';
+  static const String collectionCardAttributeLabel = 'Attribute';
+  // Value is the YGOPRODeck API's `race` field (Dragon/Warrior/Spellcaster/
+  // etc for monsters) — labeled "Monster Type" rather than "Race" since
+  // that's what players actually call it; "Type" is reserved for the API's
+  // `type` field (Normal Monster/Effect Monster/Spell Card/Trap Card/etc).
+  static const String collectionCardRaceLabel = 'Monster Type';
+  static const String collectionCardLevelLabel = 'Level';
+  static const String collectionCardAtkDefLabel = 'ATK / DEF';
+  static const String collectionCardArchetypeLabel = 'Archetype';
+  static const String collectionCardEffectLabel = 'Card Effect';
+  static const String collectionFlavorTextLabel = 'Flavour Text';
+  static const String collectionDeleteTooltip = 'Remove card';
+  static const String collectionDeleteDialogTitle = 'Remove card?';
+  static const String collectionDeleteDialogMessage =
+      'This removes it from your collection. This cannot be undone.';
+  static const String collectionDeleteDialogCancel = 'Cancel';
+  static const String collectionDeleteDialogConfirm = 'Remove';
+
+  static const String addCardTitle = 'Log Cards';
+  static const String addCardSearchHint = 'Search by name';
+  static const String addCardSearchEmptyMessage = 'No cards found.';
+  static const String addCardPrintingTitle = 'Pick a printing';
+  static const String addCardPrintingSkip = "Skip — I don't have this printing";
+  static const String addCardConditionTitle = 'Condition & edition';
+  static const String addCardSaveButton = 'Save to collection';
+  static const String addCardSavedMessage = 'Added to your collection.';
+  static const String addCardBackTooltip = 'Back';
+  static const String addCardNoPrintingLabel = 'No printing selected';
+
+  static const String syncFetchingMessage = 'Downloading card database…';
+  static const String syncWritingMessage = 'Saving to your device…';
+  static const String syncErrorMessage =
+      'Could not download the card database. Check your connection and '
+      'try again.';
+  static const String syncRetryButton = 'Retry';
 }

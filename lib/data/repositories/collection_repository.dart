@@ -1,19 +1,26 @@
+import 'dart:async';
+
 import 'package:riverpod_annotation/riverpod_annotation.dart';
 
 import '../../models/collection_entry.dart';
 import '../../models/collection_entry_with_card.dart';
 import '../db/dao/collection_dao.dart';
 import '../db/database.dart';
+import 'card_repository.dart';
 
 part 'collection_repository.g.dart';
 
 class CollectionRepository {
-  CollectionRepository(this._dao);
+  CollectionRepository(this._dao, this._cardRepository);
 
   final CollectionDao _dao;
+  final CardRepository _cardRepository;
 
-  Future<CollectionEntry> addOrIncrement(CollectionEntry entry) =>
-      _dao.addOrIncrement(entry);
+  Future<CollectionEntry> addOrIncrement(CollectionEntry entry) async {
+    final result = await _dao.addOrIncrement(entry);
+    unawaited(_cardRepository.ensureImageDownloaded(entry.passcode));
+    return result;
+  }
 
   Future<void> setQuantity(int id, int quantity) =>
       _dao.setQuantity(id, quantity);
@@ -37,5 +44,6 @@ class CollectionRepository {
 @riverpod
 Future<CollectionRepository> collectionRepository(Ref ref) async {
   final db = await ref.watch(appDatabaseProvider.future);
-  return CollectionRepository(CollectionDao(db));
+  final cardRepository = await ref.watch(cardRepositoryProvider.future);
+  return CollectionRepository(CollectionDao(db), cardRepository);
 }

@@ -55,4 +55,15 @@ class CardDao {
     final result = await _db.rawQuery('SELECT COUNT(*) AS c FROM cards');
     return Sqflite.firstIntValue(result) ?? 0;
   }
+
+  /// No-op if [passcode] doesn't exist — the caller already looked the card
+  /// up before deciding to download its image.
+  Future<void> updateLocalImagePath(String passcode, String localPath) async {
+    await _db.update(
+      'cards',
+      {'local_image_path': localPath},
+      where: 'passcode = ?',
+      whereArgs: [passcode],
+    );
+  }
 }

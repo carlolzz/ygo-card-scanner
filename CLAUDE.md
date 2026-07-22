@@ -261,7 +261,65 @@ order):
    registered under `flutter: assets:` in `pubspec.yaml` for step 8;
    regenerate when the card DB changes. Verified: offline pytest green,
    `flutter analyze` clean, re-run byte-stable except `generated_at`.
-7. Camera + ML Kit passcode OCR, continuous-scan state machine
+7. Camera + ML Kit passcode OCR, continuous-scan state machine ← done
+   (verified: `flutter analyze` clean + full `flutter test` green, 98 tests).
+   **Navigation**: `/scan` now renders the camera `ScanScreen`
+   (`lib/features/scan/scan_screen.dart`); the manual add-card wizard moved to
+   a new `AppRoutes.addCard` = `/add-card`. The "Log Cards" home tile is
+   unchanged (still `/scan`) — scanning is primary, manual search is a
+   first-class alternative reached from the scan screen's keyboard toolbar
+   action and its OCR-miss fallback. Because the tile no longer opens the
+   wizard, `add_card_screen_test.dart` now pumps `AddCardScreen` directly under
+   a `ProviderScope`/`MaterialApp` instead of tapping through Home.
+   **Detection = reticle-guided ROI, not quad detection** (decided with the
+   user): the approved stack has no contour/perspective library ("do not
+   substitute"), so the UI shows a guide box and the spec's "stable
+   quadrilateral across N frames" is realized as **N=3 consecutive agreeing
+   8-digit OCR reads** (`ScanTuning.agreementFrames`). This satisfies the
+   multi-frame-agreement rule without out-of-stack image processing.
+   **Two injectable seams** (mirroring `_FakeCardRepository`), so the state
+   machine runs with no hardware in tests: `CameraService`
+   (`camera_service.dart` — real `CameraScanService`; its constructor does
+   **no** platform work, all hardware access is in `start()`, so merely reading
+   the provider in a test is inert; `CameraImage → InputImage` uses the
+   canonical nv21/bgra single-plane + rotation-compensation recipe) and
+   `PasscodeOcr` (`passcode_ocr.dart` — pure, offline-testable `extractPasscode`
+   + ML-Kit-backed `MlKitPasscodeOcr`). They compose into
+   `passcodeReadingsProvider` (`Stream<PasscodeReading>`), the **single provider
+   tests override** with a fake stream. **State machine**: `ScanController` +
+   `ScanState` (`scan_controller.dart`/`scan_state.dart`), modeled on
+   `InitialSyncController` — `detecting → reading → matched → confirmed →
+   detecting`, plus `unknown` (agreed read, no db hit) and `error` (camera
+   failure) branches. Enforces the spec: strict 8-digit-or-fail (no
+   pad/truncate; a frame yielding two different 8-digit values is ambiguous →
+   null), disagreement discards the run, **M=5 empty frames of debounce**
+   (`ScanTuning.debounceEmptyFrames`) after a confirm so one card doesn't log
+   thirty times, and — non-negotiable — nothing is written until the user
+   reviews the match and taps Confirm. Confirm logs via
+   `CollectionRepository.addOrIncrement` with `printingId` null (a scanned
+   quick-log carries no printing, like the manual add's skip path), which
+   auto-fires the art download. `ScanState.ocrFailureStreak` is the reserved
+   hook for step 8's pHash fallback (currently unknown → manual search, since
+   only the passcode is OCR'd, so there is no legible name to prefill).
+   **Gotcha**: Riverpod 3.x removed the `Raw` typedef, and a `StreamProvider`
+   value-dedups (`AsyncData(null) == AsyncData(null)`), which would swallow
+   consecutive identical reads and break the N-agreement/M-empty counters —
+   `PasscodeReading` is therefore a plain class with **identity** equality, so
+   every frame delivers to the controller's `ref.listen`. Tuning/reticle
+   constants live in `lib/core/theme/tokens.dart` (`ScanTuning`,
+   `ScanReticleTokens`); strings in `lib/core/constants.dart`. **Native
+   config**: Android `CAMERA` permission + `uses-feature` (`required=false`),
+   `minSdk` floored to 21 for ML Kit, iOS `NSCameraUsageDescription`.
+   The bottom-left **ROI filter is implemented and unit-tested but left OFF in
+   production** (`extractPasscode` called with `roi: null`): ML Kit bounding
+   boxes are in rotated sensor space and mapping that back to an on-screen
+   corner reliably needs real device samples we don't have yet — so we rely on
+   the strict 8-digit uniqueness (the passcode is the only 8-digit run on a
+   card) plus the reticle, echoing the skill's own caution against premature
+   preprocessing. **Lifecycle**: `ScanScreen` is a `ConsumerStatefulWidget` +
+   `WidgetsBindingObserver` purely to toggle `scanCameraActiveProvider`, which
+   releases the camera when backgrounded and restarts it on resume; no
+   transition logic lives in the widget.
 8. pHash art-matching fallback for OCR misses
 9. Settings (default condition, default edition, language, re-sync, theme)
 10. Export to CSV and .ydk; collection statistics. **Requirement**: must include an

@@ -1,10 +1,13 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:ygo_scanner/core/constants.dart';
 import 'package:ygo_scanner/data/db/dao/collection_dao.dart';
 import 'package:ygo_scanner/data/db/dao/printing_dao.dart';
+import 'package:ygo_scanner/data/db/database.dart';
 import 'package:ygo_scanner/data/seed/fake_collection_seed.dart';
+import 'package:ygo_scanner/features/add_card/add_card_screen.dart';
 
 import '../../data/db/test_db.dart';
 import '../../support/widget_test_harness.dart';
@@ -24,9 +27,15 @@ void main() {
     await testDb.close();
   });
 
+  // The manual wizard now lives at its own route (the "Log Cards" tile opens
+  // the camera scanner), so pump it directly rather than tapping through Home.
   Future<void> openAddCard(WidgetTester tester) async {
-    await pumpApp(tester, testDb);
-    await tester.tap(find.text(AppStrings.homeTileLogCards));
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [appDatabaseProvider.overrideWith((ref) async => testDb)],
+        child: const MaterialApp(home: AddCardScreen()),
+      ),
+    );
     await pumpUntilSettled(tester);
   }
 

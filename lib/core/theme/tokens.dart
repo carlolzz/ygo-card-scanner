@@ -80,3 +80,36 @@ class CardThumbnailSizes {
   static const double list = 48;
   static const double detail = 200;
 }
+
+/// Tuning constants for the continuous-scan pipeline. See
+/// `.claude/skills/scan-pipeline.md` for the rationale behind each value —
+/// these are behavioural knobs, kept named here rather than as scattered
+/// literals so the state machine reads declaratively.
+class ScanTuning {
+  const ScanTuning._();
+
+  /// Consecutive frames that must agree on the same 8-digit read before it is
+  /// accepted (the spec's N). Rejects motion blur / one-off misreads.
+  static const int agreementFrames = 3;
+
+  /// Empty frames (no card detected) required after a confirm before the same
+  /// passcode may be scanned again (the spec's M). Without this, one card
+  /// logs dozens of times in a couple of seconds.
+  static const int debounceEmptyFrames = 5;
+
+  /// Minimum wall-clock gap between OCR passes. The bottleneck is the human
+  /// flipping cards, so we optimize for stability over raw throughput
+  /// (~1 card/second) and avoid burning battery on every camera frame.
+  static const Duration frameInterval = Duration(milliseconds: 300);
+}
+
+/// Geometry of the on-screen reticle that guides the user to align a card's
+/// bottom-left passcode. Fractions are of the preview's shortest/longest edge.
+class ScanReticleTokens {
+  const ScanReticleTokens._();
+
+  static const double widthFraction = 0.7;
+  static const double heightFraction = 0.16;
+  static const double borderWidth = 3;
+  static const double bottomInset = AppSpacing.xl;
+}

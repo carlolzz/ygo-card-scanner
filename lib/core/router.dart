@@ -4,6 +4,7 @@ import '../features/add_card/add_card_screen.dart';
 import '../features/collection/collection_detail_screen.dart';
 import '../features/collection/collection_screen.dart';
 import '../features/home/home_screen.dart';
+import '../features/scan/scan_screen.dart';
 import '../models/collection_entry_with_card.dart';
 import '../shared/widgets/coming_soon_screen.dart';
 import 'constants.dart';
@@ -19,6 +20,10 @@ GoRouter buildAppRouter() {
       ),
       GoRoute(
         path: AppRoutes.scan,
+        builder: (context, state) => const ScanScreen(),
+      ),
+      GoRoute(
+        path: AppRoutes.addCard,
         builder: (context, state) => const AddCardScreen(),
       ),
       GoRoute(

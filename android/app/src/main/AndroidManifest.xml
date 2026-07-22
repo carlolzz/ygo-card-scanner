@@ -1,4 +1,10 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- The scan pipeline reads the passcode printed on the card via the
+         camera. `required=false` keeps the app installable on the rare
+         camera-less device, since manual search-and-add is a first-class
+         alternative to scanning. -->
+    <uses-permission android:name="android.permission.CAMERA"/>
+    <uses-feature android:name="android.hardware.camera" android:required="false"/>
     <application
         android:label="ygo_scanner"
         android:name="${applicationName}"

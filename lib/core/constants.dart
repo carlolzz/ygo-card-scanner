@@ -45,6 +45,23 @@ class AppStrings {
   static const String collectionDeleteDialogCancel = 'Cancel';
   static const String collectionDeleteDialogConfirm = 'Remove';
 
+  static const String scanTitle = 'Log Cards';
+  static const String scanManualTooltip = 'Search by name instead';
+  static const String scanHint = 'Fit the 8-digit code inside the box';
+  static const String scanDetecting = 'Point at a card';
+  static const String scanReading = 'Reading…';
+  static const String scanUnknownTitle = 'Not recognized';
+  static const String scanUnknownMessage =
+      'Couldn\'t match that passcode. Search for the card by name instead.';
+  static const String scanUnknownSearchButton = 'Search by name';
+  static const String scanRescanButton = 'Scan again';
+  static const String scanConfirmButton = 'Add to collection';
+  static const String scanSavedMessage = 'Added to your collection.';
+  static const String scanPermissionTitle = 'Camera unavailable';
+  static const String scanPermissionMessage =
+      'Grant camera access to scan cards, or search by name instead.';
+  static const String scanRetryButton = 'Retry';
+
   static const String addCardTitle = 'Log Cards';
   static const String addCardSearchHint = 'Search by name';
   static const String addCardSearchEmptyMessage = 'No cards found.';

@@ -19,7 +19,9 @@ android {
         applicationId = "com.charliegordon.ygo_scanner"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
-        minSdk = flutter.minSdkVersion
+        // google_mlkit_text_recognition requires Android SDK 21+; floor it
+        // here so a lower Flutter default can't break the scan pipeline.
+        minSdk = maxOf(flutter.minSdkVersion, 21)
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName

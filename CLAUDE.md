@@ -320,7 +320,57 @@ order):
    `WidgetsBindingObserver` purely to toggle `scanCameraActiveProvider`, which
    releases the camera when backgrounded and restarts it on resume; no
    transition logic lives in the widget.
-8. pHash art-matching fallback for OCR misses
+8. pHash art-matching fallback for OCR misses ← done
+   (verified: `flutter analyze` clean + full `flutter test` green, 147 tests).
+   **User-triggered "Match by artwork", ranked candidates, never auto-log**
+   (decided with the user): a runtime Dart pHash is *not* bit-identical to the
+   Python-built index, so matching ranks the nearest cards and the user picks —
+   the pick funnels into the same non-negotiable `matched` review gate +
+   `confirm()` a scan uses. **Reproducibility, computed from the camera luma
+   plane with NO new package** (the other locked decision): `lib/features/scan/
+   phash.dart` reproduces `imagehash.phash(hash_size=8)` — separable DCT-II
+   (`dct(dct(P,axis=0),axis=1)`, only the 8x8 low-freq block computed), median
+   threshold (DC included), row-major MSB-first bit-pack — validated by a
+   **two-tier offline spike** (`tools/dump_phash_fixtures.py` +
+   `test/features/scan/fixtures/`): Tier 1 (identical 32x32 PIL pixels →
+   `phash_test.dart`) matches the index **exactly, distance 0**; Tier 2 (full
+   source luma through our own area-average resize → `phash_e2e_test.dart`) had
+   a **gap of 0** on clean art — so the only production gap is handheld
+   glare/angle/crop, which the top-N + `ArtMatchTuning.maxHammingDistance` (14)
+   budget absorbs. `lib/features/scan/hamming.dart` stores a hash as two 32-bit
+   lanes (`int.parse('ffffffff…',16)` is an overflow trap; also web-safe) with a
+   SWAR popcount; `hash_index.dart` parses/validates the bundled
+   `assets/card_hashes.json` (rejects non-`phash`/wrong size) and `rank`s.
+   **Frame acquisition**: `CameraService` gained `latestArtFrame` (an `ArtFrame`
+   = luma + dims + rotationDegrees), cached each throttled frame in
+   `CameraScanService._onFrame` via pure `lumaFromYPlane` (NV21 Y-plane, strips
+   row stride, always copies since the plugin recycles buffers) /`lumaFromBgra`
+   (iOS 601 luma) in `art_frame.dart`; rotation is shared with the OCR path via
+   `_rotationDegrees`. The **art-box ROI** (`ArtMatchTuning.artBoxRoi`,
+   normalized fractions of the *upright* card — Pendulum/full-art crop
+   imperfectly, acceptable for a fallback) is applied to `frame.oriented()`
+   before hashing. **Seams** (mirroring `cameraService`/`passcodeOcr`):
+   `hashIndexProvider` (loads the asset via `rootBundle`; tests override with an
+   in-memory `HashIndex`) and `artMatcherProvider` (`PHashArtMatcher` composing
+   camera+index+repo; **the single provider controller-transition tests
+   override** with a fake). **State machine**: two new `ScanStatus` — `matching`
+   (hashing, camera frozen) and `candidates` (awaiting a pick), both added to the
+   freeze guard; `ScanController.matchByArtwork()` (re-checks status after the
+   await like `_lookup`; empty result → `unknown`/search-by-name),
+   `selectCandidate()` (→ `matched` with defaults reset), `dismiss()` clears
+   candidates. **Trigger is user-initiated, NOT `ocrFailureStreak`**: that streak
+   counts agreed-passcode-not-in-DB, but the real OCR miss (no digits) never
+   leaves `detecting`, so the entry points are a persistent app-bar
+   `image_search` action (shown in `detecting`/`reading`) and a "Match by
+   artwork" button on `_UnknownPanel`; results render in a new `_CandidatePanel`
+   (tap a card → review gate). Tests: `phash_test`/`phash_e2e_test` (spike),
+   `hamming_test`, `hash_index_test`, `art_matcher_test` (fake camera + in-memory
+   index + repo over seeded db, asserts null-repo candidates are skipped),
+   `art_frame_test` (luma/rotation helpers), and `scan_controller_test`'s
+   `artwork-match fallback` group (unknown → match → pick → confirm writes one
+   row). No DB migration, no new DB column, no pubspec dependency change (asset
+   was already registered in step 6). `.g.dart` for the new `@riverpod` providers
+   is regenerated, not committed.
 9. Settings (default condition, default edition, language, re-sync, theme)
 10. Export to CSV and .ydk; collection statistics. **Requirement**: must include an
     option to export the entire local database to a CSV file (not just the

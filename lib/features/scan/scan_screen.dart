@@ -10,6 +10,7 @@ import '../../models/card_condition.dart';
 import '../../models/card_edition.dart';
 import '../../shared/widgets/card_thumbnail.dart';
 import '../../shared/widgets/labeled_choice_chip.dart';
+import 'art_matcher.dart';
 import 'scan_controller.dart';
 import 'scan_providers.dart';
 import 'scan_state.dart';
@@ -60,6 +61,16 @@ class _ScanScreenState extends ConsumerState<ScanScreen>
         elevation: 0,
         title: const Text(AppStrings.scanTitle),
         actions: [
+          // Persistent artwork-match entry point: the zero-digit OCR miss never
+          // leaves `detecting`, so it needs a trigger outside the unknown panel.
+          if (scan.status == ScanStatus.detecting ||
+              scan.status == ScanStatus.reading)
+            IconButton(
+              tooltip: AppStrings.scanMatchByArtTooltip,
+              icon: const Icon(Icons.image_search),
+              onPressed:
+                  ref.read(scanControllerProvider.notifier).matchByArtwork,
+            ),
           IconButton(
             tooltip: AppStrings.scanManualTooltip,
             icon: const Icon(Icons.keyboard),
@@ -71,10 +82,14 @@ class _ScanScreenState extends ConsumerState<ScanScreen>
         fit: StackFit.expand,
         children: [
           const _CameraLayer(),
-          if (scan.status != ScanStatus.error) const _ReticleOverlay(),
+          if (scan.status == ScanStatus.detecting ||
+              scan.status == ScanStatus.reading)
+            const _ReticleOverlay(),
           _StatusBanner(status: scan.status),
           if (scan.status == ScanStatus.matched)
             _MatchedPanel(state: scan)
+          else if (scan.status == ScanStatus.candidates)
+            _CandidatePanel(candidates: scan.candidates)
           else if (scan.status == ScanStatus.unknown)
             const _UnknownPanel()
           else if (scan.status == ScanStatus.error)
@@ -154,10 +169,13 @@ class _StatusBanner extends StatelessWidget {
     final label = switch (status) {
       ScanStatus.detecting => AppStrings.scanDetecting,
       ScanStatus.reading => AppStrings.scanReading,
-      // matched/unknown/error render their own panels; confirmed is transient.
+      ScanStatus.matching => AppStrings.scanMatchingMessage,
+      // matched/candidates/unknown/error render their own panels; confirmed is
+      // transient.
       _ => null,
     };
     if (label == null) return const SizedBox.shrink();
+    final busy = status == ScanStatus.matching;
     return SafeArea(
       child: Align(
         alignment: Alignment.topCenter,
@@ -172,9 +190,25 @@ class _StatusBanner extends StatelessWidget {
               color: AppColors.surface.withValues(alpha: 0.8),
               borderRadius: BorderRadius.circular(AppRadius.lg),
             ),
-            child: Text(
-              label,
-              style: const TextStyle(color: AppColors.onSurface),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (busy) ...[
+                  const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: AppColors.accent,
+                    ),
+                  ),
+                  const SizedBox(width: AppSpacing.sm),
+                ],
+                Text(
+                  label,
+                  style: const TextStyle(color: AppColors.onSurface),
+                ),
+              ],
             ),
           ),
         ),
@@ -331,6 +365,123 @@ class _MatchedPanel extends ConsumerWidget {
   }
 }
 
+/// The artwork-match result: a ranked list of candidate cards the user picks
+/// from. Picking promotes the card into the [_MatchedPanel] review gate — the
+/// same non-negotiable confirm step a scanned match uses.
+class _CandidatePanel extends ConsumerWidget {
+  const _CandidatePanel({required this.candidates});
+
+  final List<ArtCandidate> candidates;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final controller = ref.read(scanControllerProvider.notifier);
+    return Align(
+      alignment: Alignment.bottomCenter,
+      child: Container(
+        width: double.infinity,
+        decoration: const BoxDecoration(
+          color: AppColors.surface,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(AppRadius.lg)),
+        ),
+        child: SafeArea(
+          top: false,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(
+                  AppSpacing.lg,
+                  AppSpacing.lg,
+                  AppSpacing.lg,
+                  AppSpacing.xs,
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        const Expanded(
+                          child: Text(
+                            AppStrings.scanCandidatesTitle,
+                            style: TextStyle(
+                              color: AppColors.onSurface,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 18,
+                            ),
+                          ),
+                        ),
+                        IconButton(
+                          tooltip: AppStrings.scanRescanButton,
+                          icon: const Icon(Icons.close,
+                              color: AppColors.onSurface),
+                          onPressed: controller.dismiss,
+                        ),
+                      ],
+                    ),
+                    const Text(
+                      AppStrings.scanCandidatesSubtitle,
+                      style: TextStyle(color: AppColors.onSurfaceMuted),
+                    ),
+                  ],
+                ),
+              ),
+              Flexible(
+                child: ListView.builder(
+                  shrinkWrap: true,
+                  padding: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
+                  itemCount: candidates.length,
+                  itemBuilder: (context, index) {
+                    final candidate = candidates[index];
+                    return ListTile(
+                      leading: CardThumbnail(
+                        localImagePath: candidate.card.localImagePath,
+                        size: CardThumbnailSizes.list,
+                      ),
+                      title: Text(
+                        candidate.card.name,
+                        style: const TextStyle(color: AppColors.onSurface),
+                      ),
+                      subtitle: candidate.card.type != null
+                          ? Text(
+                              candidate.card.type!,
+                              style: const TextStyle(
+                                color: AppColors.onSurfaceMuted,
+                              ),
+                            )
+                          : null,
+                      onTap: () => controller.selectCandidate(candidate.card),
+                    );
+                  },
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(
+                  AppSpacing.lg,
+                  AppSpacing.xs,
+                  AppSpacing.lg,
+                  AppSpacing.md,
+                ),
+                child: SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton(
+                    onPressed: () {
+                      controller.dismiss();
+                      context.push(AppRoutes.addCard);
+                    },
+                    child: const Text(AppStrings.scanUnknownSearchButton),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _UnknownPanel extends ConsumerWidget {
   const _UnknownPanel();
 
@@ -340,13 +491,17 @@ class _UnknownPanel extends ConsumerWidget {
     return _BottomMessage(
       title: AppStrings.scanUnknownTitle,
       message: AppStrings.scanUnknownMessage,
-      primaryLabel: AppStrings.scanUnknownSearchButton,
-      onPrimary: () {
+      // Try artwork first (it can surface alt-art reprints the passcode lookup
+      // missed); this transitions to `matching`, so it must not dismiss.
+      primaryLabel: AppStrings.scanMatchByArtButton,
+      onPrimary: controller.matchByArtwork,
+      secondaryLabel: AppStrings.scanUnknownSearchButton,
+      onSecondary: () {
         controller.dismiss();
         context.push(AppRoutes.addCard);
       },
-      secondaryLabel: AppStrings.scanRescanButton,
-      onSecondary: controller.dismiss,
+      tertiaryLabel: AppStrings.scanRescanButton,
+      onTertiary: controller.dismiss,
     );
   }
 }
@@ -378,6 +533,8 @@ class _BottomMessage extends StatelessWidget {
     required this.onPrimary,
     required this.secondaryLabel,
     required this.onSecondary,
+    this.tertiaryLabel,
+    this.onTertiary,
   });
 
   final String title;
@@ -386,6 +543,8 @@ class _BottomMessage extends StatelessWidget {
   final VoidCallback onPrimary;
   final String secondaryLabel;
   final VoidCallback onSecondary;
+  final String? tertiaryLabel;
+  final VoidCallback? onTertiary;
 
   @override
   Widget build(BuildContext context) {
@@ -436,6 +595,16 @@ class _BottomMessage extends StatelessWidget {
                     child: Text(secondaryLabel),
                   ),
                 ),
+                if (tertiaryLabel != null && onTertiary != null) ...[
+                  const SizedBox(height: AppSpacing.xs),
+                  SizedBox(
+                    width: double.infinity,
+                    child: TextButton(
+                      onPressed: onTertiary,
+                      child: Text(tertiaryLabel!),
+                    ),
+                  ),
+                ],
               ],
             ),
           ),

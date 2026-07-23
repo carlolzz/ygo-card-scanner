@@ -6,12 +6,25 @@ import 'package:sqflite/sqflite.dart';
 import 'package:ygo_scanner/data/db/dao/collection_dao.dart';
 import 'package:ygo_scanner/data/db/database.dart';
 import 'package:ygo_scanner/data/seed/fake_collection_seed.dart';
+import 'package:ygo_scanner/features/scan/art_matcher.dart';
+import 'package:ygo_scanner/features/scan/art_providers.dart';
 import 'package:ygo_scanner/features/scan/scan_controller.dart';
 import 'package:ygo_scanner/features/scan/scan_providers.dart';
 import 'package:ygo_scanner/features/scan/scan_state.dart';
 import 'package:ygo_scanner/models/card_condition.dart';
+import 'package:ygo_scanner/models/ygo_card.dart';
 
 import '../../data/db/test_db.dart';
+
+/// Fake matcher so the controller's artwork-match branch runs without a camera,
+/// image asset, or pHash math — mirroring how [passcodeReadingsProvider] is
+/// faked for the OCR branch.
+class _FakeArtMatcher implements ArtMatcher {
+  _FakeArtMatcher(this.result);
+  final List<ArtCandidate> result;
+  @override
+  Future<List<ArtCandidate>> match() async => result;
+}
 
 // Seeded fixture passcodes (see fake_collection_seed.dart).
 const darkMagician = '46986414';
@@ -28,6 +41,8 @@ void main() {
   late StreamController<PasscodeReading> readings;
   late ProviderContainer container;
   var seq = 0;
+  // Mutated by the artwork-match tests before triggering matchByArtwork().
+  var fakeCandidates = <ArtCandidate>[];
 
   Future<void> feed(String? passcode) async {
     readings.add(PasscodeReading(seq++, passcode));
@@ -41,10 +56,13 @@ void main() {
     await seedFakeCollectionIfEmpty(db);
     readings = StreamController<PasscodeReading>.broadcast();
     seq = 0;
+    fakeCandidates = <ArtCandidate>[];
     container = ProviderContainer(
       overrides: [
         appDatabaseProvider.overrideWith((ref) async => db),
         passcodeReadingsProvider.overrideWith((ref) => readings.stream),
+        artMatcherProvider
+            .overrideWith((ref) async => _FakeArtMatcher(fakeCandidates)),
       ],
     );
     // Keep the controller alive so its stream subscription stays registered.
@@ -146,5 +164,83 @@ void main() {
     await settle();
 
     expect(state().status, ScanStatus.matched);
+  });
+
+  group('artwork-match fallback', () {
+    const dmCard = YgoCard(
+      passcode: darkMagician,
+      name: 'Dark Magician',
+      type: 'Normal Monster',
+    );
+
+    Future<void> matchByArtwork() async {
+      await container.read(scanControllerProvider.notifier).matchByArtwork();
+      await settle();
+    }
+
+    test('surfaces ranked candidates for the user to pick', () async {
+      fakeCandidates = [const ArtCandidate(dmCard, 3)];
+      await matchByArtwork();
+
+      expect(state().status, ScanStatus.candidates);
+      expect(state().candidates, hasLength(1));
+      expect(state().candidates.first.card.name, 'Dark Magician');
+    });
+
+    test('no candidates falls back to unknown (search by name)', () async {
+      fakeCandidates = [];
+      await matchByArtwork();
+
+      expect(state().status, ScanStatus.unknown);
+      expect(state().candidates, isEmpty);
+    });
+
+    test('selecting a candidate enters the review gate with defaults', () async {
+      fakeCandidates = [const ArtCandidate(dmCard, 3)];
+      await matchByArtwork();
+
+      container.read(scanControllerProvider.notifier).selectCandidate(dmCard);
+      expect(state().status, ScanStatus.matched);
+      expect(state().matchedCard?.passcode, darkMagician);
+      expect(state().condition, CardCondition.nearMint);
+      expect(state().candidates, isEmpty);
+    });
+
+    test('full flow: unknown → artwork match → pick → confirm writes one row',
+        () async {
+      // OCR agreed on a passcode not in the db.
+      await feed(unknownPasscode);
+      await feed(unknownPasscode);
+      await feed(unknownPasscode);
+      await settle();
+      expect(state().status, ScanStatus.unknown);
+
+      // Fall back to artwork, which finds the real card.
+      fakeCandidates = [const ArtCandidate(dmCard, 5)];
+      await matchByArtwork();
+      expect(state().status, ScanStatus.candidates);
+
+      container.read(scanControllerProvider.notifier).selectCandidate(dmCard);
+      await container.read(scanControllerProvider.notifier).confirm();
+      await settle();
+
+      final scanned = (await CollectionDao(db)
+              .getEntriesForPasscode(darkMagician))
+          .where(
+        (e) => e.condition == CardCondition.nearMint && e.printingId == null,
+      );
+      expect(scanned, hasLength(1));
+      expect(state().status, ScanStatus.confirmed);
+    });
+
+    test('dismiss from candidates returns to detecting', () async {
+      fakeCandidates = [const ArtCandidate(dmCard, 3)];
+      await matchByArtwork();
+      expect(state().status, ScanStatus.candidates);
+
+      container.read(scanControllerProvider.notifier).dismiss();
+      expect(state().status, ScanStatus.detecting);
+      expect(state().candidates, isEmpty);
+    });
   });
 }

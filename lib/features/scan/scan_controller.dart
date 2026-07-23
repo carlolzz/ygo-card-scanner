@@ -6,7 +6,9 @@ import '../../data/repositories/collection_repository.dart';
 import '../../models/card_condition.dart';
 import '../../models/card_edition.dart';
 import '../../models/collection_entry.dart';
+import '../../models/ygo_card.dart';
 import '../collection/collection_providers.dart';
+import 'art_providers.dart';
 import 'scan_providers.dart';
 import 'scan_state.dart';
 
@@ -37,9 +39,12 @@ class ScanController extends _$ScanController {
 
   void _onReading(String? read) {
     final s = state;
-    // Frozen while a result awaits the user, or after a camera error.
+    // Frozen while a result awaits the user, an artwork match is running or
+    // awaiting a pick, or after a camera error.
     if (s.status == ScanStatus.matched ||
         s.status == ScanStatus.unknown ||
+        s.status == ScanStatus.matching ||
+        s.status == ScanStatus.candidates ||
         s.status == ScanStatus.error) {
       return;
     }
@@ -124,6 +129,50 @@ class ScanController extends _$ScanController {
     state = state.copyWith(quantity: quantity);
   }
 
+  /// The step-8 fallback: hash the current frame's artwork and rank it against
+  /// the pHash index, so a card whose passcode OCR can't read is still findable.
+  /// Triggered by the user (the zero-digit miss never leaves [detecting], so
+  /// this isn't driven off [ScanState.ocrFailureStreak]). Presents ranked
+  /// candidates for the user to pick — never auto-logs, since a handheld pHash
+  /// is only approximate. Falls back to [ScanStatus.unknown] (search by name)
+  /// when nothing ranks close enough.
+  Future<void> matchByArtwork() async {
+    final s = state;
+    if (s.status != ScanStatus.detecting &&
+        s.status != ScanStatus.reading &&
+        s.status != ScanStatus.unknown) {
+      return;
+    }
+    state = s.copyWith(status: ScanStatus.matching, agreementBuffer: const []);
+
+    final matcher = await ref.read(artMatcherProvider.future);
+    final candidates = await matcher.match();
+    // The user may have dismissed while the frame was hashing.
+    if (state.status != ScanStatus.matching) return;
+
+    state = candidates.isEmpty
+        ? state.copyWith(status: ScanStatus.unknown)
+        : state.copyWith(
+            status: ScanStatus.candidates,
+            candidates: candidates,
+          );
+  }
+
+  /// Promotes a picked artwork candidate into the same review gate a scanned
+  /// match uses, so it funnels through [confirm] with defaults reset.
+  void selectCandidate(YgoCard card) {
+    if (state.status != ScanStatus.candidates) return;
+    state = state.copyWith(
+      status: ScanStatus.matched,
+      matchedCard: card,
+      clearCandidates: true,
+      clearUnknownPasscode: true,
+      condition: CardCondition.nearMint,
+      edition: CardEdition.unlimited,
+      quantity: 1,
+    );
+  }
+
   /// Writes the reviewed match to the collection, then resumes scanning with
   /// this passcode debounced. A scanned quick-log carries no printing
   /// (`printingId` null), consistent with the manual add's skip path.
@@ -154,14 +203,15 @@ class ScanController extends _$ScanController {
     );
   }
 
-  /// Discards the current match/unknown result without writing, and debounces
-  /// its passcode so it isn't immediately re-detected.
+  /// Discards the current match/unknown/candidates result without writing, and
+  /// debounces any resolved passcode so it isn't immediately re-detected.
   void dismiss() {
     final passcode = state.matchedCard?.passcode ?? state.unknownPasscode;
     state = state.copyWith(
       status: ScanStatus.detecting,
       clearMatchedCard: true,
       clearUnknownPasscode: true,
+      clearCandidates: true,
       lastConfirmedPasscode: passcode,
       agreementBuffer: const [],
       emptyFrameCount: 0,

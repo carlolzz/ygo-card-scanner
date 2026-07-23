@@ -62,6 +62,17 @@ class AppStrings {
       'Grant camera access to scan cards, or search by name instead.';
   static const String scanRetryButton = 'Retry';
 
+  // Artwork-match fallback (step 8).
+  static const String scanMatchByArtTooltip = 'Match by artwork';
+  static const String scanMatchByArtButton = 'Match by artwork';
+  static const String scanMatchByArtHint = 'Fit the whole card inside the box';
+  static const String scanMatchingMessage = 'Matching artwork…';
+  static const String scanCandidatesTitle = 'Is it one of these?';
+  static const String scanCandidatesSubtitle =
+      'Tap the card that matches, or search by name.';
+  static const String scanNoArtMatchMessage =
+      'No artwork match. Search for the card by name instead.';
+
   static const String addCardTitle = 'Log Cards';
   static const String addCardSearchHint = 'Search by name';
   static const String addCardSearchEmptyMessage = 'No cards found.';

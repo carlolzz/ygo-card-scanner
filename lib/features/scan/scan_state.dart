@@ -1,12 +1,14 @@
 import '../../models/card_condition.dart';
 import '../../models/card_edition.dart';
 import '../../models/ygo_card.dart';
+import 'art_matcher.dart';
 
 /// The continuous-scan state machine's phases, following
 /// `.claude/skills/scan-pipeline.md`:
 /// `detecting → reading → matched → confirmed → detecting`, with `unknown`
 /// (a read that no card matches) and `error` (camera/permission failure)
-/// as terminal-until-user-acts branches.
+/// as terminal-until-user-acts branches. The `matching`/`candidates` pair is
+/// the step-8 artwork-match fallback the user triggers from `unknown`/`detecting`.
 enum ScanStatus {
   /// Camera live, nothing conclusive read yet.
   detecting,
@@ -20,6 +22,13 @@ enum ScanStatus {
 
   /// A read agreed but matched no card in the local database.
   unknown,
+
+  /// An artwork match is being computed (frame captured, hashing/ranking).
+  /// Camera frozen until it resolves.
+  matching,
+
+  /// Artwork ranking produced candidates; awaiting the user's pick.
+  candidates,
 
   /// The user confirmed; the row was written. Transient before the debounce
   /// returns to [detecting].
@@ -38,6 +47,7 @@ class ScanState {
     this.agreementBuffer = const [],
     this.matchedCard,
     this.unknownPasscode,
+    this.candidates = const [],
     this.condition = CardCondition.nearMint,
     this.edition = CardEdition.unlimited,
     this.quantity = 1,
@@ -58,6 +68,10 @@ class ScanState {
 
   /// The unmatched passcode shown in [ScanStatus.unknown].
   final String? unknownPasscode;
+
+  /// Ranked artwork-match candidates shown in [ScanStatus.candidates], nearest
+  /// first. Empty outside that state.
+  final List<ArtCandidate> candidates;
 
   /// User-editable grade for the pending match (defaults to Near Mint).
   final CardCondition condition;
@@ -86,6 +100,8 @@ class ScanState {
     bool clearMatchedCard = false,
     String? unknownPasscode,
     bool clearUnknownPasscode = false,
+    List<ArtCandidate>? candidates,
+    bool clearCandidates = false,
     CardCondition? condition,
     CardEdition? edition,
     int? quantity,
@@ -102,6 +118,8 @@ class ScanState {
       unknownPasscode: clearUnknownPasscode
           ? null
           : (unknownPasscode ?? this.unknownPasscode),
+      candidates:
+          clearCandidates ? const [] : (candidates ?? this.candidates),
       condition: condition ?? this.condition,
       edition: edition ?? this.edition,
       quantity: quantity ?? this.quantity,

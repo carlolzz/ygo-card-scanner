@@ -1,0 +1,23 @@
+{
+  "hash_size": 8,
+  "samples": [
+    {
+      "passcode": "46986414",
+      "width": 624,
+      "height": 624,
+      "expectedHash": "f884065a9fcb6966"
+    },
+    {
+      "passcode": "89631139",
+      "width": 624,
+      "height": 624,
+      "expectedHash": "80d75b0e78616cf9"
+    },
+    {
+      "passcode": "5318639",
+      "width": 624,
+      "height": 624,
+      "expectedHash": "8bc6d509ca3dd1b2"
+    }
+  ]
+}

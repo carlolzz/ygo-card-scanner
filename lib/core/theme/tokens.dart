@@ -113,3 +113,27 @@ class ScanReticleTokens {
   static const double borderWidth = 3;
   static const double bottomInset = AppSpacing.xl;
 }
+
+/// Tuning for the pHash artwork-match fallback (step 8). A runtime pHash of a
+/// handheld frame is not bit-identical to the index (built from clean CDN art),
+/// so matching ranks the [candidateCount] nearest cards within
+/// [maxHammingDistance] and lets the user pick — never auto-logs.
+class ArtMatchTuning {
+  const ArtMatchTuning._();
+
+  /// How many nearest candidates to present for the user to choose from.
+  static const int candidateCount = 5;
+
+  /// Maximum Hamming distance (of 64) still considered a plausible match. The
+  /// clean-source gap measured 0 in the reproducibility spike; this budget is
+  /// headroom for handheld glare/angle/crop imprecision. Beyond it we show
+  /// "no artwork match" rather than a misleading guess.
+  static const int maxHammingDistance = 14;
+
+  /// The card artwork box as normalized fractions of the *upright* card rect,
+  /// approximating a standard (non-Pendulum) frame's art window — the region the
+  /// index's cropped art was taken from. Applied to the captured luma before
+  /// hashing. Pendulum/full-art frames crop imperfectly; acceptable for a
+  /// fallback that the user still confirms.
+  static const Rect artBoxRoi = Rect.fromLTRB(0.09, 0.19, 0.91, 0.68);
+}

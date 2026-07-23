@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
 
 import '../../core/theme/tokens.dart';
+import 'art_frame.dart';
 
 /// Owns the camera and turns its frames into ML-Kit [InputImage]s for the scan
 /// pipeline. An abstraction so the state machine can run against a fake source
@@ -19,6 +20,10 @@ abstract class CameraService {
   /// The controller backing the live preview, or null until [start] has
   /// finished initializing it.
   CameraController? get previewController;
+
+  /// The most recent frame reduced to luma, for the artwork-match fallback, or
+  /// null before the first frame. Updated in lockstep with [frames].
+  ArtFrame? get latestArtFrame;
 
   /// Opens the back camera and begins streaming frames. Throws (e.g.
   /// [CameraException] on denied permission / no camera) so the pipeline can
@@ -41,12 +46,16 @@ class CameraScanService implements CameraService {
   CameraController? _controller;
   bool _starting = false;
   DateTime _lastEmit = DateTime.fromMillisecondsSinceEpoch(0);
+  ArtFrame? _latestArtFrame;
 
   @override
   Stream<InputImage> get frames => _frames.stream;
 
   @override
   CameraController? get previewController => _controller;
+
+  @override
+  ArtFrame? get latestArtFrame => _latestArtFrame;
 
   @override
   Future<void> start() async {
@@ -86,8 +95,32 @@ class CameraScanService implements CameraService {
     if (now.difference(_lastEmit) < ScanTuning.frameInterval) return;
     _lastEmit = now;
 
-    final input = _toInputImage(image);
+    final rotation = _rotationDegrees(image);
+    if (rotation == null) return;
+
+    // Cache the luma for the artwork-match fallback (defensive copy, so it
+    // survives the plugin recycling this frame's buffer).
+    final art = _toArtFrame(image, rotation);
+    if (art != null) _latestArtFrame = art;
+
+    final input = _toInputImage(image, rotation);
     if (input != null && !_frames.isClosed) _frames.add(input);
+  }
+
+  ArtFrame? _toArtFrame(CameraImage image, int rotationDegrees) {
+    if (image.planes.isEmpty) return null;
+    final plane = image.planes.first;
+    final luma = Platform.isAndroid
+        ? lumaFromYPlane(plane.bytes, image.width, image.height,
+            plane.bytesPerRow)
+        : lumaFromBgra(plane.bytes, image.width, image.height,
+            plane.bytesPerRow);
+    return ArtFrame(
+      luma: luma,
+      width: image.width,
+      height: image.height,
+      rotationDegrees: rotationDegrees,
+    );
   }
 
   @override
@@ -116,23 +149,24 @@ class CameraScanService implements CameraService {
     DeviceOrientation.landscapeRight: 270,
   };
 
-  InputImage? _toInputImage(CameraImage image) {
+  /// The clockwise rotation (degrees) needed to make [image] upright, per the
+  /// ML Kit + camera plugin recipe, or null if it can't be determined. Shared by
+  /// the OCR ([_toInputImage]) and artwork-match ([_toArtFrame]) paths.
+  int? _rotationDegrees(CameraImage image) {
     final controller = _controller;
     if (controller == null) return null;
     final camera = controller.description;
     final sensorOrientation = camera.sensorOrientation;
+    if (Platform.isIOS) return sensorOrientation % 360;
+    final compensation = _orientations[controller.value.deviceOrientation];
+    if (compensation == null) return null;
+    return camera.lensDirection == CameraLensDirection.front
+        ? (sensorOrientation + compensation) % 360
+        : (sensorOrientation - compensation + 360) % 360;
+  }
 
-    InputImageRotation? rotation;
-    if (Platform.isIOS) {
-      rotation = InputImageRotationValue.fromRawValue(sensorOrientation);
-    } else {
-      final compensation = _orientations[controller.value.deviceOrientation];
-      if (compensation == null) return null;
-      final rotated = camera.lensDirection == CameraLensDirection.front
-          ? (sensorOrientation + compensation) % 360
-          : (sensorOrientation - compensation + 360) % 360;
-      rotation = InputImageRotationValue.fromRawValue(rotated);
-    }
+  InputImage? _toInputImage(CameraImage image, int rotationDegrees) {
+    final rotation = InputImageRotationValue.fromRawValue(rotationDegrees);
     if (rotation == null) return null;
 
     final format = InputImageFormatValue.fromRawValue(image.format.raw);

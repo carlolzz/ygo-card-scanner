@@ -5,6 +5,7 @@ import '../../core/constants.dart';
 import '../../core/theme/tokens.dart';
 import '../../models/card_condition.dart';
 import '../../models/card_edition.dart';
+import '../../models/card_language.dart';
 import '../../shared/widgets/labeled_choice_chip.dart';
 import 'add_card_providers.dart';
 
@@ -51,6 +52,7 @@ class _SearchStep extends ConsumerWidget {
     final query = ref.watch(addCardQueryControllerProvider);
     final resultsAsync = ref.watch(addCardSearchResultsProvider);
     final controller = ref.read(addCardSelectionControllerProvider.notifier);
+    final palette = AppPalette.of(context);
 
     return Column(
       children: [
@@ -58,16 +60,16 @@ class _SearchStep extends ConsumerWidget {
           padding: const EdgeInsets.all(AppSpacing.md),
           child: TextField(
             autofocus: true,
-            style: const TextStyle(color: AppColors.onSurface),
+            style: TextStyle(color: palette.onSurface),
             decoration: InputDecoration(
               hintText: AppStrings.addCardSearchHint,
-              hintStyle: const TextStyle(color: AppColors.onSurfaceMuted),
-              prefixIcon: const Icon(
+              hintStyle: TextStyle(color: palette.onSurfaceMuted),
+              prefixIcon: Icon(
                 Icons.search,
-                color: AppColors.onSurfaceMuted,
+                color: palette.onSurfaceMuted,
               ),
               filled: true,
-              fillColor: AppColors.surfaceRaised,
+              fillColor: palette.surfaceRaised,
               border: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(AppRadius.md),
                 borderSide: BorderSide.none,
@@ -86,7 +88,7 @@ class _SearchStep extends ConsumerWidget {
                 return Center(
                   child: Text(
                     AppStrings.addCardSearchEmptyMessage,
-                    style: const TextStyle(color: AppColors.onSurfaceMuted),
+                    style: TextStyle(color: palette.onSurfaceMuted),
                   ),
                 );
               }
@@ -97,14 +99,14 @@ class _SearchStep extends ConsumerWidget {
                   return ListTile(
                     title: Text(
                       card.name,
-                      style: const TextStyle(color: AppColors.onSurface),
+                      style: TextStyle(color: palette.onSurface),
                     ),
                     subtitle: card.type == null
                         ? null
                         : Text(
                             card.type!,
-                            style: const TextStyle(
-                              color: AppColors.onSurfaceMuted,
+                            style: TextStyle(
+                              color: palette.onSurfaceMuted,
                             ),
                           ),
                     onTap: () => controller.selectCard(card),
@@ -116,7 +118,7 @@ class _SearchStep extends ConsumerWidget {
             error: (error, stackTrace) => Center(
               child: Text(
                 '$error',
-                style: const TextStyle(color: AppColors.onSurfaceMuted),
+                style: TextStyle(color: palette.onSurfaceMuted),
               ),
             ),
           ),
@@ -135,6 +137,7 @@ class _PrintingStep extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final controller = ref.read(addCardSelectionControllerProvider.notifier);
     final card = selection.card!;
+    final palette = AppPalette.of(context);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -143,8 +146,8 @@ class _PrintingStep extends ConsumerWidget {
           padding: const EdgeInsets.all(AppSpacing.md),
           child: Text(
             card.name,
-            style: const TextStyle(
-              color: AppColors.onSurface,
+            style: TextStyle(
+              color: palette.onSurface,
               fontWeight: FontWeight.bold,
               fontSize: 18,
             ),
@@ -158,14 +161,14 @@ class _PrintingStep extends ConsumerWidget {
               return ListTile(
                 title: Text(
                   printing.setCode ?? printing.setName ?? '',
-                  style: const TextStyle(color: AppColors.onSurface),
+                  style: TextStyle(color: palette.onSurface),
                 ),
                 subtitle: Text(
                   [
                     if (printing.setName != null) printing.setName!,
                     if (printing.rarity != null) printing.rarity!,
                   ].join(' · '),
-                  style: const TextStyle(color: AppColors.onSurfaceMuted),
+                  style: TextStyle(color: palette.onSurfaceMuted),
                 ),
                 onTap: () => controller.selectPrinting(printing),
               );
@@ -197,6 +200,7 @@ class _ConditionStep extends ConsumerWidget {
     final controller = ref.read(addCardSelectionControllerProvider.notifier);
     final card = selection.card!;
     final printing = selection.printing;
+    final palette = AppPalette.of(context);
 
     return SingleChildScrollView(
       padding: const EdgeInsets.all(AppSpacing.lg),
@@ -205,8 +209,8 @@ class _ConditionStep extends ConsumerWidget {
         children: [
           Text(
             card.name,
-            style: const TextStyle(
-              color: AppColors.onSurface,
+            style: TextStyle(
+              color: palette.onSurface,
               fontWeight: FontWeight.bold,
               fontSize: 18,
             ),
@@ -216,7 +220,7 @@ class _ConditionStep extends ConsumerWidget {
             printing == null
                 ? AppStrings.addCardNoPrintingLabel
                 : (printing.setCode ?? printing.setName ?? ''),
-            style: const TextStyle(color: AppColors.onSurfaceMuted),
+            style: TextStyle(color: palette.onSurfaceMuted),
           ),
           const SizedBox(height: AppSpacing.lg),
           Wrap(
@@ -240,8 +244,26 @@ class _ConditionStep extends ConsumerWidget {
                 LabeledChoiceChip(
                   label: edition.label,
                   selected: selection.edition == edition,
-                  selectedColor: AppColors.accent,
+                  selectedColor: palette.accent,
                   onSelected: () => controller.setEdition(edition),
+                ),
+            ],
+          ),
+          const SizedBox(height: AppSpacing.md),
+          Text(
+            AppStrings.collectionLanguageLabel,
+            style: TextStyle(color: palette.onSurfaceMuted),
+          ),
+          const SizedBox(height: AppSpacing.xs),
+          Wrap(
+            spacing: AppSpacing.xs,
+            children: [
+              for (final language in kCardLanguages)
+                LabeledChoiceChip(
+                  label: languageLabel(language),
+                  selected: selection.language == language,
+                  selectedColor: palette.accent,
+                  onSelected: () => controller.setLanguage(language),
                 ),
             ],
           ),
@@ -250,7 +272,7 @@ class _ConditionStep extends ConsumerWidget {
             children: [
               Text(
                 AppStrings.collectionQuantityLabel,
-                style: const TextStyle(color: AppColors.onSurface),
+                style: TextStyle(color: palette.onSurface),
               ),
               const Spacer(),
               IconButton(
@@ -259,11 +281,11 @@ class _ConditionStep extends ConsumerWidget {
               ),
               Text(
                 '${selection.quantity}',
-                style: const TextStyle(color: AppColors.onSurface, fontSize: 18),
+                style: TextStyle(color: palette.onSurface, fontSize: 18),
               ),
               IconButton(
                 icon: const Icon(Icons.add_circle_outline),
-                color: AppColors.accent,
+                color: palette.accent,
                 onPressed: () => controller.setQuantity(selection.quantity + 1),
               ),
             ],

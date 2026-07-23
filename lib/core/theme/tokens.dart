@@ -33,19 +33,96 @@ class AppTapTarget {
   static const double minSize = 56;
 }
 
-class AppColors {
-  const AppColors._();
+/// The app's color surfaces, as a [ThemeExtension] so a single set of named
+/// tokens resolves to either palette. Widgets read `AppPalette.of(context).x`
+/// rather than a const — that indirection is what makes the light/dark setting
+/// (step 9) possible, since otherwise the dark values are baked into widget code.
+@immutable
+class AppPalette extends ThemeExtension<AppPalette> {
+  const AppPalette({
+    required this.background,
+    required this.surface,
+    required this.surfaceRaised,
+    required this.accent,
+    required this.onSurface,
+    required this.onSurfaceMuted,
+    required this.divider,
+  });
 
-  static const Color background = Color(0xFF0B0B0D);
-  static const Color surface = Color(0xFF17171B);
-  static const Color surfaceRaised = Color(0xFF1F1F24);
+  final Color background;
+  final Color surface;
+  final Color surfaceRaised;
 
   /// The single accent color used throughout the app.
-  static const Color accent = Color(0xFFE0B341);
+  final Color accent;
 
-  static const Color onSurface = Color(0xFFF2F2F2);
-  static const Color onSurfaceMuted = Color(0xFFA0A0A8);
-  static const Color divider = Color(0xFF2A2A30);
+  final Color onSurface;
+  final Color onSurfaceMuted;
+  final Color divider;
+
+  static const AppPalette dark = AppPalette(
+    background: Color(0xFF0B0B0D),
+    surface: Color(0xFF17171B),
+    surfaceRaised: Color(0xFF1F1F24),
+    accent: Color(0xFFE0B341),
+    onSurface: Color(0xFFF2F2F2),
+    onSurfaceMuted: Color(0xFFA0A0A8),
+    divider: Color(0xFF2A2A30),
+  );
+
+  /// The light counterpart. The accent is a deeper gold than the dark
+  /// palette's `0xFFE0B341` — that value is tuned for contrast against near
+  /// black and fails legibility as text or a border on a light surface.
+  static const AppPalette light = AppPalette(
+    background: Color(0xFFF6F6F8),
+    surface: Color(0xFFFFFFFF),
+    surfaceRaised: Color(0xFFEBEBEF),
+    accent: Color(0xFF8A6410),
+    onSurface: Color(0xFF16161A),
+    onSurfaceMuted: Color(0xFF5B5B66),
+    divider: Color(0xFFD7D7DE),
+  );
+
+  /// Falls back to [dark] rather than asserting: several widget tests pump a
+  /// bare `MaterialApp` with no theme, and the app is dark-first anyway, so an
+  /// unregistered extension should render the default look, not crash.
+  static AppPalette of(BuildContext context) =>
+      Theme.of(context).extension<AppPalette>() ?? dark;
+
+  @override
+  AppPalette copyWith({
+    Color? background,
+    Color? surface,
+    Color? surfaceRaised,
+    Color? accent,
+    Color? onSurface,
+    Color? onSurfaceMuted,
+    Color? divider,
+  }) {
+    return AppPalette(
+      background: background ?? this.background,
+      surface: surface ?? this.surface,
+      surfaceRaised: surfaceRaised ?? this.surfaceRaised,
+      accent: accent ?? this.accent,
+      onSurface: onSurface ?? this.onSurface,
+      onSurfaceMuted: onSurfaceMuted ?? this.onSurfaceMuted,
+      divider: divider ?? this.divider,
+    );
+  }
+
+  @override
+  AppPalette lerp(ThemeExtension<AppPalette>? other, double t) {
+    if (other is! AppPalette) return this;
+    return AppPalette(
+      background: Color.lerp(background, other.background, t)!,
+      surface: Color.lerp(surface, other.surface, t)!,
+      surfaceRaised: Color.lerp(surfaceRaised, other.surfaceRaised, t)!,
+      accent: Color.lerp(accent, other.accent, t)!,
+      onSurface: Color.lerp(onSurface, other.onSurface, t)!,
+      onSurfaceMuted: Color.lerp(onSurfaceMuted, other.onSurfaceMuted, t)!,
+      divider: Color.lerp(divider, other.divider, t)!,
+    );
+  }
 }
 
 /// Colors for the compact condition chips, keyed by the short code
@@ -62,6 +139,12 @@ class ConditionChipColors {
     'PL': Color(0xFFE0602F),
     'PO': Color(0xFFC13535),
   };
+
+  /// Label ink for a *selected* chip. Fixed, not palette-derived: the fills
+  /// above are mid-to-light in both themes, so the label must stay dark in
+  /// light mode too — using the palette's background would put near-white text
+  /// on a pale green chip.
+  static const Color onSelected = Color(0xFF0B0B0D);
 }
 
 /// The home screen is four large tiles: Log Cards, My Collection,

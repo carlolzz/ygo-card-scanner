@@ -64,7 +64,7 @@ class _RunningView extends StatelessWidget {
           state.phase == SyncPhase.writing
               ? AppStrings.syncWritingMessage
               : AppStrings.syncFetchingMessage,
-          style: const TextStyle(color: AppColors.onSurfaceMuted),
+          style: TextStyle(color: AppPalette.of(context).onSurfaceMuted),
         ),
       ],
     );
@@ -76,15 +76,16 @@ class _FailureView extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final palette = AppPalette.of(context);
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        const Icon(Icons.cloud_off, color: AppColors.onSurfaceMuted, size: 48),
+        Icon(Icons.cloud_off, color: palette.onSurfaceMuted, size: 48),
         const SizedBox(height: AppSpacing.md),
-        const Text(
+        Text(
           AppStrings.syncErrorMessage,
           textAlign: TextAlign.center,
-          style: TextStyle(color: AppColors.onSurfaceMuted),
+          style: TextStyle(color: palette.onSurfaceMuted),
         ),
         const SizedBox(height: AppSpacing.md),
         FilledButton(

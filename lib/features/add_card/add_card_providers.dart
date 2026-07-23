@@ -3,12 +3,14 @@ import 'package:riverpod_annotation/riverpod_annotation.dart';
 import '../../data/repositories/card_repository.dart';
 import '../../data/repositories/collection_repository.dart';
 import '../../data/seed/fake_collection_seed.dart';
+import '../../models/app_settings.dart';
 import '../../models/card_condition.dart';
 import '../../models/card_edition.dart';
 import '../../models/collection_entry.dart';
 import '../../models/printing.dart';
 import '../../models/ygo_card.dart';
 import '../collection/collection_providers.dart';
+import '../settings/settings_providers.dart';
 
 part 'add_card_providers.g.dart';
 
@@ -55,8 +57,24 @@ Future<List<YgoCard>> addCardSearchResults(Ref ref) async {
 
 @riverpod
 class AddCardSelectionController extends _$AddCardSelectionController {
+  /// The user's configured defaults, read once when this controller is built.
+  ///
+  /// `ref.read`, not `watch`: changing a default mid-wizard must not reset the
+  /// card the user is part-way through logging. The new value takes effect the
+  /// next time the screen is opened (this controller is autoDispose). The
+  /// `?? const AppSettings()` fallback is for widget tests that pump this
+  /// screen without a resolved settings load — `App` gates on it in production.
+  late final AppSettings _settings =
+      ref.read(settingsControllerProvider).value ?? const AppSettings();
+
+  AddCardSelection _initial() => AddCardSelection(
+    condition: _settings.defaultCondition,
+    edition: _settings.defaultEdition,
+    language: _settings.language,
+  );
+
   @override
-  AddCardSelection build() => const AddCardSelection();
+  AddCardSelection build() => _initial();
 
   /// Selects a card and fetches its printings. The printing step is skipped
   /// (straight to condition, `printing` left null) when none are found —
@@ -169,7 +187,7 @@ class AddCardSelectionController extends _$AddCardSelectionController {
   }
 
   void backToSearch() {
-    state = const AddCardSelection();
+    state = _initial();
   }
 
   void backToPrinting() {
@@ -204,6 +222,8 @@ class AddCardSelectionController extends _$AddCardSelectionController {
       ),
     );
     ref.invalidate(collectionEntriesProvider);
-    state = const AddCardSelection();
+    // Back to search for the next card — with the defaults restored, not the
+    // grade the user happened to pick for the card they just saved.
+    state = _initial();
   }
 }

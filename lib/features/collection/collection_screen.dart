@@ -54,7 +54,9 @@ class CollectionScreen extends ConsumerWidget {
                   padding: const EdgeInsets.all(AppSpacing.lg),
                   child: Text(
                     '$error',
-                    style: const TextStyle(color: AppColors.onSurfaceMuted),
+                    style: TextStyle(
+                      color: AppPalette.of(context).onSurfaceMuted,
+                    ),
                     textAlign: TextAlign.center,
                   ),
                 ),
@@ -124,7 +126,7 @@ class _CollectionList extends StatelessWidget {
           padding: const EdgeInsets.all(AppSpacing.lg),
           child: Text(
             AppStrings.collectionEmptyMessage,
-            style: const TextStyle(color: AppColors.onSurfaceMuted),
+            style: TextStyle(color: AppPalette.of(context).onSurfaceMuted),
             textAlign: TextAlign.center,
           ),
         ),

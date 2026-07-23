@@ -5,9 +5,9 @@ import '../features/collection/collection_detail_screen.dart';
 import '../features/collection/collection_screen.dart';
 import '../features/home/home_screen.dart';
 import '../features/scan/scan_screen.dart';
+import '../features/settings/settings_screen.dart';
+import '../features/statistics/statistics_screen.dart';
 import '../models/collection_entry_with_card.dart';
-import '../shared/widgets/coming_soon_screen.dart';
-import 'constants.dart';
 import 'routes.dart';
 
 GoRouter buildAppRouter() {
@@ -38,13 +38,11 @@ GoRouter buildAppRouter() {
       ),
       GoRoute(
         path: AppRoutes.statistics,
-        builder: (context, state) =>
-            const ComingSoonScreen(title: AppStrings.homeTileStatistics),
+        builder: (context, state) => const StatisticsScreen(),
       ),
       GoRoute(
         path: AppRoutes.settings,
-        builder: (context, state) =>
-            const ComingSoonScreen(title: AppStrings.homeTileSettings),
+        builder: (context, state) => const SettingsScreen(),
       ),
     ],
   );

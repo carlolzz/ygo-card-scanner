@@ -20,6 +20,7 @@ class CollectionFilterBar extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final filter = ref.watch(collectionFilterControllerProvider);
     final controller = ref.read(collectionFilterControllerProvider.notifier);
+    final palette = AppPalette.of(context);
 
     return Padding(
       padding: const EdgeInsets.symmetric(
@@ -30,16 +31,16 @@ class CollectionFilterBar extends ConsumerWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           TextField(
-            style: const TextStyle(color: AppColors.onSurface),
+            style: TextStyle(color: palette.onSurface),
             decoration: InputDecoration(
               hintText: AppStrings.collectionSearchHint,
-              hintStyle: const TextStyle(color: AppColors.onSurfaceMuted),
-              prefixIcon: const Icon(
+              hintStyle: TextStyle(color: palette.onSurfaceMuted),
+              prefixIcon: Icon(
                 Icons.search,
-                color: AppColors.onSurfaceMuted,
+                color: palette.onSurfaceMuted,
               ),
               filled: true,
-              fillColor: AppColors.surfaceRaised,
+              fillColor: palette.surfaceRaised,
               border: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(AppRadius.md),
                 borderSide: BorderSide.none,
@@ -55,7 +56,7 @@ class CollectionFilterBar extends ConsumerWidget {
                 LabeledChoiceChip(
                   label: AppStrings.collectionFilterAll,
                   selected: filter.condition == null,
-                  selectedColor: AppColors.accent,
+                  selectedColor: palette.accent,
                   onSelected: () => controller.setCondition(null),
                 ),
                 for (final condition in CardCondition.values) ...[
@@ -80,7 +81,7 @@ class CollectionFilterBar extends ConsumerWidget {
                 LabeledChoiceChip(
                   label: AppStrings.collectionFilterAll,
                   selected: filter.edition == null,
-                  selectedColor: AppColors.accent,
+                  selectedColor: palette.accent,
                   onSelected: () => controller.setEdition(null),
                 ),
                 for (final edition in CardEdition.values) ...[
@@ -88,16 +89,16 @@ class CollectionFilterBar extends ConsumerWidget {
                   LabeledChoiceChip(
                     label: edition.label,
                     selected: filter.edition == edition,
-                    selectedColor: AppColors.accent,
+                    selectedColor: palette.accent,
                     onSelected: () => controller.setEdition(edition),
                   ),
                 ],
                 const SizedBox(width: AppSpacing.md),
                 DropdownButton<CollectionSortBy>(
                   value: filter.sortBy,
-                  dropdownColor: AppColors.surfaceRaised,
+                  dropdownColor: palette.surfaceRaised,
                   underline: const SizedBox.shrink(),
-                  style: const TextStyle(color: AppColors.onSurface),
+                  style: TextStyle(color: palette.onSurface),
                   items: const [
                     DropdownMenuItem(
                       value: CollectionSortBy.name,

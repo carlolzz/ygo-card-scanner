@@ -226,6 +226,39 @@ class CollectionDao {
     return Sqflite.firstIntValue(result) ?? 0;
   }
 
+  /// Total copies (summed quantity) grouped by [condition] db value, for the
+  /// statistics screen. Keyed by the stored SCREAMING_SNAKE value.
+  Future<Map<String, int>> sumByCondition() => _sumByColumn('condition');
+
+  /// Total copies grouped by language code (e.g. `EN`, `DE`).
+  Future<Map<String, int>> sumByLanguage() => _sumByColumn('language');
+
+  /// A fixed, non-user-supplied column of `collection_entries` — safe to
+  /// interpolate. NULLs are folded to the empty string.
+  Future<Map<String, int>> _sumByColumn(String column) async {
+    final rows = await _db.rawQuery(
+      'SELECT COALESCE($column, \'\') AS k, SUM(quantity) AS n '
+      'FROM collection_entries GROUP BY k',
+    );
+    return {
+      for (final row in rows) row['k']! as String: row['n']! as int,
+    };
+  }
+
+  /// Total copies grouped by the joined `cards.type` (Effect Monster / Spell
+  /// Card / …). NULL types fold to the empty string.
+  Future<Map<String, int>> sumByCardType() async {
+    final rows = await _db.rawQuery('''
+      SELECT COALESCE(c.type, '') AS k, SUM(ce.quantity) AS n
+      FROM collection_entries ce
+      JOIN cards c ON c.passcode = ce.passcode
+      GROUP BY k
+    ''');
+    return {
+      for (final row in rows) row['k']! as String: row['n']! as int,
+    };
+  }
+
   Future<List<CollectionEntry>> getEntriesForPasscode(String passcode) async {
     final rows = await _db.query(
       'collection_entries',

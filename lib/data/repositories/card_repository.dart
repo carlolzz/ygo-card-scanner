@@ -79,6 +79,16 @@ class CardRepository {
     }
   }
 
+  /// When the last successful [sync] finished, or null if none ever has.
+  /// Reads the same `last_sync` stamp [needsSync] checks.
+  Future<DateTime?> lastSyncedAt() async {
+    final stored = await _metaDao.get('last_sync');
+    if (stored == null) return null;
+    final millis = int.tryParse(stored);
+    if (millis == null) return null;
+    return DateTime.fromMillisecondsSinceEpoch(millis);
+  }
+
   /// `true` if no real sync has ever completed — either signal missing
   /// (no `last_sync` stamp, or an empty `cards` table) means the app needs
   /// to run [sync] before it has any real data to work with.

@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/constants.dart';
 import '../../core/theme/tokens.dart';
 import '../../data/repositories/collection_repository.dart';
+import '../../models/card_language.dart';
 import '../../models/collection_entry_with_card.dart';
 import '../../models/printing.dart';
 import '../../shared/widgets/card_thumbnail.dart';
@@ -36,6 +37,7 @@ class _CollectionDetailScreenState
     final conditionColor =
         ConditionChipColors.byShortCode[entry.condition.shortCode]!;
 
+    final palette = AppPalette.of(context);
     return Scaffold(
       appBar: AppBar(
         title: Text(card.name),
@@ -71,7 +73,7 @@ class _CollectionDetailScreenState
               child: Text(
                 entry.condition.label,
                 style: const TextStyle(
-                  color: AppColors.background,
+                  color: ConditionChipColors.onSelected,
                   fontWeight: FontWeight.bold,
                 ),
               ),
@@ -118,7 +120,7 @@ class _CollectionDetailScreenState
             ),
             _DetailRow(
               label: AppStrings.collectionLanguageLabel,
-              value: entry.language,
+              value: languageLabel(entry.language),
             ),
             if (card.description != null) ...[
               const SizedBox(height: AppSpacing.md),
@@ -126,15 +128,16 @@ class _CollectionDetailScreenState
                 card.isNormalMonster
                     ? AppStrings.collectionFlavorTextLabel
                     : AppStrings.collectionCardEffectLabel,
-                style: const TextStyle(
-                  color: AppColors.onSurface,
+                style: TextStyle(
+                  color: palette.onSurface,
                   fontWeight: FontWeight.bold,
                 ),
               ),
               const SizedBox(height: AppSpacing.xs),
               Text(
                 card.description!,
-                style: const TextStyle(color: AppColors.onSurfaceMuted),
+                style: TextStyle(
+                  color: palette.onSurfaceMuted),
               ),
             ],
             const SizedBox(height: AppSpacing.lg),
@@ -142,7 +145,8 @@ class _CollectionDetailScreenState
               children: [
                 Text(
                   AppStrings.collectionQuantityLabel,
-                  style: const TextStyle(color: AppColors.onSurface),
+                  style: TextStyle(
+                  color: palette.onSurface),
                 ),
                 const Spacer(),
                 IconButton(
@@ -151,18 +155,19 @@ class _CollectionDetailScreenState
                 ),
                 Text(
                   '$_quantity',
-                  style: const TextStyle(
-                    color: AppColors.onSurface,
+                  style: TextStyle(
+                  color: palette.onSurface,
                     fontSize: 18,
                   ),
                 ),
                 IconButton(
                   icon: const Icon(Icons.add_circle_outline),
-                  color: AppColors.accent,
+                  color: palette.accent,
                   onPressed: () => _increment(entry.id!),
                 ),
               ],
             ),
+            _LanguageBreakdown(passcode: entry.passcode),
           ],
         ),
       ),
@@ -224,6 +229,52 @@ class _CollectionDetailScreenState
   }
 }
 
+/// Per-language totals for this card, summed across all of its entries. Shown
+/// only when the card is held in more than one language — passcodes are
+/// language-independent, so the same card in English and German lives as two
+/// rows under one passcode, and this is where those rows are reunited.
+class _LanguageBreakdown extends ConsumerWidget {
+  const _LanguageBreakdown({required this.passcode});
+
+  final String passcode;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final entriesAsync = ref.watch(entriesForPasscodeProvider(passcode));
+    final entries = entriesAsync.value;
+    if (entries == null) return const SizedBox.shrink();
+
+    final byLanguage = <String, int>{};
+    for (final entry in entries) {
+      byLanguage[entry.language] =
+          (byLanguage[entry.language] ?? 0) + entry.quantity;
+    }
+    if (byLanguage.length < 2) return const SizedBox.shrink();
+
+    final languages = byLanguage.keys.toList()..sort();
+    final palette = AppPalette.of(context);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const SizedBox(height: AppSpacing.md),
+        Text(
+          AppStrings.collectionByLanguageLabel,
+          style: TextStyle(
+            color: palette.onSurface,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        const SizedBox(height: AppSpacing.xs),
+        for (final language in languages)
+          _DetailRow(
+            label: languageLabel(language),
+            value: '×${byLanguage[language]}',
+          ),
+      ],
+    );
+  }
+}
+
 class _DetailRow extends StatelessWidget {
   const _DetailRow({required this.label, required this.value});
 
@@ -232,22 +283,17 @@ class _DetailRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = AppPalette.of(context);
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
       child: Row(
         children: [
           SizedBox(
             width: 100,
-            child: Text(
-              label,
-              style: const TextStyle(color: AppColors.onSurfaceMuted),
-            ),
+            child: Text(label, style: TextStyle(color: palette.onSurfaceMuted)),
           ),
           Expanded(
-            child: Text(
-              value,
-              style: const TextStyle(color: AppColors.onSurface),
-            ),
+            child: Text(value, style: TextStyle(color: palette.onSurface)),
           ),
         ],
       ),

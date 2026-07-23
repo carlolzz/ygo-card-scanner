@@ -8,6 +8,7 @@ import '../../core/routes.dart';
 import '../../core/theme/tokens.dart';
 import '../../models/card_condition.dart';
 import '../../models/card_edition.dart';
+import '../../models/card_language.dart';
 import '../../shared/widgets/card_thumbnail.dart';
 import '../../shared/widgets/labeled_choice_chip.dart';
 import 'art_matcher.dart';
@@ -52,9 +53,10 @@ class _ScanScreenState extends ConsumerState<ScanScreen>
   @override
   Widget build(BuildContext context) {
     final scan = ref.watch(scanControllerProvider);
+    final palette = AppPalette.of(context);
 
     return Scaffold(
-      backgroundColor: AppColors.background,
+      backgroundColor: palette.background,
       extendBodyBehindAppBar: true,
       appBar: AppBar(
         backgroundColor: Colors.transparent,
@@ -100,6 +102,11 @@ class _ScanScreenState extends ConsumerState<ScanScreen>
   }
 }
 
+/// Backdrop for the camera layer and its overlays. Fixed to the dark palette
+/// regardless of the user's theme: these sit on live camera imagery rather than
+/// on app chrome, and a light scrim behind a viewfinder reads as a glitch.
+final Color _cameraScrim = AppPalette.dark.background;
+
 /// The live preview, or a neutral background until the camera is ready. Reads
 /// the controller from [cameraServiceProvider] without forcing it to start —
 /// starting is owned by [passcodeReadings]. Watching [scanControllerProvider]
@@ -111,13 +118,13 @@ class _CameraLayer extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final controller = ref.watch(cameraServiceProvider).previewController;
     if (controller == null || !controller.value.isInitialized) {
-      return const ColoredBox(color: AppColors.background);
+      return ColoredBox(color: _cameraScrim);
     }
     return ListenableBuilder(
       listenable: controller,
       builder: (context, _) => controller.value.isInitialized
           ? CameraPreview(controller)
-          : const ColoredBox(color: AppColors.background),
+          : ColoredBox(color: _cameraScrim),
     );
   }
 }
@@ -140,16 +147,16 @@ class _ReticleOverlay extends StatelessWidget {
               height: height,
               decoration: BoxDecoration(
                 border: Border.all(
-                  color: AppColors.accent,
+                  color: AppPalette.dark.accent,
                   width: ScanReticleTokens.borderWidth,
                 ),
                 borderRadius: BorderRadius.circular(AppRadius.sm),
               ),
               alignment: Alignment.center,
-              child: const Text(
+              child: Text(
                 AppStrings.scanHint,
                 textAlign: TextAlign.center,
-                style: TextStyle(color: AppColors.onSurface),
+                style: TextStyle(color: AppPalette.dark.onSurface),
               ),
             ),
           ),
@@ -187,26 +194,26 @@ class _StatusBanner extends StatelessWidget {
               vertical: AppSpacing.sm,
             ),
             decoration: BoxDecoration(
-              color: AppColors.surface.withValues(alpha: 0.8),
+              color: _cameraScrim.withValues(alpha: 0.8),
               borderRadius: BorderRadius.circular(AppRadius.lg),
             ),
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
                 if (busy) ...[
-                  const SizedBox(
+                  SizedBox(
                     width: 16,
                     height: 16,
                     child: CircularProgressIndicator(
                       strokeWidth: 2,
-                      color: AppColors.accent,
+                      color: AppPalette.dark.accent,
                     ),
                   ),
                   const SizedBox(width: AppSpacing.sm),
                 ],
                 Text(
                   label,
-                  style: const TextStyle(color: AppColors.onSurface),
+                  style: TextStyle(color: AppPalette.dark.onSurface),
                 ),
               ],
             ),
@@ -228,13 +235,14 @@ class _MatchedPanel extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final controller = ref.read(scanControllerProvider.notifier);
     final card = state.matchedCard!;
+    final palette = AppPalette.of(context);
 
     return Align(
       alignment: Alignment.bottomCenter,
       child: Container(
         width: double.infinity,
-        decoration: const BoxDecoration(
-          color: AppColors.surface,
+        decoration: BoxDecoration(
+          color: palette.surface,
           borderRadius: BorderRadius.vertical(
             top: Radius.circular(AppRadius.lg),
           ),
@@ -261,8 +269,8 @@ class _MatchedPanel extends ConsumerWidget {
                         children: [
                           Text(
                             card.name,
-                            style: const TextStyle(
-                              color: AppColors.onSurface,
+                            style: TextStyle(
+                              color: palette.onSurface,
                               fontWeight: FontWeight.bold,
                               fontSize: 18,
                             ),
@@ -270,8 +278,8 @@ class _MatchedPanel extends ConsumerWidget {
                           if (card.type != null)
                             Text(
                               card.type!,
-                              style: const TextStyle(
-                                color: AppColors.onSurfaceMuted,
+                              style: TextStyle(
+                                color: palette.onSurfaceMuted,
                               ),
                             ),
                         ],
@@ -279,7 +287,7 @@ class _MatchedPanel extends ConsumerWidget {
                     ),
                     IconButton(
                       tooltip: AppStrings.scanRescanButton,
-                      icon: const Icon(Icons.close, color: AppColors.onSurface),
+                      icon: Icon(Icons.close, color: palette.onSurface),
                       onPressed: controller.dismiss,
                     ),
                   ],
@@ -306,17 +314,30 @@ class _MatchedPanel extends ConsumerWidget {
                       LabeledChoiceChip(
                         label: edition.label,
                         selected: state.edition == edition,
-                        selectedColor: AppColors.accent,
+                        selectedColor: palette.accent,
                         onSelected: () => controller.setEdition(edition),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: AppSpacing.sm),
+                Wrap(
+                  spacing: AppSpacing.xs,
+                  children: [
+                    for (final language in kCardLanguages)
+                      LabeledChoiceChip(
+                        label: languageLabel(language),
+                        selected: state.language == language,
+                        selectedColor: palette.accent,
+                        onSelected: () => controller.setLanguage(language),
                       ),
                   ],
                 ),
                 const SizedBox(height: AppSpacing.md),
                 Row(
                   children: [
-                    const Text(
+                    Text(
                       AppStrings.collectionQuantityLabel,
-                      style: TextStyle(color: AppColors.onSurface),
+                      style: TextStyle(color: palette.onSurface),
                     ),
                     const Spacer(),
                     IconButton(
@@ -326,14 +347,14 @@ class _MatchedPanel extends ConsumerWidget {
                     ),
                     Text(
                       '${state.quantity}',
-                      style: const TextStyle(
-                        color: AppColors.onSurface,
+                      style: TextStyle(
+                        color: palette.onSurface,
                         fontSize: 18,
                       ),
                     ),
                     IconButton(
                       icon: const Icon(Icons.add_circle_outline),
-                      color: AppColors.accent,
+                      color: palette.accent,
                       onPressed: () =>
                           controller.setQuantity(state.quantity + 1),
                     ),
@@ -376,12 +397,13 @@ class _CandidatePanel extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final controller = ref.read(scanControllerProvider.notifier);
+    final palette = AppPalette.of(context);
     return Align(
       alignment: Alignment.bottomCenter,
       child: Container(
         width: double.infinity,
-        decoration: const BoxDecoration(
-          color: AppColors.surface,
+        decoration: BoxDecoration(
+          color: palette.surface,
           borderRadius: BorderRadius.vertical(top: Radius.circular(AppRadius.lg)),
         ),
         child: SafeArea(
@@ -402,11 +424,11 @@ class _CandidatePanel extends ConsumerWidget {
                   children: [
                     Row(
                       children: [
-                        const Expanded(
+                        Expanded(
                           child: Text(
                             AppStrings.scanCandidatesTitle,
                             style: TextStyle(
-                              color: AppColors.onSurface,
+                              color: palette.onSurface,
                               fontWeight: FontWeight.bold,
                               fontSize: 18,
                             ),
@@ -414,15 +436,14 @@ class _CandidatePanel extends ConsumerWidget {
                         ),
                         IconButton(
                           tooltip: AppStrings.scanRescanButton,
-                          icon: const Icon(Icons.close,
-                              color: AppColors.onSurface),
+                          icon: Icon(Icons.close, color: palette.onSurface),
                           onPressed: controller.dismiss,
                         ),
                       ],
                     ),
-                    const Text(
+                    Text(
                       AppStrings.scanCandidatesSubtitle,
-                      style: TextStyle(color: AppColors.onSurfaceMuted),
+                      style: TextStyle(color: palette.onSurfaceMuted),
                     ),
                   ],
                 ),
@@ -441,13 +462,13 @@ class _CandidatePanel extends ConsumerWidget {
                       ),
                       title: Text(
                         candidate.card.name,
-                        style: const TextStyle(color: AppColors.onSurface),
+                        style: TextStyle(color: palette.onSurface),
                       ),
                       subtitle: candidate.card.type != null
                           ? Text(
                               candidate.card.type!,
-                              style: const TextStyle(
-                                color: AppColors.onSurfaceMuted,
+                              style: TextStyle(
+                                color: palette.onSurfaceMuted,
                               ),
                             )
                           : null,
@@ -548,12 +569,13 @@ class _BottomMessage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = AppPalette.of(context);
     return Align(
       alignment: Alignment.bottomCenter,
       child: Container(
         width: double.infinity,
-        decoration: const BoxDecoration(
-          color: AppColors.surface,
+        decoration: BoxDecoration(
+          color: palette.surface,
           borderRadius: BorderRadius.vertical(
             top: Radius.circular(AppRadius.lg),
           ),
@@ -568,8 +590,8 @@ class _BottomMessage extends StatelessWidget {
               children: [
                 Text(
                   title,
-                  style: const TextStyle(
-                    color: AppColors.onSurface,
+                  style: TextStyle(
+                    color: palette.onSurface,
                     fontWeight: FontWeight.bold,
                     fontSize: 18,
                   ),
@@ -577,7 +599,7 @@ class _BottomMessage extends StatelessWidget {
                 const SizedBox(height: AppSpacing.xs),
                 Text(
                   message,
-                  style: const TextStyle(color: AppColors.onSurfaceMuted),
+                  style: TextStyle(color: palette.onSurfaceMuted),
                 ),
                 const SizedBox(height: AppSpacing.md),
                 SizedBox(

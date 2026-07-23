@@ -26,6 +26,7 @@ class AppStrings {
   static const String collectionSetLabel = 'Set';
   static const String collectionEditionLabel = 'Edition';
   static const String collectionLanguageLabel = 'Language';
+  static const String collectionByLanguageLabel = 'Copies by language';
   static const String collectionCardTypeLabel = 'Type';
   static const String collectionCardAttributeLabel = 'Attribute';
   // Value is the YGOPRODeck API's `race` field (Dragon/Warrior/Spellcaster/
@@ -83,6 +84,44 @@ class AppStrings {
   static const String addCardSavedMessage = 'Added to your collection.';
   static const String addCardBackTooltip = 'Back';
   static const String addCardNoPrintingLabel = 'No printing selected';
+
+  static const String settingsTitle = 'Settings';
+  static const String settingsDefaultsSection = 'Defaults for new cards';
+  static const String settingsDefaultsDescription =
+      'Pre-selected when you scan or add a card. Language can still be changed '
+      'per card as you log it.';
+  static const String settingsConditionLabel = 'Condition';
+  static const String settingsEditionLabel = 'Edition';
+  static const String settingsLanguageLabel = 'Language';
+  static const String settingsAppearanceSection = 'Appearance';
+  static const String settingsThemeLabel = 'Theme';
+  static const String settingsDatabaseSection = 'Card database';
+  static const String settingsLastSyncedLabel = 'Last synced';
+  static const String settingsNeverSynced = 'Never';
+  static const String settingsResyncButton = 'Re-sync now';
+  static const String settingsResyncDialogTitle = 'Re-sync card database?';
+  static const String settingsResyncDialogMessage =
+      'This downloads the full card database again — several megabytes. Your '
+      'collection is not affected.';
+  static const String settingsResyncDialogCancel = 'Cancel';
+  static const String settingsResyncDialogConfirm = 'Re-sync';
+  static const String settingsResyncDoneMessage = 'Card database updated.';
+
+  static const String statisticsTitle = 'Statistics';
+  static const String statisticsEmptyMessage =
+      'No cards yet. Log some to see your stats.';
+  static const String statisticsTotalCopiesLabel = 'Total copies';
+  static const String statisticsDistinctCardsLabel = 'Distinct cards';
+  static const String statisticsByConditionSection = 'By condition';
+  static const String statisticsByLanguageSection = 'By language';
+  static const String statisticsByTypeSection = 'By card type';
+  static const String statisticsUnknownType = '(no type)';
+  static const String statisticsExportButton = 'Export collection to CSV';
+  static const String statisticsExportRunningMessage = 'Exporting…';
+  static String statisticsExportDoneMessage(String path) => 'Saved to $path';
+  static const String statisticsExportEmptyMessage = 'Nothing to export yet.';
+  static const String statisticsExportFailedMessage =
+      'Export failed. Please try again.';
 
   static const String syncFetchingMessage = 'Downloading card database…';
   static const String syncWritingMessage = 'Saving to your device…';

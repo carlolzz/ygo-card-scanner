@@ -2,22 +2,38 @@ import 'package:flutter/material.dart';
 
 import 'tokens.dart';
 
-ThemeData buildAppTheme() {
+/// Builds the app theme for [brightness], registering the matching
+/// [AppPalette] as a theme extension so every widget's `AppPalette.of(context)`
+/// resolves to the right surfaces.
+///
+/// Defaults to dark: the app is dark-first, and this keeps the theme correct
+/// anywhere the mode isn't (or can't yet be) known.
+ThemeData buildAppTheme({Brightness brightness = Brightness.dark}) {
+  final palette = brightness == Brightness.dark
+      ? AppPalette.dark
+      : AppPalette.light;
+
   final colorScheme = ColorScheme.fromSeed(
-    seedColor: AppColors.accent,
-    brightness: Brightness.dark,
-    surface: AppColors.surface,
+    seedColor: palette.accent,
+    brightness: brightness,
+    surface: palette.surface,
   );
 
   return ThemeData(
     useMaterial3: true,
-    brightness: Brightness.dark,
+    brightness: brightness,
     colorScheme: colorScheme,
-    scaffoldBackgroundColor: AppColors.background,
-    dividerColor: AppColors.divider,
-    textTheme: ThemeData.dark().textTheme.apply(
-      bodyColor: AppColors.onSurface,
-      displayColor: AppColors.onSurface,
-    ),
+    scaffoldBackgroundColor: palette.background,
+    dividerColor: palette.divider,
+    textTheme:
+        (brightness == Brightness.dark
+                ? ThemeData.dark()
+                : ThemeData.light())
+            .textTheme
+            .apply(
+              bodyColor: palette.onSurface,
+              displayColor: palette.onSurface,
+            ),
+    extensions: [palette],
   );
 }

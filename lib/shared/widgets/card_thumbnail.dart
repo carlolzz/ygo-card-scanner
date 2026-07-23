@@ -25,21 +25,25 @@ class CardThumbnail extends StatelessWidget {
         width: size,
         height: size,
         child: path == null
-            ? _placeholder()
+            ? _placeholder(context)
             : Image.file(
                 File(path),
                 fit: BoxFit.cover,
-                errorBuilder: (context, error, stackTrace) => _placeholder(),
+                errorBuilder: (context, error, stackTrace) =>
+                    _placeholder(context),
               ),
       ),
     );
   }
 
-  Widget _placeholder() => const ColoredBox(
-    color: AppColors.surfaceRaised,
-    child: Icon(
-      Icons.image_not_supported_outlined,
-      color: AppColors.onSurfaceMuted,
-    ),
-  );
+  Widget _placeholder(BuildContext context) {
+    final palette = AppPalette.of(context);
+    return ColoredBox(
+      color: palette.surfaceRaised,
+      child: Icon(
+        Icons.image_not_supported_outlined,
+        color: palette.onSurfaceMuted,
+      ),
+    );
+  }
 }

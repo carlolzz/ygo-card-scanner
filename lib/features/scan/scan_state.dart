@@ -1,5 +1,6 @@
 import '../../models/card_condition.dart';
 import '../../models/card_edition.dart';
+import '../../models/card_language.dart';
 import '../../models/ygo_card.dart';
 import 'art_matcher.dart';
 
@@ -50,6 +51,7 @@ class ScanState {
     this.candidates = const [],
     this.condition = CardCondition.nearMint,
     this.edition = CardEdition.unlimited,
+    this.language = kDefaultCardLanguage,
     this.quantity = 1,
     this.emptyFrameCount = 0,
     this.lastConfirmedPasscode,
@@ -76,6 +78,12 @@ class ScanState {
   /// User-editable grade for the pending match (defaults to Near Mint).
   final CardCondition condition;
   final CardEdition edition;
+
+  /// User-editable language for the pending match. Seeded from the settings
+  /// default when a match resolves, then overridable in the review gate — the
+  /// camera can't read a card's language, so this is picked by hand.
+  final String language;
+
   final int quantity;
 
   /// Empty frames observed since the last card left view — drives the
@@ -104,6 +112,7 @@ class ScanState {
     bool clearCandidates = false,
     CardCondition? condition,
     CardEdition? edition,
+    String? language,
     int? quantity,
     int? emptyFrameCount,
     String? lastConfirmedPasscode,
@@ -122,6 +131,7 @@ class ScanState {
           clearCandidates ? const [] : (candidates ?? this.candidates),
       condition: condition ?? this.condition,
       edition: edition ?? this.edition,
+      language: language ?? this.language,
       quantity: quantity ?? this.quantity,
       emptyFrameCount: emptyFrameCount ?? this.emptyFrameCount,
       lastConfirmedPasscode: clearLastConfirmedPasscode

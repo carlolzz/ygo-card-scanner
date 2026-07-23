@@ -36,8 +36,9 @@ class CollectionListTile extends StatelessWidget {
     final conditionColor =
         ConditionChipColors.byShortCode[entry.condition.shortCode]!;
 
+    final palette = AppPalette.of(context);
     return Material(
-      color: AppColors.surfaceRaised,
+      color: palette.surfaceRaised,
       borderRadius: BorderRadius.circular(AppRadius.md),
       child: InkWell(
         borderRadius: BorderRadius.circular(AppRadius.md),
@@ -62,7 +63,7 @@ class CollectionListTile extends StatelessWidget {
                   child: Text(
                     entry.condition.shortCode,
                     style: const TextStyle(
-                      color: AppColors.background,
+                      color: ConditionChipColors.onSelected,
                       fontWeight: FontWeight.bold,
                     ),
                   ),
@@ -74,13 +75,14 @@ class CollectionListTile extends StatelessWidget {
                     children: [
                       Text(
                         card.name,
-                        style: const TextStyle(color: AppColors.onSurface),
+                        style: TextStyle(
+                  color: palette.onSurface),
                       ),
                       const SizedBox(height: AppSpacing.xs),
                       Text(
                         _subtitle(entryWithCard),
-                        style: const TextStyle(
-                          color: AppColors.onSurfaceMuted,
+                        style: TextStyle(
+                  color: palette.onSurfaceMuted,
                         ),
                       ),
                     ],
@@ -88,21 +90,22 @@ class CollectionListTile extends StatelessWidget {
                 ),
                 IconButton(
                   icon: const Icon(Icons.remove_circle_outline),
-                  color: AppColors.onSurfaceMuted,
+                  color: palette.onSurfaceMuted,
                   onPressed: onDecrement,
                 ),
                 Text(
                   '${entry.quantity}',
-                  style: const TextStyle(color: AppColors.onSurface),
+                  style: TextStyle(
+                  color: palette.onSurface),
                 ),
                 IconButton(
                   icon: const Icon(Icons.add_circle_outline),
-                  color: AppColors.accent,
+                  color: palette.accent,
                   onPressed: onIncrement,
                 ),
                 IconButton(
                   icon: const Icon(Icons.delete_outline),
-                  color: AppColors.onSurfaceMuted,
+                  color: palette.onSurfaceMuted,
                   onPressed: onDelete,
                 ),
               ],

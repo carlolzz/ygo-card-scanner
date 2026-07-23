@@ -21,14 +21,17 @@ class LabeledChoiceChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = AppPalette.of(context);
     return ChoiceChip(
       label: Text(label),
       selected: selected,
       onSelected: (_) => onSelected(),
       selectedColor: selectedColor,
-      backgroundColor: AppColors.surfaceRaised,
+      backgroundColor: palette.surfaceRaised,
       labelStyle: TextStyle(
-        color: selected ? AppColors.background : AppColors.onSurface,
+        // Selected chips carry a fixed dark ink: the fill colors are the same
+        // in both themes, so this can't follow the palette's background.
+        color: selected ? ConditionChipColors.onSelected : palette.onSurface,
       ),
     );
   }

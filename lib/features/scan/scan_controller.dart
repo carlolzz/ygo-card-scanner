@@ -3,11 +3,13 @@ import 'package:riverpod_annotation/riverpod_annotation.dart';
 import '../../core/theme/tokens.dart';
 import '../../data/repositories/card_repository.dart';
 import '../../data/repositories/collection_repository.dart';
+import '../../models/app_settings.dart';
 import '../../models/card_condition.dart';
 import '../../models/card_edition.dart';
 import '../../models/collection_entry.dart';
 import '../../models/ygo_card.dart';
 import '../collection/collection_providers.dart';
+import '../settings/settings_providers.dart';
 import 'art_providers.dart';
 import 'scan_providers.dart';
 import 'scan_state.dart';
@@ -24,6 +26,21 @@ part 'scan_controller.g.dart';
 /// is written until the user has reviewed and confirmed it.
 @riverpod
 class ScanController extends _$ScanController {
+  /// The user's configured defaults, read once when this controller is built.
+  ///
+  /// `ref.read`, not `watch`: a settings change must not tear down and restart
+  /// a scan in progress. This controller is autoDispose, so the new value
+  /// applies the next time the scan screen is opened. The fallback covers
+  /// widget tests that pump the screen without a resolved settings load.
+  late final AppSettings _settings =
+      ref.read(settingsControllerProvider).value ?? const AppSettings();
+
+  ScanState _initialState() => ScanState(
+    status: ScanStatus.detecting,
+    condition: _settings.defaultCondition,
+    edition: _settings.defaultEdition,
+  );
+
   @override
   ScanState build() {
     ref.listen(passcodeReadingsProvider, (previous, next) {
@@ -34,7 +51,7 @@ class ScanController extends _$ScanController {
         loading: () {},
       );
     });
-    return const ScanState(status: ScanStatus.detecting);
+    return _initialState();
   }
 
   void _onReading(String? read) {
@@ -110,8 +127,9 @@ class ScanController extends _$ScanController {
         status: ScanStatus.matched,
         matchedCard: card,
         agreementBuffer: const [],
-        condition: CardCondition.nearMint,
-        edition: CardEdition.unlimited,
+        condition: _settings.defaultCondition,
+        edition: _settings.defaultEdition,
+        language: _settings.language,
         quantity: 1,
         ocrFailureStreak: 0,
       );
@@ -123,6 +141,9 @@ class ScanController extends _$ScanController {
 
   void setEdition(CardEdition edition) =>
       state = state.copyWith(edition: edition);
+
+  void setLanguage(String language) =>
+      state = state.copyWith(language: language);
 
   void setQuantity(int quantity) {
     if (quantity < 1) return;
@@ -167,8 +188,9 @@ class ScanController extends _$ScanController {
       matchedCard: card,
       clearCandidates: true,
       clearUnknownPasscode: true,
-      condition: CardCondition.nearMint,
-      edition: CardEdition.unlimited,
+      condition: _settings.defaultCondition,
+      edition: _settings.defaultEdition,
+      language: _settings.language,
       quantity: 1,
     );
   }
@@ -187,6 +209,9 @@ class ScanController extends _$ScanController {
         passcode: card.passcode,
         condition: state.condition,
         edition: state.edition,
+        // Picked in the review gate (seeded from the settings default). The
+        // camera can't read a card's language, so it's chosen by hand here.
+        language: state.language,
         quantity: state.quantity,
         createdAt: now,
         updatedAt: now,
@@ -220,7 +245,7 @@ class ScanController extends _$ScanController {
 
   /// Retries after a camera error by rebuilding the camera pipeline.
   void retry() {
-    state = const ScanState(status: ScanStatus.detecting);
+    state = _initialState();
     ref.invalidate(cameraServiceProvider);
     ref.invalidate(passcodeReadingsProvider);
   }

@@ -4,14 +4,19 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:ygo_scanner/data/db/dao/collection_dao.dart';
+import 'package:ygo_scanner/data/db/dao/meta_dao.dart';
 import 'package:ygo_scanner/data/db/database.dart';
+import 'package:ygo_scanner/data/repositories/settings_repository.dart';
 import 'package:ygo_scanner/data/seed/fake_collection_seed.dart';
+import 'package:ygo_scanner/features/settings/settings_providers.dart';
 import 'package:ygo_scanner/features/scan/art_matcher.dart';
 import 'package:ygo_scanner/features/scan/art_providers.dart';
 import 'package:ygo_scanner/features/scan/scan_controller.dart';
 import 'package:ygo_scanner/features/scan/scan_providers.dart';
 import 'package:ygo_scanner/features/scan/scan_state.dart';
+import 'package:ygo_scanner/models/app_settings.dart';
 import 'package:ygo_scanner/models/card_condition.dart';
+import 'package:ygo_scanner/models/card_edition.dart';
 import 'package:ygo_scanner/models/ygo_card.dart';
 
 import '../../data/db/test_db.dart';
@@ -139,6 +144,24 @@ void main() {
     expect(state().status, ScanStatus.confirmed);
   });
 
+  test('setLanguage before confirm overrides the settings default', () async {
+    await feed(blueEyes);
+    await feed(blueEyes);
+    await feed(blueEyes);
+    await settle();
+    expect(state().status, ScanStatus.matched);
+
+    // Camera can't read language, so it's picked by hand in the review gate.
+    container.read(scanControllerProvider.notifier).setLanguage('IT');
+    await container.read(scanControllerProvider.notifier).confirm();
+    await settle();
+
+    final scanned = (await CollectionDao(db).getEntriesForPasscode(blueEyes))
+        .where((e) => e.printingId == null);
+    expect(scanned, hasLength(1));
+    expect(scanned.first.language, 'IT');
+  });
+
   test('the same passcode is debounced until the frame goes empty', () async {
     // Confirm once.
     await feed(darkMagician);
@@ -241,6 +264,69 @@ void main() {
       container.read(scanControllerProvider.notifier).dismiss();
       expect(state().status, ScanStatus.detecting);
       expect(state().candidates, isEmpty);
+    });
+  });
+
+  group('settings defaults', () {
+    late ProviderContainer configured;
+
+    /// A container whose settings resolve to non-default preferences, so a
+    /// value that leaked through from the old hardcoded literals is visible.
+    setUp(() async {
+      await SettingsRepository(MetaDao(db)).save(
+        const AppSettings(
+          defaultCondition: CardCondition.lightPlayed,
+          defaultEdition: CardEdition.first,
+          language: 'DE',
+        ),
+      );
+      configured = ProviderContainer(
+        overrides: [
+          appDatabaseProvider.overrideWith((ref) async => db),
+          passcodeReadingsProvider.overrideWith((ref) => readings.stream),
+        ],
+      );
+      // Settings are read synchronously at controller build, so they have to
+      // be resolved first — exactly what App's gate guarantees in production.
+      await configured.read(settingsControllerProvider.future);
+      configured.listen(scanControllerProvider, (previous, next) {});
+      await settle();
+    });
+
+    tearDown(() => configured.dispose());
+
+    test('a match is offered for review with the configured defaults',
+        () async {
+      for (var i = 0; i < 3; i++) {
+        readings.add(PasscodeReading(seq++, darkMagician));
+        await settle();
+      }
+      await settle();
+
+      final s = configured.read(scanControllerProvider);
+      expect(s.status, ScanStatus.matched);
+      expect(s.condition, CardCondition.lightPlayed);
+      expect(s.edition, CardEdition.first);
+    });
+
+    test('confirm writes the configured condition, edition and language',
+        () async {
+      for (var i = 0; i < 3; i++) {
+        readings.add(PasscodeReading(seq++, blueEyes));
+        await settle();
+      }
+      await settle();
+      await configured.read(scanControllerProvider.notifier).confirm();
+      await settle();
+
+      // Before this step the scan path never passed `language` at all, so
+      // every scanned row silently landed on the model's 'EN' default.
+      final scanned = (await CollectionDao(db).getEntriesForPasscode(blueEyes))
+          .where((e) => e.printingId == null);
+      expect(scanned, hasLength(1));
+      expect(scanned.first.condition, CardCondition.lightPlayed);
+      expect(scanned.first.edition, CardEdition.first);
+      expect(scanned.first.language, 'DE');
     });
   });
 }

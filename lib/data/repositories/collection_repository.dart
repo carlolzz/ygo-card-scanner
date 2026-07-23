@@ -37,6 +37,12 @@ class CollectionRepository {
 
   Future<int> distinctCardCount() => _dao.distinctCardCount();
 
+  Future<Map<String, int>> sumByCondition() => _dao.sumByCondition();
+
+  Future<Map<String, int>> sumByLanguage() => _dao.sumByLanguage();
+
+  Future<Map<String, int>> sumByCardType() => _dao.sumByCardType();
+
   Future<List<CollectionEntry>> getEntriesForPasscode(String passcode) =>
       _dao.getEntriesForPasscode(passcode);
 }

@@ -18,8 +18,9 @@ class HomeMenuTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = AppPalette.of(context);
     return Material(
-      color: AppColors.surfaceRaised,
+      color: palette.surfaceRaised,
       borderRadius: BorderRadius.circular(AppRadius.lg),
       child: InkWell(
         borderRadius: BorderRadius.circular(AppRadius.lg),
@@ -34,11 +35,11 @@ class HomeMenuTile extends StatelessWidget {
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Icon(icon, color: AppColors.accent, size: 40),
+                Icon(icon, color: palette.accent, size: 40),
                 const SizedBox(height: AppSpacing.sm),
                 Text(
                   label,
-                  style: const TextStyle(color: AppColors.onSurface),
+                  style: TextStyle(color: palette.onSurface),
                   textAlign: TextAlign.center,
                 ),
               ],

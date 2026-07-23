@@ -181,6 +181,28 @@ void main() {
     });
   });
 
+  group('lastSyncedAt', () {
+    test('null when no sync has ever run', () async {
+      final repository = repositoryWith(_FakeDownloader());
+      expect(await repository.lastSyncedAt(), isNull);
+    });
+
+    test('reads back the stamp written by sync', () async {
+      final at = DateTime.fromMillisecondsSinceEpoch(1700000000000);
+      await MetaDao(db).set('last_sync', '${at.millisecondsSinceEpoch}');
+      final repository = repositoryWith(_FakeDownloader());
+
+      expect(await repository.lastSyncedAt(), at);
+    });
+
+    test('null rather than throwing on an unparseable stamp', () async {
+      await MetaDao(db).set('last_sync', 'not-a-number');
+      final repository = repositoryWith(_FakeDownloader());
+
+      expect(await repository.lastSyncedAt(), isNull);
+    });
+  });
+
   group('sync', () {
     test('fetches, writes cards/printings, and stamps last_sync', () async {
       final client = YgoProdeckClient(

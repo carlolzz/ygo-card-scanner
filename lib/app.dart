@@ -5,11 +5,14 @@ import 'package:go_router/go_router.dart';
 import 'core/constants.dart';
 import 'core/router.dart';
 import 'core/theme/app_theme.dart';
+import 'features/settings/settings_providers.dart';
 import 'features/sync/initial_sync_providers.dart';
 import 'features/sync/initial_sync_screen.dart';
+import 'models/app_settings.dart';
 
-/// Shown before [needsInitialSyncProvider]'s first read resolves — a
-/// couple of fast local queries, so this is on screen only briefly.
+/// Shown before [needsInitialSyncProvider] and [settingsControllerProvider]
+/// first resolve — a couple of fast local queries, so this is on screen only
+/// briefly.
 ///
 /// Deliberately animation-free: no indeterminate spinner. Like
 /// `InitialSyncScreen`'s transitional success state (a `SizedBox.shrink`), a
@@ -37,29 +40,52 @@ class App extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final needsSync = ref.watch(needsInitialSyncProvider);
+    final settings = ref.watch(settingsControllerProvider);
+
+    // Gating the whole app on settings (not just the themed branch) is what
+    // lets every downstream controller read them synchronously: by the time
+    // any route builds, `settingsControllerProvider` has a value. It also
+    // avoids a first-frame flash of dark before a light preference loads.
+    if (settings.isLoading) return _app(home: const _SplashScreen());
+
+    final themeMode =
+        (settings.value ?? const AppSettings()).themeMode.toMaterial();
 
     return needsSync.when(
       data: (needsSync) => needsSync
-          ? MaterialApp(
-              title: AppStrings.appName,
-              theme: buildAppTheme(),
-              home: const InitialSyncScreen(),
-            )
-          : MaterialApp.router(
-              title: AppStrings.appName,
-              theme: buildAppTheme(),
-              routerConfig: _router,
-            ),
-      loading: () => MaterialApp(
+          ? _app(home: const InitialSyncScreen(), themeMode: themeMode)
+          : _app(router: _router, themeMode: themeMode),
+      loading: () => _app(home: const _SplashScreen(), themeMode: themeMode),
+      error: (error, stackTrace) =>
+          _app(home: const InitialSyncScreen(), themeMode: themeMode),
+    );
+  }
+
+  /// One place that knows how the app is themed, so the four gate branches
+  /// can't drift apart.
+  Widget _app({
+    Widget? home,
+    GoRouter? router,
+    ThemeMode themeMode = ThemeMode.dark,
+  }) {
+    final theme = buildAppTheme(brightness: Brightness.light);
+    final darkTheme = buildAppTheme(brightness: Brightness.dark);
+
+    if (router != null) {
+      return MaterialApp.router(
         title: AppStrings.appName,
-        theme: buildAppTheme(),
-        home: const _SplashScreen(),
-      ),
-      error: (error, stackTrace) => MaterialApp(
-        title: AppStrings.appName,
-        theme: buildAppTheme(),
-        home: const InitialSyncScreen(),
-      ),
+        theme: theme,
+        darkTheme: darkTheme,
+        themeMode: themeMode,
+        routerConfig: router,
+      );
+    }
+    return MaterialApp(
+      title: AppStrings.appName,
+      theme: theme,
+      darkTheme: darkTheme,
+      themeMode: themeMode,
+      home: home,
     );
   }
 }

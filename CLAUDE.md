@@ -46,6 +46,7 @@ lib/
     api/card_image_downloader.dart
     repositories/card_repository.dart
     repositories/collection_repository.dart
+    repositories/settings_repository.dart
     seed/fake_collection_seed.dart
   models/
     ygo_card.dart
@@ -54,6 +55,9 @@ lib/
     collection_entry_with_card.dart
     card_condition.dart
     card_edition.dart
+    card_language.dart
+    app_settings.dart
+    app_theme_mode.dart
   features/
     home/
     scan/
@@ -149,6 +153,14 @@ Notes:
   `CardRepository.sync()`'s transaction. `CardRepository.needsSync()`
   treats a missing `last_sync` OR an empty `cards` table as "needs sync" —
   see the first-launch sync gate below.
+- **Passcodes are language- and rarity-independent** (see
+  `yu_gi_oh_tcg_passcodes.md`): the same card in English and German shares one
+  8-digit passcode, and so do two rarities of the same print. The schema
+  already handles this without a language/rarity column on `cards`: `language`
+  is part of the `collection_entries` UNIQUE key, so language variants are
+  distinct **rows under one passcode** (a card owned in EN and DE is two
+  entries, one `cards` row); rarity is carried by `printings` and separated via
+  `printing_id`. No migration was needed to support multi-language collections.
 
 ## Enum persistence rules
 
@@ -371,10 +383,126 @@ order):
    row). No DB migration, no new DB column, no pubspec dependency change (asset
    was already registered in step 6). `.g.dart` for the new `@riverpod` providers
    is regenerated, not committed.
-9. Settings (default condition, default edition, language, re-sync, theme)
-10. Export to CSV and .ydk; collection statistics. **Requirement**: must include an
-    option to export the entire local database to a CSV file (not just the
-    currently filtered/visible collection view).
+9. Settings (default condition, default edition, language, re-sync, theme) ← done
+   (verified: `flutter analyze` clean + full `flutter test` green, 174 tests).
+   **Persistence is the existing `meta` key/value table** via `MetaDao` — four
+   `settings.*` keys, **no migration, no schema change, no new dependency**
+   (`shared_preferences` isn't in the approved stack, and `meta` has carried
+   arbitrary keys since v1). `lib/data/repositories/settings_repository.dart`
+   load/saves `AppSettings` (`lib/models/app_settings.dart` — hand-written
+   immutable class + `copyWith`, matching the `AddCardSelection`/`ScanState`
+   convention, *not* freezed since it is not a DB row). **Every parse is
+   guarded**: `CardCondition.fromDb`/`CardEdition.fromDb`/`AppThemeMode.fromDb`
+   all throw on unknown values, and settings load during app start, so a
+   downgrade past a future enum member or a hand-edited db must degrade to the
+   default rather than take the app down (`SettingsRepository._parse`).
+   New enum `AppThemeMode` (`SYSTEM`/`LIGHT`/`DARK`, own `toDb`/`fromDb` +
+   `toMaterial()`), deliberately distinct from Flutter's `ThemeMode` so the
+   persisted format is ours. `kCardLanguages` (`lib/models/card_language.dart`)
+   is a plain const list of the domain skill's two-letter blocks — `language`
+   stays free-form TEXT so an unlisted language is still storable.
+   **Theme = real Light/Dark/System** (decided with the user): `AppColors` is
+   **gone**, replaced by `AppPalette extends ThemeExtension<AppPalette>` with
+   `dark`/`light` instances, and all 87 call sites across 13 widget files now
+   read `AppPalette.of(context).x`. Deleting rather than aliasing `AppColors`
+   made `flutter analyze` the completeness check for the refactor. Light's
+   accent is a deeper gold (`0xFF8A6410`) — the dark palette's `0xFFE0B341` is
+   tuned against near-black and fails contrast on a light surface.
+   **`AppPalette.of` falls back to `dark` when the extension isn't registered**,
+   which is load-bearing: five existing widget tests pump a bare `MaterialApp`
+   with no theme. Two colors are deliberately *not* palette-derived:
+   `ConditionChipColors.onSelected` (chip/badge fills are identical in both
+   themes, so their label ink must stay dark — a palette background would put
+   near-white text on a pale green chip), and `scan_screen.dart`'s
+   `_cameraScrim`/reticle/status banner, which sit on **live camera imagery**
+   rather than app chrome and stay `AppPalette.dark` in every theme (the bottom
+   panels do follow the palette). `buildAppTheme({brightness})` registers the
+   matching palette in `extensions:`; `App` builds both themes and drives
+   `themeMode`, and now **also gates on `settingsControllerProvider`** — it
+   stays on `_SplashScreen` until settings resolve, so no route ever renders
+   with unresolved settings and there's no light-to-dark flash.
+   **Defaults wiring**: `AddCardSelectionController` and `ScanController` each
+   read settings **once at build via `ref.read(...).value ?? const
+   AppSettings()`** — `ref.read`, *not* `watch`, so changing a default can't
+   reset a scan or wizard mid-flight; both are autoDispose, so the new value
+   applies next time the screen opens. (Riverpod 3 note: `AsyncValue.valueOrNull`
+   is gone — `.value` is the nullable getter.) The add-card resets in `save()`
+   and `backToSearch()` go through `_initial()`, not `const AddCardSelection()`,
+   or the second card would silently snap back to Near Mint. **Bug fixed along
+   the way**: `ScanController.confirm()` never passed `language` at all, so
+   every scanned row landed on the model's `'EN'` default regardless of
+   preference — it now passes the configured language. (Step 9 made the setting
+   the *only* language control; **step 10 revised this** to a per-card picker
+   seeded from the setting — see step 10.)
+   **Re-sync** is a separate `ResyncController` (reusing `InitialSyncState`/
+   `SyncPhase`) rather than a reuse of `InitialSyncController`, so the blocking
+   first-launch gate and its tests stay untouched; it has different post-success
+   duties (invalidates `needsInitialSync`, `lastSyncedAt` *and*
+   `collectionEntries`, since a sync rewrites the `cards`/`printings` the
+   collection list joins against) and a non-blocking failure contract. UI is a
+   confirm dialog then inline progress on the Settings screen, with a
+   "Last synced" stamp from the new `CardRepository.lastSyncedAt()`.
+   `/settings` now routes to `SettingsScreen`; **Statistics is the only
+   remaining `ComingSoonScreen`**, so `home_screen_test` no longer loops over
+   both tiles. **Gotcha**: the card-database section is the last item in the
+   Settings `ListView` and sits below the fold in the default 800x600 test
+   viewport — `settings_screen_test.dart` has a `scrollToDatabaseSection`
+   helper (`dragUntilVisible`) that re-sync tests must call first. A second
+   trap: after a save the "Added to your collection" SnackBar covers the bottom
+   of the add-card screen, so a follow-up tap there misses — the multi-card
+   test picks a zero-printing card to stay clear of it.
+10. Per-card language, CSV export, collection statistics ← done
+    (verified: `flutter analyze` clean + full `flutter test` green, 187 tests).
+    **Per-card language (reverses step 9's "setting is the only control"):**
+    passcodes are language-independent (`yu_gi_oh_tcg_passcodes.md`), so the
+    schema already stored languages as distinct `collection_entries` rows under
+    one passcode — no migration. The gap was UI: a language picker (a `Wrap` of
+    `LabeledChoiceChip`s over `kCardLanguages`, labelled via the new
+    `languageLabel`/`kCardLanguageNames` in `lib/models/card_language.dart`) now
+    appears in **both** logging flows, seeded from the settings default but
+    editable per card, because the camera can't read a card's language:
+    `_ConditionStep` in `add_card_screen.dart` (state/plumbing already existed
+    on `AddCardSelection`), and `_MatchedPanel` in `scan_screen.dart` (needed a
+    new `language` field on `ScanState` + `ScanController.setLanguage`, with
+    `confirm()` now writing `state.language`, seeded in `_lookup`/
+    `selectCandidate`). The Settings language control stays as the *default*.
+    The collection **detail** screen gained a `_LanguageBreakdown` ("Copies by
+    language") that sums quantity per language across a passcode's entries via a
+    new `entriesForPasscodeProvider` (reuses the existing
+    `getEntriesForPasscode` passthrough — no new SQL), shown only when a card is
+    held in >1 language. (Chosen over collapsing the list to one-tile-per-card.)
+    **CSV export (entire collection, not the filtered view):** pure RFC-4180
+    writer `collectionToCsv` in `lib/data/export/collection_csv.dart` (header +
+    all columns, enum `toDb()` values, UTC ISO-8601 timestamps, quote/escape),
+    offline-unit-tested; `CollectionExporter` writes it to
+    `<app documents>/ygo_collection_<date>.csv` via `path_provider` and returns
+    the path (no share/file-picker package — decided with the user), always
+    exporting `getAll(filter: const CollectionFilter())`. Its end-to-end test
+    mocks `path_provider` (new **dev-only** deps
+    `path_provider_platform_interface`/`plugin_platform_interface`; runtime stack
+    unchanged). **Statistics screen** (`lib/features/statistics/`, the last
+    `ComingSoonScreen`, now removed from `router.dart`): total copies, distinct
+    cards, and breakdowns by condition/language/card type from new
+    `CollectionDao` aggregates (`sumByCondition`/`sumByLanguage`/`sumByCardType`,
+    each DAO-tested) via `collectionStatsProvider`; hosts the CSV export button.
+    **Test gotcha**: the `home_screen_test` "navigates to Statistics" case
+    overrides `collectionStatsProvider` with a ready value rather than routing to
+    a db-backed screen — navigating *through go_router* to a screen that kicks
+    off the `sqflite_common_ffi` isolate mid route-transition does not settle
+    under a widget test and hangs to the 10-min timeout (a direct
+    `MaterialApp(home: StatisticsScreen())` pump inside `runAsync` is fine — see
+    `statistics_screen_test`). The `_LanguageBreakdown` provider watch degrades
+    to `SizedBox.shrink()` until it resolves, so the detail screen never blocks.
+    **`.ydk` export was dropped** (decided with the user): the format is a
+    *deck* list — passcodes only, one line per copy, `#main`/`#extra`/`!side`
+    with ≤60/≤15/≤15 limits — so it carries none of what makes a collection
+    row interesting (quantity, condition, set code, edition, language), and a
+    whole collection written into it isn't a legal deck that editors will
+    accept. EDOPro already covers deck building. CSV is therefore the
+    deliberate interchange format: it preserves every column and feeds
+    pandas/DuckDB/Polars, plus a separate web front-end the user plans to build
+    over the exported data. If deck building is ever added to *this* app,
+    `.ydk` export becomes worth revisiting — per deck, not per collection.
 
 ## Standing rules
 
@@ -393,3 +521,9 @@ stack of cards in the other hand. Card condition renders as compact colored
 chips using the MT/NM/EX short codes. The home menu is four large tiles:
 Log Cards, My Collection, Statistics, Settings. These decisions live in
 `lib/core/theme/tokens.dart` as named constants, not scattered magic numbers.
+
+Dark is still the default, but since step 9 the colors are **not** constants
+read directly by widgets: they live on `AppPalette` (a `ThemeExtension` with
+`dark`/`light` instances) and widgets read `AppPalette.of(context).x`. Adding a
+color means adding a field to `AppPalette` and giving it a value in *both*
+palettes — never a bare `Color` const in widget code.

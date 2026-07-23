@@ -28,6 +28,7 @@ CollectionEntry _entry({
   int? printingId,
   required CardCondition condition,
   CardEdition edition = CardEdition.unlimited,
+  String language = 'EN',
   int quantity = 1,
   int createdAt = 1000,
   int updatedAt = 1000,
@@ -37,6 +38,7 @@ CollectionEntry _entry({
     printingId: printingId,
     condition: condition,
     edition: edition,
+    language: language,
     quantity: quantity,
     createdAt: createdAt,
     updatedAt: updatedAt,
@@ -287,6 +289,55 @@ void main() {
     test('totalCardCount sums quantity and distinctCardCount counts unique passcodes', () async {
       expect(await collectionDao.totalCardCount(), 9);
       expect(await collectionDao.distinctCardCount(), 2);
+    });
+  });
+
+  group('statistics aggregates', () {
+    setUp(() async {
+      // Same card in two languages -> two rows under one passcode (passcodes
+      // are language-independent). Plus a second card in a different type.
+      await collectionDao.addOrIncrement(
+        _entry(
+          passcode: _blueEyes.passcode,
+          condition: CardCondition.nearMint,
+          language: 'EN',
+          quantity: 3,
+        ),
+      );
+      await collectionDao.addOrIncrement(
+        _entry(
+          passcode: _blueEyes.passcode,
+          condition: CardCondition.nearMint,
+          language: 'DE',
+          quantity: 2,
+        ),
+      );
+      await collectionDao.addOrIncrement(
+        _entry(
+          passcode: _redEyes.passcode,
+          condition: CardCondition.lightPlayed,
+          language: 'EN',
+          quantity: 5,
+        ),
+      );
+    });
+
+    test('sumByCondition sums quantity per condition db value', () async {
+      expect(await collectionDao.sumByCondition(), {
+        'NEAR_MINT': 5,
+        'LIGHT_PLAYED': 5,
+      });
+    });
+
+    test('sumByLanguage sums quantity per language code', () async {
+      expect(await collectionDao.sumByLanguage(), {'EN': 8, 'DE': 2});
+    });
+
+    test('sumByCardType sums quantity per joined cards.type', () async {
+      expect(await collectionDao.sumByCardType(), {
+        'Normal Monster': 5,
+        'Effect Monster': 5,
+      });
     });
   });
 

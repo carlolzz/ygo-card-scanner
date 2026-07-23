@@ -19,7 +19,7 @@ class ComingSoonScreen extends StatelessWidget {
           padding: const EdgeInsets.all(AppSpacing.lg),
           child: Text(
             AppStrings.comingSoonMessage,
-            style: const TextStyle(color: AppColors.onSurfaceMuted),
+            style: TextStyle(color: AppPalette.of(context).onSurfaceMuted),
           ),
         ),
       ),

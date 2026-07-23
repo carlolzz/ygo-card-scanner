@@ -5,6 +5,7 @@ import '../../data/repositories/collection_repository.dart';
 import '../../data/seed/fake_collection_seed.dart';
 import '../../models/card_condition.dart';
 import '../../models/card_edition.dart';
+import '../../models/collection_entry.dart';
 import '../../models/collection_entry_with_card.dart';
 
 part 'collection_providers.g.dart';
@@ -71,4 +72,16 @@ Future<List<CollectionEntryWithCard>> collectionEntries(Ref ref) async {
   final filter = ref.watch(collectionFilterControllerProvider);
   final repository = await ref.watch(collectionRepositoryProvider.future);
   return repository.getAll(filter: filter);
+}
+
+/// Every collection entry for one card (passcode), across languages, conditions
+/// and printings — the source for the detail screen's per-language breakdown.
+/// Reuses the existing `getEntriesForPasscode` passthrough; no new SQL.
+@riverpod
+Future<List<CollectionEntry>> entriesForPasscode(
+  Ref ref,
+  String passcode,
+) async {
+  final repository = await ref.watch(collectionRepositoryProvider.future);
+  return repository.getEntriesForPasscode(passcode);
 }

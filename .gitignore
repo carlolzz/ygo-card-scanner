@@ -51,3 +51,11 @@ app.*.map.json
 # build_hash_index.py local image cache (large, regenerable from YGOPRODeck).
 # The generated assets/card_hashes.json is committed; the cached art is not.
 tools/.image_cache/
+
+# Android release signing — never commit the keystore or its passwords.
+# key.properties.example (the committed template) is kept: it is a different
+# filename, so the pattern below does not match it.
+**/key.properties
+*.jks
+*.keystore
+/android/local.properties

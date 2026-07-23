@@ -92,4 +92,39 @@ void main() {
     // A field with a newline is quoted (and its newline is preserved verbatim).
     expect(csv, contains('"line1\nline2"'));
   });
+
+  group('formula-injection guard', () {
+    test('prefixes a name beginning with = with an apostrophe', () {
+      final line = collectionToCsv([
+        _row(passcode: '1', name: '=1+1'),
+      ]).split('\r\n')[1];
+      // Second column (name) is neutralized so a spreadsheet treats it as text.
+      expect(line, startsWith("1,'=1+1,"));
+    });
+
+    test('prefixes notes beginning with +, -, @, tab or CR', () {
+      for (final ch in ['+', '-', '@', '\t', '\r']) {
+        final csv = collectionToCsv([
+          _row(passcode: '1', name: 'Safe', notes: '${ch}danger'),
+        ]);
+        expect(csv, contains("'$ch"), reason: 'trigger char: ${ch.codeUnitAt(0)}');
+      }
+    });
+
+    test('leaves ordinary leading characters untouched', () {
+      final line = collectionToCsv([
+        _row(passcode: '1', name: 'Blue-Eyes', notes: 'mint copy'),
+      ]).split('\r\n')[1];
+      expect(line, isNot(contains("'")));
+    });
+
+    test('a formula field that also needs quoting is both prefixed and quoted',
+        () {
+      final line = collectionToCsv([
+        _row(passcode: '1', name: '=1,2'),
+      ]).split('\r\n')[1];
+      // Apostrophe guard runs first, then the comma forces RFC-4180 quoting.
+      expect(line, contains('"\'=1,2"'));
+    });
+  });
 }

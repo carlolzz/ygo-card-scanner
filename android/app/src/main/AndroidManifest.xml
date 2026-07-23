@@ -5,10 +5,17 @@
          alternative to scanning. -->
     <uses-permission android:name="android.permission.CAMERA"/>
     <uses-feature android:name="android.hardware.camera" android:required="false"/>
+    <!-- Required in the *release* manifest: the Flutter template only declares
+         INTERNET in the debug/profile manifests (for tooling), so without this
+         a release build has no network and the first-launch YGOPRODeck sync +
+         card-image downloads fail. -->
+    <uses-permission android:name="android.permission.INTERNET"/>
     <application
         android:label="ygo_scanner"
         android:name="${applicationName}"
-        android:icon="@mipmap/ic_launcher">
+        android:icon="@mipmap/ic_launcher"
+        android:allowBackup="false"
+        android:fullBackupContent="false">
         <activity
             android:name=".MainActivity"
             android:exported="true"

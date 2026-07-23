@@ -1,0 +1,21 @@
+# Template for android/key.properties.
+#
+# COPY this file to android/key.properties (which is gitignored) and fill in
+# your real values. NEVER commit key.properties or the .jks keystore itself.
+#
+# 1. Generate a keystore (you choose the passwords when prompted):
+#      keytool -genkey -v -keystore upload-keystore.jks -storetype JKS \
+#        -keyalg RSA -keysize 2048 -validity 10000 -alias upload
+#
+# 2. Copy this file:  cp key.properties.example key.properties
+#
+# 3. Fill in the four values below.
+#
+# storeFile may be an absolute path, or a path relative to the android/app
+# directory. When key.properties is absent, the release build falls back to
+# the debug keys (see build.gradle.kts), so the project still builds without it.
+
+storePassword=CHANGE_ME
+keyPassword=CHANGE_ME
+keyAlias=upload
+storeFile=/absolute/path/to/upload-keystore.jks

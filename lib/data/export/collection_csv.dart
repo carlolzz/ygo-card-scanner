@@ -51,13 +51,27 @@ String collectionToCsv(List<CollectionEntryWithCard> rows) {
 String _row(List<String> fields) => '${fields.map(_escape).join(',')}\r\n';
 
 String _escape(String field) {
+  final guarded = _guardFormula(field);
   final needsQuoting =
-      field.contains(',') ||
-      field.contains('"') ||
-      field.contains('\n') ||
-      field.contains('\r');
-  if (!needsQuoting) return field;
-  return '"${field.replaceAll('"', '""')}"';
+      guarded.contains(',') ||
+      guarded.contains('"') ||
+      guarded.contains('\n') ||
+      guarded.contains('\r');
+  if (!needsQuoting) return guarded;
+  return '"${guarded.replaceAll('"', '""')}"';
+}
+
+/// Mitigates CSV formula (DDE) injection: Excel / Google Sheets / LibreOffice
+/// interpret a field beginning with `=`, `+`, `-`, `@`, tab or CR as a formula.
+/// Prefixing such a field with an apostrophe forces those apps to treat it as
+/// literal text. In practice only `name`/`notes` can trigger this — numbers,
+/// enum codes and ISO timestamps never start with these characters — and a
+/// data consumer (pandas/DuckDB) will simply see a leading `'` on those rare
+/// fields.
+String _guardFormula(String field) {
+  if (field.isEmpty) return field;
+  const triggers = {'=', '+', '-', '@', '\t', '\r'};
+  return triggers.contains(field[0]) ? "'$field" : field;
 }
 
 String _isoUtc(int epochMs) =>

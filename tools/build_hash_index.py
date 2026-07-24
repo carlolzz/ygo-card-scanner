@@ -4,11 +4,18 @@ Build order step 6 (see CLAUDE.md). This tool:
 
   1. Fetches the full card database in ONE request from YGOPRODeck's
      `cardinfo.php` (same endpoint as `lib/data/api/ygoprodeck_client.dart`).
-  2. Downloads each artwork's *cropped* image (art box only, matching what the
-     scan pipeline crops at runtime), caching to disk so re-runs cost nothing.
-  3. Computes a perceptual hash (pHash) per artwork.
+  2. Downloads each card's *full* image (`image_url`), caching to disk so
+     re-runs cost nothing.
+  3. Crops the same art-box ROI the runtime crops from its warped card
+     (`ART_BOX_ROI`, mirroring `ArtMatchTuning.artBoxRoi`) and computes a
+     perceptual hash (pHash) of that crop.
   4. Emits `assets/card_hashes.json` mapping passcode -> pHash, consumed by
-     step 8's art-matching fallback (see .claude/skills/scan-pipeline.md).
+     the art-matching path (see .claude/skills/scan-pipeline.md).
+
+The index and the runtime therefore hash the *same function of a canonical
+upright card* — the ROI crop of the full card — so a clean photo of a card is
+close to its index entry instead of landing far away (the earlier index hashed
+YGOPRODeck's differently-shaped cropped-art image, a systematic mismatch).
 
 Every entry in a card's `card_images` array is indexed by its OWN `id` (its
 own passcode), so alternate artworks are matchable and resolve to the correct
@@ -52,12 +59,23 @@ from typing import Iterable
 CARDINFO_URL = "https://db.ygoprodeck.com/api/v7/cardinfo.php"
 # A descriptive User-Agent so YGOPRODeck can identify this traffic.
 USER_AGENT = "ygo_scanner-build_hash_index/1.0 (+https://github.com; card art pHash indexer)"
-OUTPUT_VERSION = 1
+# v2: hashes the ART_BOX_ROI crop of the FULL card image (was v1: YGOPRODeck's
+# cropped-art image). Bumped so the provenance is unambiguous.
+OUTPUT_VERSION = 2
 ALGORITHM = "phash"
+
+# Art-box ROI as (left, top, right, bottom) fractions of the upright card.
+# MUST stay in sync with `ArtMatchTuning.artBoxRoi` in
+# `lib/core/theme/tokens.dart` — index and runtime crop the same region.
+ART_BOX_ROI = (0.09, 0.19, 0.91, 0.68)
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_OUTPUT = _REPO_ROOT / "assets" / "card_hashes.json"
 DEFAULT_CACHE_DIR = _REPO_ROOT / "tools" / ".image_cache"
+# Full images live in their own cache namespace so they never collide with the
+# old v1 cropped-art cache (`<cache>/<passcode>.jpg`); a stale cropped file must
+# not be mistaken for a full one on a cache hit.
+FULL_IMAGE_SUBDIR = "full"
 
 DEFAULT_HASH_SIZE = 8
 DEFAULT_WORKERS = 4
@@ -70,35 +88,60 @@ DEFAULT_DELAY = 0.05
 
 
 def build_image_jobs(cardinfo_data: Iterable[dict]) -> list[tuple[str, str]]:
-    """Flatten `cardinfo.php` `data[]` into `(image_id, cropped_url)` jobs.
+    """Flatten `cardinfo.php` `data[]` into `(image_id, full_url)` jobs.
 
     Every entry in each card's `card_images` array is included (so alternate
     artworks are indexed) and keyed by that entry's own `id`. Duplicate ids
     (an artwork appearing under multiple cards) are emitted once, first-wins.
-    Entries missing an id or a cropped URL are skipped.
+    Entries missing an id or a full-image URL are skipped.
+
+    Uses the *full* card image (`image_url`); the art-box ROI is cropped later
+    (see `crop_to_roi`) so the index matches the runtime's ROI-of-warped-card.
     """
     jobs: list[tuple[str, str]] = []
     seen: set[str] = set()
     for card in cardinfo_data:
         for image in card.get("card_images", []) or []:
             image_id = image.get("id")
-            cropped_url = image.get("image_url_cropped")
-            if image_id is None or not cropped_url:
+            full_url = image.get("image_url")
+            if image_id is None or not full_url:
                 continue
             passcode = str(image_id)
             if passcode in seen:
                 continue
             seen.add(passcode)
-            jobs.append((passcode, cropped_url))
+            jobs.append((passcode, full_url))
     return jobs
 
 
-def build_output(hashes: dict[str, str], hash_size: int) -> dict:
-    """Wrap the passcode -> hex-hash map with metadata step 8 can validate."""
+def roi_pixel_box(
+    width: int, height: int, roi: tuple[float, float, float, float]
+) -> tuple[int, int, int, int]:
+    """Convert an (left, top, right, bottom) fractional ROI to a pixel box for
+    `PIL.Image.crop`. Mirrors the runtime's `(fraction * dimension).round()`
+    (see `_cropFromRoi` in `art_matcher.dart`)."""
+    left, top, right, bottom = roi
+    return (
+        round(left * width),
+        round(top * height),
+        round(right * width),
+        round(bottom * height),
+    )
+
+
+def build_output(
+    hashes: dict[str, str],
+    hash_size: int,
+    roi: tuple[float, float, float, float] = ART_BOX_ROI,
+) -> dict:
+    """Wrap the passcode -> hex-hash map with metadata the app can validate."""
     return {
         "version": OUTPUT_VERSION,
         "algorithm": ALGORITHM,
         "hash_size": hash_size,
+        # The ROI these hashes were cropped to — provenance; documents which
+        # region of the card each hash covers.
+        "roi": list(roi),
         "generated_at": datetime.now(timezone.utc)
         .replace(microsecond=0)
         .isoformat()
@@ -120,12 +163,12 @@ def fetch_cardinfo(url: str = CARDINFO_URL) -> list[dict]:
     return resp.json().get("data", []) or []
 
 
-def _download_one(passcode: str, url: str, cache_dir: Path, delay: float) -> Path | None:
-    """Download one cropped image to `<cache_dir>/<passcode>.jpg` (skip if
-    cached). Returns the path, or None on failure (logged, non-fatal)."""
+def _download_one(passcode: str, url: str, image_dir: Path, delay: float) -> Path | None:
+    """Download one full image to `<image_dir>/<passcode>.jpg` (skip if cached).
+    Returns the path, or None on failure (logged, non-fatal)."""
     import requests
 
-    dest = cache_dir / f"{passcode}.jpg"
+    dest = image_dir / f"{passcode}.jpg"
     if dest.exists() and dest.stat().st_size > 0:
         return dest  # cache hit: zero CDN cost
     try:
@@ -145,15 +188,19 @@ def download_all(
     workers: int,
     delay: float,
 ) -> dict[str, Path]:
-    """Download every job's image into the cache. Returns passcode -> path for
-    successes only. Cache hits make no network request."""
-    cache_dir.mkdir(parents=True, exist_ok=True)
+    """Download every job's full image into the cache. Returns passcode -> path
+    for successes only. Cache hits make no network request.
+
+    Full images use the `full/` sub-namespace so they never collide with the
+    old v1 cropped-art cache in the same `cache_dir`."""
+    image_dir = cache_dir / FULL_IMAGE_SUBDIR
+    image_dir.mkdir(parents=True, exist_ok=True)
     results: dict[str, Path] = {}
     done = 0
     total = len(jobs)
     with ThreadPoolExecutor(max_workers=workers) as pool:
         futures = {
-            pool.submit(_download_one, pc, url, cache_dir, delay): pc
+            pool.submit(_download_one, pc, url, image_dir, delay): pc
             for pc, url in jobs
         }
         for future in as_completed(futures):
@@ -168,8 +215,8 @@ def download_all(
 
 
 def hash_images(images: dict[str, Path], hash_size: int) -> dict[str, str]:
-    """Compute a pHash (hex string) per cached image. Undecodable images are
-    logged and skipped."""
+    """Crop each cached full image to `ART_BOX_ROI` and compute a pHash (hex
+    string) of the crop. Undecodable images are logged and skipped."""
     import imagehash  # lazy import
     from PIL import Image
 
@@ -179,7 +226,9 @@ def hash_images(images: dict[str, Path], hash_size: int) -> dict[str, str]:
     for passcode, path in images.items():
         try:
             with Image.open(path) as img:
-                hashes[passcode] = str(imagehash.phash(img, hash_size=hash_size))
+                box = roi_pixel_box(img.width, img.height, ART_BOX_ROI)
+                crop = img.crop(box)
+                hashes[passcode] = str(imagehash.phash(crop, hash_size=hash_size))
         except Exception as exc:  # noqa: BLE001 - skip a bad image, keep going
             print(f"  ! hash failed {passcode}: {exc}", file=sys.stderr)
         done += 1

@@ -18,7 +18,9 @@ if (keystorePropertiesFile.exists()) {
 
 android {
     namespace = "com.charliegordon.ygo_scanner"
-    compileSdk = flutter.compileSdkVersion
+    // OpenCV (opencv_core) pulls androidx.exifinterface:1.4.1, which requires
+    // compiling against API 34+. Pin 36 rather than the Flutter default.
+    compileSdk = 36
     ndkVersion = flutter.ndkVersion
 
     compileOptions {
@@ -31,9 +33,9 @@ android {
         applicationId = "com.charliegordon.ygo_scanner"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
-        // google_mlkit_text_recognition requires Android SDK 21+; floor it
-        // here so a lower Flutter default can't break the scan pipeline.
-        minSdk = maxOf(flutter.minSdkVersion, 21)
+        // ML Kit needs SDK 21+, OpenCV (opencv_core) needs 24+; floor to the
+        // higher of the two so a lower Flutter default can't break either.
+        minSdk = maxOf(flutter.minSdkVersion, 24)
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName

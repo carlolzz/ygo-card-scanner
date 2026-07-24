@@ -101,7 +101,7 @@ void main() {
     });
   });
 
-  testWidgets('decrementing quantity to zero removes the row', (
+  testWidgets('decrementing quantity to zero removes the row after confirming', (
     tester,
   ) async {
     await tester.runAsync(() async {
@@ -117,6 +117,14 @@ void main() {
           matching: find.byIcon(Icons.remove_circle_outline),
         ),
       );
+      await pumpUntilSettled(tester);
+
+      // Removing the last copy is a deletion — the confirmation dialog is on by
+      // default. The row is still there until the user confirms.
+      expect(find.text(AppStrings.collectionDeleteDialogTitle), findsOneWidget);
+      expect(find.text('Dark Magician'), findsWidgets);
+
+      await tester.tap(find.text(AppStrings.collectionDeleteDialogConfirm));
       await pumpUntilSettled(tester);
 
       expect(find.text('Dark Magician'), findsNothing);

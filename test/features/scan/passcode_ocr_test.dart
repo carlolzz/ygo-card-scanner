@@ -44,6 +44,21 @@ void main() {
       );
     });
 
+    test('ignores adjacent text on the same line (the "1st Edition" case)', () {
+      // The passcode often shares an OCR line with neighbouring card text; the
+      // stray "1" of "1st" must not be counted as a ninth digit.
+      expect(extractPasscode([span('46986414 1st Edition')]), '46986414');
+      expect(extractPasscode([span('1st Edition 46986414')]), '46986414');
+    });
+
+    test('returns null when one line holds two different 8-digit runs', () {
+      expect(extractPasscode([span('46986414 89631139')]), isNull);
+    });
+
+    test('accepts the same 8-digit run repeated on a line', () {
+      expect(extractPasscode([span('46986414 46986414')]), '46986414');
+    });
+
     group('with a bottom-left ROI', () {
       const frame = Size(100, 100);
       // Bottom-left 60% wide, bottom 50% tall.

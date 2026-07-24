@@ -125,6 +125,38 @@ class _SettingsBody extends ConsumerWidget {
           ],
         ),
         const Divider(height: AppSpacing.xl),
+        const _SectionHeader(title: AppStrings.settingsCollectionSection),
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          activeThumbColor: palette.accent,
+          title: Text(
+            AppStrings.settingsConfirmDeleteLabel,
+            style: TextStyle(color: palette.onSurface),
+          ),
+          subtitle: Text(
+            AppStrings.settingsConfirmDeleteDescription,
+            style: TextStyle(color: palette.onSurfaceMuted),
+          ),
+          value: settings.confirmBeforeDelete,
+          onChanged: controller.setConfirmBeforeDelete,
+        ),
+        const Divider(height: AppSpacing.xl),
+        const _SectionHeader(title: AppStrings.settingsScanningSection),
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          activeThumbColor: palette.accent,
+          title: Text(
+            AppStrings.settingsDiagnosticsLabel,
+            style: TextStyle(color: palette.onSurface),
+          ),
+          subtitle: Text(
+            AppStrings.settingsDiagnosticsDescription,
+            style: TextStyle(color: palette.onSurfaceMuted),
+          ),
+          value: settings.showScanDiagnostics,
+          onChanged: controller.setShowScanDiagnostics,
+        ),
+        const Divider(height: AppSpacing.xl),
         const _SectionHeader(title: AppStrings.settingsDatabaseSection),
         const _ResyncSection(),
       ],

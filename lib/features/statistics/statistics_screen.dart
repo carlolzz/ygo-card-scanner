@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:share_plus/share_plus.dart';
 
 import '../../core/constants.dart';
 import '../../core/theme/tokens.dart';
@@ -234,16 +235,29 @@ class _ExportButtonState extends ConsumerState<_ExportButton> {
 
   Future<void> _export() async {
     setState(() => _running = true);
+    String? path;
     String message;
     try {
       final exporter = await ref.read(collectionExporterProvider.future);
-      final path = await exporter.exportToCsv();
-      message = AppStrings.statisticsExportDoneMessage(path);
+      path = await exporter.exportToCsv();
+      message = AppStrings.statisticsExportDoneMessage;
     } catch (_) {
       message = AppStrings.statisticsExportFailedMessage;
     }
     if (!mounted) return;
     setState(() => _running = false);
+    // Hand the written file to the OS share sheet — the app-documents path it
+    // lives at isn't browsable, so sharing is how the user saves it to
+    // Downloads/Drive/Files or sends it on.
+    if (path != null) {
+      await SharePlus.instance.share(
+        ShareParams(
+          files: [XFile(path)],
+          subject: AppStrings.statisticsExportSubject,
+        ),
+      );
+    }
+    if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
   }
 

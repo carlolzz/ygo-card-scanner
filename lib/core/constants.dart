@@ -34,6 +34,10 @@ class AppStrings {
   // that's what players actually call it; "Type" is reserved for the API's
   // `type` field (Normal Monster/Effect Monster/Spell Card/Trap Card/etc).
   static const String collectionCardRaceLabel = 'Monster Type';
+  // The same YGOPRODeck `race` field, but for Spell/Trap cards it holds the
+  // card's property (Normal/Continuous/Quick-Play/Field/Equip/Ritual/Counter),
+  // which players call the "Property" — not a Monster Type.
+  static const String collectionCardPropertyLabel = 'Property';
   static const String collectionCardLevelLabel = 'Level';
   static const String collectionCardAtkDefLabel = 'ATK / DEF';
   static const String collectionCardArchetypeLabel = 'Archetype';
@@ -42,18 +46,34 @@ class AppStrings {
   static const String collectionDeleteTooltip = 'Remove card';
   static const String collectionDeleteDialogTitle = 'Remove card?';
   static const String collectionDeleteDialogMessage =
-      'This removes it from your collection. This cannot be undone.';
+      'Are you sure you want to delete this card from your collection? '
+      'This can\'t be undone.';
   static const String collectionDeleteDialogCancel = 'Cancel';
   static const String collectionDeleteDialogConfirm = 'Remove';
 
+  // Editing an existing collection entry's details (language/set/edition/
+  // condition) from the detail screen.
+  static const String collectionEditTooltip = 'Edit card details';
+  static const String collectionEditTitle = 'Edit card details';
+  static const String collectionEditConditionLabel = 'Condition';
+  static const String collectionEditEditionLabel = 'Edition';
+  static const String collectionEditLanguageLabel = 'Language';
+  static const String collectionEditSetLabel = 'Set';
+  static const String collectionEditNoPrinting = 'No specific set';
+  static const String collectionEditSaveButton = 'Save changes';
+  static const String collectionEditCancelButton = 'Cancel';
+  static const String collectionEditSavedMessage = 'Card details updated.';
+  static const String collectionEditMergedMessage =
+      'Merged with a matching entry already in your collection.';
+
   static const String scanTitle = 'Log Cards';
   static const String scanManualTooltip = 'Search by name instead';
-  static const String scanHint = 'Fit the 8-digit code inside the box';
+  static const String scanHint = 'Fit the whole card inside the box';
   static const String scanDetecting = 'Point at a card';
-  static const String scanReading = 'Reading…';
+  static const String scanReading = 'Identifying…';
   static const String scanUnknownTitle = 'Not recognized';
   static const String scanUnknownMessage =
-      'Couldn\'t match that passcode. Search for the card by name instead.';
+      'Couldn\'t match that card. Search for it by name instead.';
   static const String scanUnknownSearchButton = 'Search by name';
   static const String scanRescanButton = 'Scan again';
   static const String scanConfirmButton = 'Add to collection';
@@ -63,16 +83,35 @@ class AppStrings {
       'Grant camera access to scan cards, or search by name instead.';
   static const String scanRetryButton = 'Retry';
 
-  // Artwork-match fallback (step 8).
-  static const String scanMatchByArtTooltip = 'Match by artwork';
-  static const String scanMatchByArtButton = 'Match by artwork';
-  static const String scanMatchByArtHint = 'Fit the whole card inside the box';
-  static const String scanMatchingMessage = 'Matching artwork…';
+  // Artwork match — the automatic primary path.
+  static const String scanNotThisCardButton = 'Not the right card?';
   static const String scanCandidatesTitle = 'Is it one of these?';
   static const String scanCandidatesSubtitle =
       'Tap the card that matches, or search by name.';
-  static const String scanNoArtMatchMessage =
-      'No artwork match. Search for the card by name instead.';
+
+  // Bottom help panel on the scan screen — the three ways to log a card.
+  static const String scanHelpTitle = 'Three ways to log a card';
+  static const String scanHelpArtwork =
+      'Fill the box with the card — its artwork is recognised automatically.';
+  static const String scanHelpCode =
+      'Tap the number icon to read the printed 8-digit code instead.';
+  static const String scanHelpManual =
+      'Tap the keyboard icon to search for the card by name.';
+
+  // Scan diagnostics overlay (developer aid for tuning recognition).
+  static const String scanDiagnosticsTooltip = 'Toggle recognition diagnostics';
+  static const String scanDiagnosticsNoFrame = 'no camera frame yet';
+  static const String scanDiagnosticsNotDetected = 'no card detected';
+  static const String scanDiagnosticsDetected = 'card detected';
+  static const String scanDiagnosticsNoCandidates = 'detected, nothing close';
+
+  // Passcode OCR — the on-demand fallback.
+  static const String scanReadCodeTooltip = 'Read the 8-digit code';
+  static const String scanReadCodeButton = 'Read the 8-digit code instead';
+  static const String scanReadingCodeTitle = 'Reading the code…';
+  static const String scanReadingCodeMessage =
+      'Center the 8-digit code in the box, about 10 cm away, and hold steady.';
+  static const String scanReadCodeCancelButton = 'Cancel';
 
   static const String addCardTitle = 'Log Cards';
   static const String addCardSearchHint = 'Search by name';
@@ -95,6 +134,15 @@ class AppStrings {
   static const String settingsLanguageLabel = 'Language';
   static const String settingsAppearanceSection = 'Appearance';
   static const String settingsThemeLabel = 'Theme';
+  static const String settingsCollectionSection = 'Collection';
+  static const String settingsConfirmDeleteLabel = 'Confirm before removing';
+  static const String settingsConfirmDeleteDescription =
+      'Ask before deleting a card or removing its last copy.';
+  static const String settingsScanningSection = 'Scanning';
+  static const String settingsDiagnosticsLabel = 'Show scan diagnostics';
+  static const String settingsDiagnosticsDescription =
+      'Overlay recognition detail (detection status and match distances) on '
+      'the scan screen, for tuning. Also toggled by the bug icon while scanning.';
   static const String settingsDatabaseSection = 'Card database';
   static const String settingsLastSyncedLabel = 'Last synced';
   static const String settingsNeverSynced = 'Never';
@@ -118,7 +166,9 @@ class AppStrings {
   static const String statisticsUnknownType = '(no type)';
   static const String statisticsExportButton = 'Export collection to CSV';
   static const String statisticsExportRunningMessage = 'Exporting…';
-  static String statisticsExportDoneMessage(String path) => 'Saved to $path';
+  static const String statisticsExportDoneMessage =
+      'Exported — choose where to save it.';
+  static const String statisticsExportSubject = 'YGO collection export';
   static const String statisticsExportEmptyMessage = 'Nothing to export yet.';
   static const String statisticsExportFailedMessage =
       'Export failed. Please try again.';

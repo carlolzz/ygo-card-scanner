@@ -16,9 +16,11 @@ dependencies:
   go_router: ^17.3.0
   google_mlkit_text_recognition: ^0.16.0
   json_annotation: ^4.12.0
+  opencv_core: ^1.4.5
   path: ^1.9.1
   path_provider: ^2.1.6
   riverpod_annotation: ^4.0.3
+  share_plus: ^13.3.0
   sqflite: ^2.4.3
 
 dev_dependencies:
@@ -34,8 +36,22 @@ dev_dependencies:
   # so the CSV exporter can be exercised end-to-end without a device.
   path_provider_platform_interface: ^2.1.3
   plugin_platform_interface: ^2.1.8
+  # Build-time only: regenerates the launcher icons from assets/icon/ from a
+  # placeholder made by tools/make_icon.py. Not shipped in the app (the runtime
+  # stack is unchanged), same pattern as the path_provider test deps above.
+  flutter_launcher_icons: ^0.14.4
 
 flutter:
   uses-material-design: true
   assets:
     - assets/card_hashes.json
+
+# Launcher icon generation. Regenerate with `dart run flutter_launcher_icons`
+# after editing the source PNGs (built by `python tools/make_icon.py`).
+flutter_launcher_icons:
+  android: true
+  ios: true
+  remove_alpha_ios: true
+  image_path: "assets/icon/ygo_icon.png"
+  adaptive_icon_background: "#0B0B0D"
+  adaptive_icon_foreground: "assets/icon/ygo_icon_foreground.png"

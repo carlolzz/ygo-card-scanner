@@ -4,10 +4,14 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/constants.dart';
 import '../../core/theme/tokens.dart';
 import '../../data/repositories/collection_repository.dart';
+import '../../models/card_condition.dart';
+import '../../models/card_edition.dart';
 import '../../models/card_language.dart';
 import '../../models/collection_entry_with_card.dart';
 import '../../models/printing.dart';
 import '../../shared/widgets/card_thumbnail.dart';
+import '../../shared/widgets/labeled_choice_chip.dart';
+import 'collection_delete_confirm.dart';
 import 'collection_providers.dart';
 
 class CollectionDetailScreen extends ConsumerStatefulWidget {
@@ -43,6 +47,11 @@ class _CollectionDetailScreenState
         title: Text(card.name),
         actions: [
           IconButton(
+            tooltip: AppStrings.collectionEditTooltip,
+            icon: const Icon(Icons.edit_outlined),
+            onPressed: _openEdit,
+          ),
+          IconButton(
             tooltip: AppStrings.collectionDeleteTooltip,
             icon: const Icon(Icons.delete_outline),
             onPressed: () => _confirmDelete(entry.id!),
@@ -55,9 +64,13 @@ class _CollectionDetailScreenState
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Center(
+              // The whole card, uncropped (portrait card box + contain) rather
+              // than a square centre-crop.
               child: CardThumbnail(
                 localImagePath: card.localImagePath,
                 size: CardThumbnailSizes.detail,
+                aspectRatio: ScanReticleTokens.cardAspectRatio,
+                fit: BoxFit.contain,
               ),
             ),
             const SizedBox(height: AppSpacing.md),
@@ -84,14 +97,20 @@ class _CollectionDetailScreenState
                 label: AppStrings.collectionCardTypeLabel,
                 value: card.type!,
               ),
-            if (card.attribute != null)
+            // A Spell/Trap's `attribute` is just "SPELL"/"TRAP" (redundant with
+            // the type row above), so it's only shown for monsters.
+            if (card.attribute != null && !card.isSpellOrTrap)
               _DetailRow(
                 label: AppStrings.collectionCardAttributeLabel,
                 value: card.attribute!,
               ),
             if (card.race != null)
               _DetailRow(
-                label: AppStrings.collectionCardRaceLabel,
+                // For Spell/Trap, `race` is the card's property, not a monster
+                // type — labelled accordingly.
+                label: card.isSpellOrTrap
+                    ? AppStrings.collectionCardPropertyLabel
+                    : AppStrings.collectionCardRaceLabel,
                 value: card.race!,
               ),
             if (card.level != null)
@@ -192,40 +211,53 @@ class _CollectionDetailScreenState
   }
 
   Future<void> _decrement(int id) async {
-    final repository = await ref.read(collectionRepositoryProvider.future);
-    await repository.decrement(id);
-    ref.invalidate(collectionEntriesProvider);
+    // Decrementing the last copy removes the card — confirm first, like delete.
     if (_quantity <= 1) {
+      if (!await confirmRemoveCard(context, ref)) return;
+      final repository = await ref.read(collectionRepositoryProvider.future);
+      await repository.decrement(id);
+      ref.invalidate(collectionEntriesProvider);
       if (mounted) Navigator.of(context).pop();
       return;
     }
+    final repository = await ref.read(collectionRepositoryProvider.future);
+    await repository.decrement(id);
+    ref.invalidate(collectionEntriesProvider);
     setState(() => _quantity -= 1);
   }
 
   Future<void> _confirmDelete(int id) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text(AppStrings.collectionDeleteDialogTitle),
-        content: const Text(AppStrings.collectionDeleteDialogMessage),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text(AppStrings.collectionDeleteDialogCancel),
-          ),
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            child: const Text(AppStrings.collectionDeleteDialogConfirm),
-          ),
-        ],
-      ),
-    );
-    if (confirmed != true) return;
-
+    if (!await confirmRemoveCard(context, ref)) return;
     final repository = await ref.read(collectionRepositoryProvider.future);
     await repository.delete(id);
     ref.invalidate(collectionEntriesProvider);
     if (mounted) Navigator.of(context).pop();
+  }
+
+  /// Opens the edit sheet. On save the passed-in entry is stale (and a merge may
+  /// have removed this row), so the detail screen pops back to the list, which
+  /// re-fetches — and a snackbar reports the result there.
+  Future<void> _openEdit() async {
+    final result = await showModalBottomSheet<_EditResult>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: AppPalette.of(context).surface,
+      builder: (_) => _EditEntrySheet(entryWithCard: widget.entryWithCard),
+    );
+    if (result == null || !mounted) return;
+    ref.invalidate(collectionEntriesProvider);
+    ref.invalidate(entriesForPasscodeProvider(widget.entryWithCard.entry.passcode));
+    final messenger = ScaffoldMessenger.of(context);
+    Navigator.of(context).pop();
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text(
+          result.merged
+              ? AppStrings.collectionEditMergedMessage
+              : AppStrings.collectionEditSavedMessage,
+        ),
+      ),
+    );
   }
 }
 
@@ -298,5 +330,217 @@ class _DetailRow extends StatelessWidget {
         ],
       ),
     );
+  }
+}
+
+/// The outcome of the edit sheet, popped back to the detail screen: whether the
+/// edit merged this entry into a pre-existing matching one (vs. a plain update),
+/// so the right confirmation message is shown.
+class _EditResult {
+  const _EditResult({required this.merged});
+
+  final bool merged;
+}
+
+/// A modal sheet to edit an entry's condition/edition/language/set. Local state,
+/// seeded from the entry; on save it calls
+/// [CollectionRepository.updateEntryDetails] (which merges on a duplicate) and
+/// pops an [_EditResult].
+class _EditEntrySheet extends ConsumerStatefulWidget {
+  const _EditEntrySheet({required this.entryWithCard});
+
+  final CollectionEntryWithCard entryWithCard;
+
+  @override
+  ConsumerState<_EditEntrySheet> createState() => _EditEntrySheetState();
+}
+
+class _EditEntrySheetState extends ConsumerState<_EditEntrySheet> {
+  late CardCondition _condition;
+  late CardEdition _edition;
+  late String _language;
+  late int? _printingId;
+  bool _saving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    final entry = widget.entryWithCard.entry;
+    _condition = entry.condition;
+    _edition = entry.edition;
+    _language = entry.language;
+    _printingId = entry.printingId;
+  }
+
+  Future<void> _save() async {
+    setState(() => _saving = true);
+    final repository = await ref.read(collectionRepositoryProvider.future);
+    final survivorId = await repository.updateEntryDetails(
+      widget.entryWithCard.entry.id!,
+      printingId: _printingId,
+      condition: _condition,
+      edition: _edition,
+      language: _language,
+    );
+    if (!mounted) return;
+    Navigator.of(context).pop(
+      _EditResult(merged: survivorId != widget.entryWithCard.entry.id),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = AppPalette.of(context);
+    final passcode = widget.entryWithCard.entry.passcode;
+    final printingsAsync = ref.watch(cardPrintingsProvider(passcode));
+
+    return SafeArea(
+      child: Padding(
+        padding: EdgeInsets.only(
+          left: AppSpacing.lg,
+          right: AppSpacing.lg,
+          top: AppSpacing.lg,
+          bottom: AppSpacing.lg + MediaQuery.viewInsetsOf(context).bottom,
+        ),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                AppStrings.collectionEditTitle,
+                style: TextStyle(
+                  color: palette.onSurface,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 18,
+                ),
+              ),
+              const SizedBox(height: AppSpacing.md),
+              _label(AppStrings.collectionEditConditionLabel),
+              Wrap(
+                spacing: AppSpacing.xs,
+                runSpacing: AppSpacing.xs,
+                children: [
+                  for (final condition in CardCondition.values)
+                    LabeledChoiceChip(
+                      label: condition.shortCode,
+                      selected: _condition == condition,
+                      selectedColor:
+                          ConditionChipColors.byShortCode[condition.shortCode]!,
+                      onSelected: () => setState(() => _condition = condition),
+                    ),
+                ],
+              ),
+              const SizedBox(height: AppSpacing.md),
+              _label(AppStrings.collectionEditEditionLabel),
+              Wrap(
+                spacing: AppSpacing.xs,
+                runSpacing: AppSpacing.xs,
+                children: [
+                  for (final edition in CardEdition.values)
+                    LabeledChoiceChip(
+                      label: edition.label,
+                      selected: _edition == edition,
+                      selectedColor: palette.accent,
+                      onSelected: () => setState(() => _edition = edition),
+                    ),
+                ],
+              ),
+              const SizedBox(height: AppSpacing.md),
+              _label(AppStrings.collectionEditLanguageLabel),
+              Wrap(
+                spacing: AppSpacing.xs,
+                runSpacing: AppSpacing.xs,
+                children: [
+                  for (final language in kCardLanguages)
+                    LabeledChoiceChip(
+                      label: languageLabel(language),
+                      selected: _language == language,
+                      selectedColor: palette.accent,
+                      onSelected: () => setState(() => _language = language),
+                    ),
+                ],
+              ),
+              const SizedBox(height: AppSpacing.md),
+              _label(AppStrings.collectionEditSetLabel),
+              printingsAsync.when(
+                data: (printings) => _printingDropdown(printings, palette),
+                loading: () => const Padding(
+                  padding: EdgeInsets.symmetric(vertical: AppSpacing.sm),
+                  child: LinearProgressIndicator(),
+                ),
+                error: (_, _) =>
+                    _printingDropdown(const <Printing>[], palette),
+              ),
+              const SizedBox(height: AppSpacing.lg),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed:
+                          _saving ? null : () => Navigator.of(context).pop(),
+                      child: const Text(AppStrings.collectionEditCancelButton),
+                    ),
+                  ),
+                  const SizedBox(width: AppSpacing.md),
+                  Expanded(
+                    child: FilledButton(
+                      onPressed: _saving ? null : _save,
+                      child: const Text(AppStrings.collectionEditSaveButton),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _label(String text) => Padding(
+    padding: const EdgeInsets.only(bottom: AppSpacing.xs),
+    child: Text(
+      text,
+      style: TextStyle(color: AppPalette.of(context).onSurfaceMuted),
+    ),
+  );
+
+  Widget _printingDropdown(List<Printing> printings, AppPalette palette) {
+    // Keep the selection valid: a printing_id always refers to a printing of
+    // this passcode (the schema forbids deleting one with entries), but guard
+    // anyway so a stale value can't trip the dropdown's value==item assertion.
+    final ids = printings.map((p) => p.id).toSet();
+    final value = ids.contains(_printingId) ? _printingId : null;
+    return DropdownButton<int?>(
+      value: value,
+      isExpanded: true,
+      dropdownColor: palette.surfaceRaised,
+      style: TextStyle(color: palette.onSurface),
+      items: [
+        const DropdownMenuItem<int?>(
+          value: null,
+          child: Text(AppStrings.collectionEditNoPrinting),
+        ),
+        for (final printing in printings)
+          DropdownMenuItem<int?>(
+            value: printing.id,
+            child: Text(
+              _printingLabel(printing),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+      ],
+      onChanged: (id) => setState(() => _printingId = id),
+    );
+  }
+
+  String _printingLabel(Printing printing) {
+    final parts = [
+      if (printing.setCode != null) printing.setCode!,
+      if (printing.setName != null) printing.setName!,
+      if (printing.rarity != null) printing.rarity!,
+    ];
+    return parts.isEmpty ? AppStrings.collectionEditNoPrinting : parts.join(' · ');
   }
 }

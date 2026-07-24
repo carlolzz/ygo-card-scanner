@@ -503,6 +503,75 @@ order):
     pandas/DuckDB/Polars, plus a separate web front-end the user plans to build
     over the exported data. If deck building is ever added to *this* app,
     `.ydk` export becomes worth revisiting — per deck, not per collection.
+11. Post-launch on-device feedback pass — collection UX, scan tweaks, editable
+    entries ← done (verified: `flutter analyze` clean + full `flutter test`
+    green, 212 tests). A polish/fixes round after the first real on-device
+    testing, sitting on top of steps 1-10 **and** the separately-made
+    artwork-first/OpenCV scan pivot (see the [[artwork-first-scan-pivot]] memory
+    and `lib/features/scan/card_detector.dart` /`opencv_card_detector.dart` —
+    that pivot post-dates steps 7-8's write-up here, which still describe the
+    pre-pivot pHash design). Nothing in this step changes the scan algorithm or
+    the `assets/card_hashes.json` index, and there is **no DB migration, no new
+    dependency, no schema change**.
+    **Two new persisted settings, in the existing `meta` table** (same
+    key/value convention as step 9, `settings.*` keys, guarded parse):
+    `AppSettings.showScanDiagnostics` (default false) and
+    `confirmBeforeDelete` (default true), with `_parseBool` in
+    `SettingsRepository` (`'true'`/`'false'`, anything else → default). Booleans
+    are the first non-enum, non-free-text settings; `SettingsController` gains a
+    setter for each and the Settings screen gains **"Collection"** (confirm
+    toggle) and **"Scanning"** (diagnostics toggle) `SwitchListTile` sections.
+    **Diagnostics is now persisted, not ephemeral**: the old
+    `ScanDiagnosticsEnabled` class provider became a derived functional provider
+    `scanDiagnosticsEnabled` reading `settingsControllerProvider` (so the
+    overlay's `watch` and `artReadings`' per-frame `read` are unchanged), and
+    the scan app-bar bug icon is now a **shortcut** that writes the same setting
+    (`setShowScanDiagnostics`) — kept, not removed, so both control one value.
+    (`scan_providers.dart` importing `settings_providers.dart` introduces no
+    cycle — settings never imports scan.)
+    **Delete confirmation** (`collection_delete_confirm.dart`, one shared
+    `confirmRemoveCard(context, ref)` helper): gated on `confirmBeforeDelete`,
+    reused by all four removal paths — the list-row delete and
+    decrement-to-last-copy (`collection_screen.dart`, whose handlers gained a
+    `BuildContext` param), and the detail screen's delete and
+    decrement-to-last-copy. Decrement only prompts when `quantity == 1` (the
+    copy that would remove the card). `collection_screen_test`'s
+    decrement-to-zero case now taps through the dialog.
+    **Editable entries + auto-merge** (the load-bearing new feature): new
+    `CollectionDao.updateEntryDetails(id, {printingId, condition, edition,
+    language})` — one transaction that edits in place, but if the new combo
+    collides with a *different* existing row for the same passcode (the
+    `collection_entries` UNIQUE key, `printing_id IS NULL` handled like
+    `addOrIncrement`), it **merges**: the survivor absorbs this row's quantity
+    and this row is deleted. Returns the surviving id (same id = plain edit,
+    different = merge), which the UI uses to pick the confirmation message. DAO
+    test covers all three (in-place, merge, NULL-vs-real printing). Surfaced via
+    a repo passthrough, a new `cardPrintingsProvider` (reuses
+    `CardRepository.getPrintingsForPasscode`, keeping the widget off the DAO),
+    and an app-bar edit icon on the collection detail screen opening
+    `_EditEntrySheet` (condition/edition/language chips + a printing dropdown
+    with a "no set" option). On save it pops back to the list (the passed-in
+    `entryWithCard` is now stale, and a merge may have removed the row) and
+    snackbars update-vs-merged.
+    **Collection display fixes**: the detail screen shows the **whole card**
+    (portrait `aspectRatio` + `BoxFit.contain`) instead of the old square
+    centre-crop (the list tile already did); `YgoProdeckClient._firstImageUrl`
+    now prefers `image_url_small` (fallback `image_url`) so **new** downloads are
+    the smaller full-card image (takes effect after a re-sync; existing files
+    keep their size but now display in full). The list tile centres the leading
+    art + condition chip vertically (`CrossAxisAlignment.center`). Spell/Trap
+    cards no longer mislabel their `race`: `YgoCard.isSpellOrTrap`
+    (`frameType == 'spell' || 'trap'`) switches the detail label to
+    **"Property"** and hides the redundant `attribute` row ("SPELL"/"TRAP").
+    **Scan screen**: the "three ways to log a card" help box was nudged down
+    (smaller bottom inset) and `ScanReticleTokens.maxHeightFraction` dropped
+    0.7 → 0.62 so the reticle clears it. **Best-effort warm-up fix** for the
+    "recognition gets easier after re-opening Log Cards / after a confirm"
+    report (decided with the user, flagged for on-device retest): `_start()` in
+    `camera_service.dart` re-asserts `FocusMode.auto` + `ExposureMode.auto`
+    (guarded) on every fresh camera start — targets autofocus/exposure settling
+    on a stale value under `startImageStream`. Not guaranteed; the diagnostics
+    overlay is the tool for gathering data if it recurs.
 
 ## Standing rules
 

@@ -1,12 +1,14 @@
 import 'package:riverpod_annotation/riverpod_annotation.dart';
 
 import '../../data/db/dao/collection_dao.dart';
+import '../../data/repositories/card_repository.dart';
 import '../../data/repositories/collection_repository.dart';
 import '../../data/seed/fake_collection_seed.dart';
 import '../../models/card_condition.dart';
 import '../../models/card_edition.dart';
 import '../../models/collection_entry.dart';
 import '../../models/collection_entry_with_card.dart';
+import '../../models/printing.dart';
 
 part 'collection_providers.g.dart';
 
@@ -84,4 +86,13 @@ Future<List<CollectionEntry>> entriesForPasscode(
 ) async {
   final repository = await ref.watch(collectionRepositoryProvider.future);
   return repository.getEntriesForPasscode(passcode);
+}
+
+/// The known printings (set + rarity) for a card, for the detail screen's
+/// edit sheet. Reuses [CardRepository.getPrintingsForPasscode] so the widget
+/// stays off the DAO.
+@riverpod
+Future<List<Printing>> cardPrintings(Ref ref, String passcode) async {
+  final repository = await ref.watch(cardRepositoryProvider.future);
+  return repository.getPrintingsForPasscode(passcode);
 }

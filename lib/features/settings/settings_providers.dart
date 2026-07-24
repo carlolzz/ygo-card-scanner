@@ -35,6 +35,12 @@ class SettingsController extends _$SettingsController {
   Future<void> setThemeMode(AppThemeMode themeMode) =>
       _update((s) => s.copyWith(themeMode: themeMode));
 
+  Future<void> setShowScanDiagnostics(bool value) =>
+      _update((s) => s.copyWith(showScanDiagnostics: value));
+
+  Future<void> setConfirmBeforeDelete(bool value) =>
+      _update((s) => s.copyWith(confirmBeforeDelete: value));
+
   /// Persist first, then publish: if the write fails the in-memory state must
   /// not claim a preference the database doesn't hold.
   Future<void> _update(AppSettings Function(AppSettings) change) async {

@@ -48,8 +48,18 @@ class CollectionListTile extends StatelessWidget {
           child: Padding(
             padding: const EdgeInsets.all(AppSpacing.md),
             child: Row(
+              // Centre the leading art + condition chip against the (taller)
+              // name/quantity column, so they sit in the middle of the row
+              // rather than hugging the top.
+              crossAxisAlignment: CrossAxisAlignment.center,
               children: [
-                CardThumbnail(localImagePath: card.localImagePath),
+                // The whole card, uncropped (a portrait card box + contain),
+                // rather than the default square centre-crop.
+                CardThumbnail(
+                  localImagePath: card.localImagePath,
+                  aspectRatio: ScanReticleTokens.cardAspectRatio,
+                  fit: BoxFit.contain,
+                ),
                 const SizedBox(width: AppSpacing.md),
                 Container(
                   padding: const EdgeInsets.symmetric(
@@ -69,44 +79,53 @@ class CollectionListTile extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(width: AppSpacing.md),
+                // Name (up to 2 lines) + edition (1 line) stacked over the
+                // quantity/delete controls, so the name gets the row's full
+                // width instead of being squeezed against the trailing buttons.
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
                         card.name,
-                        style: TextStyle(
-                  color: palette.onSurface),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(color: palette.onSurface),
                       ),
                       const SizedBox(height: AppSpacing.xs),
                       Text(
                         _subtitle(entryWithCard),
-                        style: TextStyle(
-                  color: palette.onSurfaceMuted,
-                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(color: palette.onSurfaceMuted),
+                      ),
+                      const SizedBox(height: AppSpacing.xs),
+                      Row(
+                        children: [
+                          IconButton(
+                            icon: const Icon(Icons.remove_circle_outline),
+                            color: palette.onSurfaceMuted,
+                            onPressed: onDecrement,
+                          ),
+                          Text(
+                            '${entry.quantity}',
+                            style: TextStyle(color: palette.onSurface),
+                          ),
+                          IconButton(
+                            icon: const Icon(Icons.add_circle_outline),
+                            color: palette.accent,
+                            onPressed: onIncrement,
+                          ),
+                          const Spacer(),
+                          IconButton(
+                            icon: const Icon(Icons.delete_outline),
+                            color: palette.onSurfaceMuted,
+                            onPressed: onDelete,
+                          ),
+                        ],
                       ),
                     ],
                   ),
-                ),
-                IconButton(
-                  icon: const Icon(Icons.remove_circle_outline),
-                  color: palette.onSurfaceMuted,
-                  onPressed: onDecrement,
-                ),
-                Text(
-                  '${entry.quantity}',
-                  style: TextStyle(
-                  color: palette.onSurface),
-                ),
-                IconButton(
-                  icon: const Icon(Icons.add_circle_outline),
-                  color: palette.accent,
-                  onPressed: onIncrement,
-                ),
-                IconButton(
-                  icon: const Icon(Icons.delete_outline),
-                  color: palette.onSurfaceMuted,
-                  onPressed: onDelete,
                 ),
               ],
             ),

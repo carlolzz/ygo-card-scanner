@@ -1,6 +1,5 @@
-import 'dart:typed_data';
-
 import 'package:camera/camera.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/painting.dart' show Rect;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
@@ -14,6 +13,7 @@ import 'package:ygo_scanner/data/seed/fake_collection_seed.dart';
 import 'package:ygo_scanner/features/scan/art_frame.dart';
 import 'package:ygo_scanner/features/scan/art_matcher.dart';
 import 'package:ygo_scanner/features/scan/camera_service.dart';
+import 'package:ygo_scanner/features/scan/card_detector.dart';
 import 'package:ygo_scanner/features/scan/hamming.dart';
 import 'package:ygo_scanner/features/scan/hash_index.dart';
 import 'package:ygo_scanner/features/scan/phash.dart';
@@ -26,6 +26,8 @@ const darkMagician = '46986414';
 class _FakeCamera implements CameraService {
   _FakeCamera(this._frame);
   final ArtFrame? _frame;
+  final ValueNotifier<CameraController?> _preview =
+      ValueNotifier<CameraController?>(null);
 
   @override
   ArtFrame? get latestArtFrame => _frame;
@@ -34,13 +36,25 @@ class _FakeCamera implements CameraService {
   Stream<InputImage> get frames => const Stream<InputImage>.empty();
 
   @override
-  CameraController? get previewController => null;
+  ValueListenable<CameraController?> get preview => _preview;
 
   @override
   Future<void> start() async {}
 
   @override
   Future<void> stop() async {}
+
+  @override
+  Future<void> dispose() async {}
+}
+
+/// Reproduces the pre-OpenCV behaviour (orient only, no card detection) so the
+/// existing hash assertions still hold without loading the OpenCV native
+/// library, which doesn't load on the host.
+class _IdentityCardDetector implements CardDetector {
+  const _IdentityCardDetector();
+  @override
+  ArtFrame? detectCard(ArtFrame frame) => frame.oriented();
 }
 
 /// Builds a synthetic upright luma frame with enough structure that its pHash is
@@ -106,6 +120,7 @@ void main() {
       camera: _FakeCamera(frame),
       index: index,
       repository: repository,
+      detector: const _IdentityCardDetector(),
     );
     final candidates = await matcher.match();
 
@@ -114,6 +129,41 @@ void main() {
     expect(candidates, hasLength(1));
     expect(candidates.first.card.passcode, darkMagician);
     expect(candidates.first.distance, 0);
+  });
+
+  test('rankFrame ranks near hits (DB or not) with no repository read',
+      () {
+    final frame = syntheticFrame();
+    final hash = expectedHash(frame, ArtMatchTuning.artBoxRoi);
+    final index = HashIndex(
+      version: 1,
+      algorithm: 'phash',
+      hashSize: 8,
+      hashes: {
+        darkMagician: hash, // in the db
+        'not_in_db': hash, // equally close, but no cards row
+        'far': PerceptualHash(~hash.hi & 0xffffffff, ~hash.lo & 0xffffffff),
+      },
+    );
+    final matcher = PHashArtMatcher(
+      camera: _FakeCamera(frame),
+      index: index,
+      repository: repository,
+      detector: const _IdentityCardDetector(),
+    );
+
+    final result = matcher.rankFrame();
+    final ranked = result.matches;
+
+    expect(result.status, ArtFrameStatus.detected);
+    // Pure ranking keeps every near hit — the DB filter lives in match(), not
+    // here — but the far complement is still beyond the gate.
+    expect(
+      ranked.map((m) => m.passcode),
+      containsAll(<String>['not_in_db', darkMagician]),
+    );
+    expect(ranked.any((m) => m.passcode == 'far'), isFalse);
+    expect(ranked.first.distance, 0);
   });
 
   test('returns empty when there is no frame yet', () async {
@@ -126,6 +176,7 @@ void main() {
         hashes: {darkMagician: PerceptualHash.parseHex('0000000000000000')},
       ),
       repository: repository,
+      detector: const _IdentityCardDetector(),
     );
     expect(await matcher.match(), isEmpty);
   });
@@ -147,7 +198,49 @@ void main() {
       camera: _FakeCamera(frame),
       index: index,
       repository: repository,
+      detector: const _IdentityCardDetector(),
     );
     expect(await matcher.match(), isEmpty);
+  });
+
+  test('rankFrame reports noFrame when the camera has no frame', () {
+    final matcher = PHashArtMatcher(
+      camera: _FakeCamera(null),
+      index: HashIndex(
+        version: 1,
+        algorithm: 'phash',
+        hashSize: 8,
+        hashes: {darkMagician: PerceptualHash.parseHex('0000000000000000')},
+      ),
+      repository: repository,
+      detector: const _IdentityCardDetector(),
+    );
+    final result = matcher.rankFrame(includeNearest: true);
+    expect(result.status, ArtFrameStatus.noFrame);
+    expect(result.matches, isEmpty);
+    expect(result.nearest, isEmpty);
+  });
+
+  test('rankFrame(includeNearest) surfaces the nearest hit past the gate', () {
+    final frame = syntheticFrame();
+    final hash = expectedHash(frame, ArtMatchTuning.artBoxRoi);
+    // The only entry is the frame's complement (distance 64): beyond the match
+    // gate, so it is not a match — but the overlay still needs to see it.
+    final far = PerceptualHash(~hash.hi & 0xffffffff, ~hash.lo & 0xffffffff);
+    final matcher = PHashArtMatcher(
+      camera: _FakeCamera(frame),
+      index: HashIndex(
+        version: 1,
+        algorithm: 'phash',
+        hashSize: 8,
+        hashes: {'far': far},
+      ),
+      repository: repository,
+      detector: const _IdentityCardDetector(),
+    );
+    final result = matcher.rankFrame(includeNearest: true);
+    expect(result.status, ArtFrameStatus.detected);
+    expect(result.matches, isEmpty); // nothing within the gate
+    expect(result.nearest.map((m) => m.passcode), ['far']);
   });
 }

@@ -7,6 +7,7 @@ import '../../core/routes.dart';
 import '../../core/theme/tokens.dart';
 import '../../data/repositories/collection_repository.dart';
 import '../../models/collection_entry_with_card.dart';
+import 'collection_delete_confirm.dart';
 import 'collection_filter_bar.dart';
 import 'collection_list_tile.dart';
 import 'collection_providers.dart';
@@ -44,8 +45,9 @@ class CollectionScreen extends ConsumerWidget {
               data: (entries) => _CollectionList(
                 entries: entries,
                 onIncrement: (entry) => _incrementQuantity(ref, entry),
-                onDecrement: (entry) => _decrementQuantity(ref, entry),
-                onDelete: (entry) => _deleteEntry(ref, entry),
+                onDecrement: (entry) =>
+                    _decrementQuantity(context, ref, entry),
+                onDelete: (entry) => _deleteEntry(context, ref, entry),
                 onOpenDetail: (entry) => _openDetail(context, entry),
               ),
               loading: () => const Center(child: CircularProgressIndicator()),
@@ -81,18 +83,26 @@ class CollectionScreen extends ConsumerWidget {
   }
 
   Future<void> _decrementQuantity(
+    BuildContext context,
     WidgetRef ref,
     CollectionEntryWithCard entryWithCard,
   ) async {
+    // Decrementing the last copy removes the card — confirm first, like delete.
+    if (entryWithCard.entry.quantity <= 1 &&
+        !await confirmRemoveCard(context, ref)) {
+      return;
+    }
     final repository = await ref.read(collectionRepositoryProvider.future);
     await repository.decrement(entryWithCard.entry.id!);
     ref.invalidate(collectionEntriesProvider);
   }
 
   Future<void> _deleteEntry(
+    BuildContext context,
     WidgetRef ref,
     CollectionEntryWithCard entryWithCard,
   ) async {
+    if (!await confirmRemoveCard(context, ref)) return;
     final repository = await ref.read(collectionRepositoryProvider.future);
     await repository.delete(entryWithCard.entry.id!);
     ref.invalidate(collectionEntriesProvider);

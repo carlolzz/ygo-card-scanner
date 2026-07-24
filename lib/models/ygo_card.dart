@@ -61,4 +61,10 @@ abstract class YgoCard with _$YgoCard {
   /// and "Pendulum Normal Monster" for their pendulum counterpart, both of
   /// which carry flavour text rather than an effect.
   bool get isNormalMonster => type?.contains('Normal Monster') ?? false;
+
+  /// Whether this is a Spell or Trap card. For these, YGOPRODeck's `race` field
+  /// holds the card's *property* (Normal/Continuous/Quick-Play/…), not a monster
+  /// type, and `attribute` is just "SPELL"/"TRAP" — so the collection detail
+  /// screen labels and hides those rows differently.
+  bool get isSpellOrTrap => frameType == 'spell' || frameType == 'trap';
 }

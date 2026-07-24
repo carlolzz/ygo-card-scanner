@@ -411,4 +411,124 @@ void main() {
 
     expect(results.single.card.localImagePath, '/tmp/89631139.jpg');
   });
+
+  group('updateEntryDetails', () {
+    test('no collision updates in place and returns the same id', () async {
+      final added = await collectionDao.addOrIncrement(
+        _entry(
+          passcode: _blueEyes.passcode,
+          condition: CardCondition.nearMint,
+          language: 'EN',
+          quantity: 2,
+        ),
+      );
+
+      final survivorId = await collectionDao.updateEntryDetails(
+        added.id!,
+        printingId: null,
+        condition: CardCondition.lightPlayed,
+        edition: CardEdition.first,
+        language: 'DE',
+      );
+
+      expect(survivorId, added.id);
+      final all = await collectionDao.getEntriesForPasscode(_blueEyes.passcode);
+      expect(all, hasLength(1));
+      final row = all.single;
+      expect(row.id, added.id);
+      expect(row.condition, CardCondition.lightPlayed);
+      expect(row.edition, CardEdition.first);
+      expect(row.language, 'DE');
+      expect(row.quantity, 2, reason: 'a plain edit must not change quantity');
+    });
+
+    test(
+      'editing an entry into another entry\'s exact key merges quantities '
+      'and deletes the edited row, returning the survivor id',
+      () async {
+        // Target: NM / EN, qty 3. Source: NM / DE, qty 2. Editing the source to
+        // EN collides with the target -> merge into one NM/EN row of qty 5.
+        final target = await collectionDao.addOrIncrement(
+          _entry(
+            passcode: _blueEyes.passcode,
+            condition: CardCondition.nearMint,
+            language: 'EN',
+            quantity: 3,
+          ),
+        );
+        final source = await collectionDao.addOrIncrement(
+          _entry(
+            passcode: _blueEyes.passcode,
+            condition: CardCondition.nearMint,
+            language: 'DE',
+            quantity: 2,
+          ),
+        );
+
+        final survivorId = await collectionDao.updateEntryDetails(
+          source.id!,
+          printingId: null,
+          condition: CardCondition.nearMint,
+          edition: CardEdition.unlimited,
+          language: 'EN',
+        );
+
+        expect(survivorId, target.id);
+        final all = await collectionDao.getEntriesForPasscode(
+          _blueEyes.passcode,
+        );
+        expect(all, hasLength(1), reason: 'the two rows collapse into one');
+        expect(all.single.id, target.id);
+        expect(all.single.quantity, 5);
+        expect(all.single.language, 'EN');
+      },
+    );
+
+    test(
+      'merge works across printing_id when the target has a real printing '
+      '(NULL vs non-NULL keys are handled)',
+      () async {
+        await printingDao.insertAll([
+          const Printing(
+            passcode: '89631139',
+            setCode: 'LOB-EN001',
+            rarity: 'Ultra Rare',
+          ),
+        ]);
+        final printing = (await printingDao.getForPasscode('89631139')).single;
+
+        final target = await collectionDao.addOrIncrement(
+          _entry(
+            passcode: _blueEyes.passcode,
+            printingId: printing.id,
+            condition: CardCondition.nearMint,
+            quantity: 1,
+          ),
+        );
+        final source = await collectionDao.addOrIncrement(
+          _entry(
+            passcode: _blueEyes.passcode,
+            condition: CardCondition.nearMint,
+            quantity: 4,
+          ),
+        );
+
+        final survivorId = await collectionDao.updateEntryDetails(
+          source.id!,
+          printingId: printing.id,
+          condition: CardCondition.nearMint,
+          edition: CardEdition.unlimited,
+          language: 'EN',
+        );
+
+        expect(survivorId, target.id);
+        final all = await collectionDao.getEntriesForPasscode(
+          _blueEyes.passcode,
+        );
+        expect(all, hasLength(1));
+        expect(all.single.quantity, 5);
+        expect(all.single.printingId, printing.id);
+      },
+    );
+  });
 }

@@ -175,10 +175,26 @@ class ScanTuning {
   /// accepted (the spec's N). Rejects motion blur / one-off misreads.
   static const int agreementFrames = 3;
 
-  /// Empty frames (no card detected) required after a confirm before the same
-  /// passcode may be scanned again (the spec's M). Without this, one card
-  /// logs dozens of times in a couple of seconds.
+  /// The artwork counterpart of [agreementFrames]: consecutive frames whose
+  /// nearest artwork candidate must be the same card (and within
+  /// [ArtMatchTuning.autoMatchMaxDistance]) before it is auto-presented for
+  /// review. Guards the primary path against a one-off unstable top hit.
+  ///
+  /// Held to 2 (not 3): sleeved cards flicker frame-to-frame under glare, and
+  /// demanding three identical top hits made real cards very hard to lock on.
+  /// The non-negotiable user-confirm gate still catches a bad two-frame lock.
+  static const int artAgreementFrames = 2;
+
+  /// Empty frames (no card / no confident match) required after a confirm
+  /// before the same card may be logged again (the spec's M). Without this, one
+  /// card logs dozens of times in a couple of seconds. Shared by both paths.
   static const int debounceEmptyFrames = 5;
+
+  /// Once the user triggers the on-demand passcode fallback, give up and return
+  /// to artwork scanning if no 8-digit read agrees within this many processed
+  /// frames (~12s at [frameInterval]), so a glare-blocked code doesn't spin
+  /// forever.
+  static const int ocrTimeoutFrames = 40;
 
   /// Minimum wall-clock gap between OCR passes. The bottleneck is the human
   /// flipping cards, so we optimize for stability over raw throughput
@@ -186,15 +202,45 @@ class ScanTuning {
   static const Duration frameInterval = Duration(milliseconds: 300);
 }
 
-/// Geometry of the on-screen reticle that guides the user to align a card's
-/// bottom-left passcode. Fractions are of the preview's shortest/longest edge.
+/// Geometry of the on-screen reticle that guides the user to frame the *whole*
+/// card so its artwork fills the box (the primary, artwork-first path). The
+/// height follows the standard card aspect ratio; the box is centered.
 class ScanReticleTokens {
   const ScanReticleTokens._();
 
-  static const double widthFraction = 0.7;
-  static const double heightFraction = 0.16;
+  /// Guide-box width as a fraction of the preview's width. Height is derived
+  /// from [cardAspectRatio] so the outline matches a real card.
+  static const double widthFraction = 0.78;
+
+  /// A standard Yu-Gi-Oh card is 59 mm x 86 mm (width / height).
+  static const double cardAspectRatio = 59 / 86;
+
+  /// Never let the derived height exceed this fraction of the preview, so the
+  /// guide always leaves room for the status banner and the bottom help/review
+  /// panels — held below the earlier 0.7 so the reticle clears the "three ways
+  /// to log a card" help box on shorter screens.
+  static const double maxHeightFraction = 0.62;
+
   static const double borderWidth = 3;
-  static const double bottomInset = AppSpacing.xl;
+  static const double cornerRadius = AppRadius.md;
+}
+
+/// Geometry of the small centered box for the on-demand passcode-OCR fallback.
+/// Deliberately small and centered (not the big card guide): the user holds the
+/// phone at a medium distance (~10 cm) and aims just the 8-digit code at the
+/// screen's centre, so the lens keeps focus on the small text instead of the
+/// whole card.
+class ScanPasscodeReticleTokens {
+  const ScanPasscodeReticleTokens._();
+
+  /// Box size as fractions of the preview's width/height. Wide and short, the
+  /// shape of a single row of eight digits. Kept tight so it frames only the
+  /// passcode and not the neighbouring "1st Edition" / set-code text.
+  static const double widthFraction = 0.42;
+  static const double heightFraction = 0.07;
+
+  static const double borderWidth = 3;
+  static const double cornerRadius = AppRadius.sm;
 }
 
 /// Tuning for the pHash artwork-match fallback (step 8). A runtime pHash of a
@@ -209,9 +255,25 @@ class ArtMatchTuning {
 
   /// Maximum Hamming distance (of 64) still considered a plausible match. The
   /// clean-source gap measured 0 in the reproducibility spike; this budget is
-  /// headroom for handheld glare/angle/crop imprecision. Beyond it we show
-  /// "no artwork match" rather than a misleading guess.
-  static const int maxHammingDistance = 14;
+  /// headroom for handheld glare/angle/crop imprecision. Governs the manual
+  /// "show me the alternatives" candidate list. Beyond it we show nothing rather
+  /// than a misleading guess.
+  ///
+  /// Widened to 18 for the sleeve case: a sleeve adds glare and a margin the
+  /// perspective warp can latch onto, pushing a true match's distance up, so the
+  /// manual candidate list needs the extra headroom to still surface the card.
+  static const int maxHammingDistance = 18;
+
+  /// The tight gate for the *automatic* primary path: only auto-present a single
+  /// top match when it is at least this close across [ScanTuning.artAgreementFrames]
+  /// frames. Deliberately tighter than [maxHammingDistance] — an automatic guess
+  /// must be more confident than one the user explicitly asked to see.
+  ///
+  /// Raised from 10 to 13: sleeved cards' true matches commonly land at 11–13,
+  /// which the old gate discarded as an empty frame (so scanning "did nothing").
+  /// Still stricter than [maxHammingDistance], and every auto-present is
+  /// user-confirmed before anything is written.
+  static const int autoMatchMaxDistance = 13;
 
   /// The card artwork box as normalized fractions of the *upright* card rect,
   /// approximating a standard (non-Pendulum) frame's art window — the region the

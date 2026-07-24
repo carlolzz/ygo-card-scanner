@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite/sqflite.dart';
+import 'package:ygo_scanner/core/theme/tokens.dart';
 import 'package:ygo_scanner/data/db/dao/collection_dao.dart';
 import 'package:ygo_scanner/data/db/dao/meta_dao.dart';
 import 'package:ygo_scanner/data/db/database.dart';
@@ -11,6 +12,7 @@ import 'package:ygo_scanner/data/seed/fake_collection_seed.dart';
 import 'package:ygo_scanner/features/settings/settings_providers.dart';
 import 'package:ygo_scanner/features/scan/art_matcher.dart';
 import 'package:ygo_scanner/features/scan/art_providers.dart';
+import 'package:ygo_scanner/features/scan/hash_index.dart';
 import 'package:ygo_scanner/features/scan/scan_controller.dart';
 import 'package:ygo_scanner/features/scan/scan_providers.dart';
 import 'package:ygo_scanner/features/scan/scan_state.dart';
@@ -21,20 +23,31 @@ import 'package:ygo_scanner/models/ygo_card.dart';
 
 import '../../data/db/test_db.dart';
 
-/// Fake matcher so the controller's artwork-match branch runs without a camera,
-/// image asset, or pHash math — mirroring how [passcodeReadingsProvider] is
-/// faked for the OCR branch.
+/// Fake matcher so the controller's artwork resolution runs without a camera,
+/// image asset, or pHash math — the continuous ranking is driven by the
+/// overridden [artReadingsProvider], and this just resolves the agreed run.
 class _FakeArtMatcher implements ArtMatcher {
   _FakeArtMatcher(this.result);
   final List<ArtCandidate> result;
   @override
   Future<List<ArtCandidate>> match() async => result;
+  @override
+  ArtFrameResult rankFrame({bool includeNearest = false}) =>
+      const ArtFrameResult(ArtFrameStatus.notDetected, []);
 }
 
 // Seeded fixture passcodes (see fake_collection_seed.dart).
 const darkMagician = '46986414';
 const blueEyes = '89631139';
 const unknownPasscode = '00000000';
+
+const dmCard =
+    YgoCard(passcode: darkMagician, name: 'Dark Magician', type: 'Normal Monster');
+const beCard = YgoCard(
+  passcode: blueEyes,
+  name: 'Blue-Eyes White Dragon',
+  type: 'Normal Monster',
+);
 
 // The scan pipeline resolves through the sqflite_common_ffi background
 // isolate; a real delay (not a fake clock) lets stream events and db round
@@ -43,40 +56,66 @@ Future<void> settle() => Future<void>.delayed(const Duration(milliseconds: 30));
 
 void main() {
   late Database db;
+  late StreamController<ArtReading> artReadings;
   late StreamController<PasscodeReading> readings;
   late ProviderContainer container;
-  var seq = 0;
-  // Mutated by the artwork-match tests before triggering matchByArtwork().
+  var artSeq = 0;
+  var ocrSeq = 0;
+  // Mutated by tests before triggering an artwork match.
   var fakeCandidates = <ArtCandidate>[];
 
-  Future<void> feed(String? passcode) async {
-    readings.add(PasscodeReading(seq++, passcode));
+  /// One frame of artwork: a nearest hit at [distance], or nothing (null).
+  Future<void> feedArt(String? passcode, {int distance = 2}) async {
+    artReadings.add(
+      ArtReading(artSeq++, passcode == null ? null : HashMatch(passcode, distance)),
+    );
+    await settle();
+  }
+
+  Future<void> feedOcr(String? passcode) async {
+    readings.add(PasscodeReading(ocrSeq++, passcode));
+    await settle();
+  }
+
+  /// Drives exactly N agreeing, in-gate artwork frames — enough to resolve a
+  /// match. Tied to [ScanTuning.artAgreementFrames] so it feeds the threshold
+  /// precisely (feeding extra frames would start a fresh run after the resolve).
+  Future<void> agreeArt(String passcode) async {
+    for (var i = 0; i < ScanTuning.artAgreementFrames; i++) {
+      await feedArt(passcode);
+    }
     await settle();
   }
 
   ScanState state() => container.read(scanControllerProvider);
+  ScanController controller() =>
+      container.read(scanControllerProvider.notifier);
 
   setUp(() async {
     db = await openInMemoryTestDb();
     await seedFakeCollectionIfEmpty(db);
+    artReadings = StreamController<ArtReading>.broadcast();
     readings = StreamController<PasscodeReading>.broadcast();
-    seq = 0;
+    artSeq = 0;
+    ocrSeq = 0;
     fakeCandidates = <ArtCandidate>[];
     container = ProviderContainer(
       overrides: [
         appDatabaseProvider.overrideWith((ref) async => db),
+        artReadingsProvider.overrideWith((ref) => artReadings.stream),
         passcodeReadingsProvider.overrideWith((ref) => readings.stream),
         artMatcherProvider
             .overrideWith((ref) async => _FakeArtMatcher(fakeCandidates)),
       ],
     );
-    // Keep the controller alive so its stream subscription stays registered.
+    // Keep the controller alive so its stream subscriptions stay registered.
     container.listen(scanControllerProvider, (previous, next) {});
     await settle();
   });
 
   tearDown(() async {
     container.dispose();
+    await artReadings.close();
     await readings.close();
     await db.close();
   });
@@ -85,75 +124,174 @@ void main() {
     expect(state().status, ScanStatus.detecting);
   });
 
-  test('fewer than N agreeing reads does not match', () async {
-    await feed(darkMagician);
-    await feed(darkMagician);
-    expect(state().status, ScanStatus.reading);
-    expect(state().matchedCard, isNull);
+  group('primary path: artwork', () {
+    test('fewer than N agreeing artwork reads stays reading', () async {
+      // One short of the threshold: mid-run, not yet resolved.
+      for (var i = 0; i < ScanTuning.artAgreementFrames - 1; i++) {
+        await feedArt(darkMagician);
+      }
+      expect(state().status, ScanStatus.reading);
+      expect(state().matchedCard, isNull);
+    });
+
+    test('N agreeing in-gate reads resolve to a match with defaults', () async {
+      fakeCandidates = [const ArtCandidate(dmCard, 2)];
+      await agreeArt(darkMagician);
+
+      expect(state().status, ScanStatus.matched);
+      expect(state().matchedCard?.name, 'Dark Magician');
+      expect(state().condition, CardCondition.nearMint);
+    });
+
+    test('reads beyond the auto-match gate never accumulate', () async {
+      fakeCandidates = [const ArtCandidate(dmCard, 2)];
+      for (var i = 0; i < 5; i++) {
+        await feedArt(darkMagician,
+            distance: ArtMatchTuning.autoMatchMaxDistance + 1);
+      }
+      expect(state().status, ScanStatus.detecting);
+      expect(state().matchedCard, isNull);
+    });
+
+    test('disagreeing artwork reads discard the run', () async {
+      await feedArt(darkMagician);
+      await feedArt(blueEyes); // disagreement clears the run
+      await feedArt(darkMagician);
+      await settle();
+      expect(state().status, ScanStatus.reading);
+      expect(state().matchedCard, isNull);
+    });
+
+    test('an unresolvable agreed run (no candidates) keeps scanning', () async {
+      fakeCandidates = []; // e.g. nearest hits are alt-arts not in the app DB
+      await agreeArt(darkMagician);
+      expect(state().status, ScanStatus.detecting);
+      expect(state().matchedCard, isNull);
+    });
+
+    test('confirm writes the reviewed match and resumes', () async {
+      fakeCandidates = [const ArtCandidate(dmCard, 2)];
+      await agreeArt(darkMagician);
+
+      await controller().confirm();
+      await settle();
+
+      final scanned = (await CollectionDao(db).getEntriesForPasscode(darkMagician))
+          .where(
+        (e) => e.condition == CardCondition.nearMint && e.printingId == null,
+      );
+      expect(scanned, hasLength(1));
+      expect(scanned.first.quantity, 1);
+      expect(state().status, ScanStatus.confirmed);
+    });
+
+    test('the same card is debounced until the frame goes empty', () async {
+      fakeCandidates = [const ArtCandidate(dmCard, 2)];
+      await agreeArt(darkMagician);
+      await controller().confirm();
+      await settle();
+
+      // Still in view: re-reads must NOT re-match.
+      await feedArt(darkMagician);
+      await feedArt(darkMagician);
+      await feedArt(darkMagician);
+      expect(state().status, isNot(ScanStatus.matched));
+
+      // Leaves the frame for M empty frames, then returns.
+      for (var i = 0; i < ScanTuning.debounceEmptyFrames; i++) {
+        await feedArt(null);
+      }
+      await agreeArt(darkMagician);
+      expect(state().status, ScanStatus.matched);
+    });
+
+    test('"not the right card" reveals candidates; a pick re-enters review',
+        () async {
+      fakeCandidates = [
+        const ArtCandidate(dmCard, 2),
+        const ArtCandidate(beCard, 4),
+      ];
+      await agreeArt(darkMagician);
+      expect(state().status, ScanStatus.matched);
+      expect(state().matchedCard?.passcode, darkMagician);
+
+      controller().showCandidates();
+      expect(state().status, ScanStatus.candidates);
+      expect(state().candidates, hasLength(2));
+
+      controller().selectCandidate(beCard);
+      expect(state().status, ScanStatus.matched);
+      expect(state().matchedCard?.passcode, blueEyes);
+      expect(state().condition, CardCondition.nearMint);
+    });
+
+    test('dismiss from a match returns to detecting', () async {
+      fakeCandidates = [const ArtCandidate(dmCard, 2)];
+      await agreeArt(darkMagician);
+      controller().dismiss();
+      expect(state().status, ScanStatus.detecting);
+      expect(state().candidates, isEmpty);
+    });
   });
 
-  test('N agreeing reads that hit the db resolve to a match', () async {
-    await feed(darkMagician);
-    await feed(darkMagician);
-    await feed(darkMagician);
-    await settle();
+  group('fallback path: on-demand passcode OCR', () {
+    test('request then N agreeing reads that hit the db resolve to a match',
+        () async {
+      controller().requestPasscodeRead();
+      expect(state().status, ScanStatus.readingCode);
 
-    expect(state().status, ScanStatus.matched);
-    expect(state().matchedCard?.name, 'Dark Magician');
-    // Defaults offered for review.
-    expect(state().condition, CardCondition.nearMint);
-  });
+      await feedOcr(darkMagician);
+      await feedOcr(darkMagician);
+      await feedOcr(darkMagician);
+      await settle();
 
-  test('disagreeing reads are discarded and never reach N', () async {
-    await feed(darkMagician);
-    await feed(blueEyes); // disagreement clears the run
-    await feed(darkMagician);
-    await settle();
+      expect(state().status, ScanStatus.matched);
+      expect(state().matchedCard?.name, 'Dark Magician');
+    });
 
-    expect(state().status, ScanStatus.reading);
-    expect(state().matchedCard, isNull);
-  });
+    test('a read with no db hit resolves to unknown', () async {
+      controller().requestPasscodeRead();
+      await feedOcr(unknownPasscode);
+      await feedOcr(unknownPasscode);
+      await feedOcr(unknownPasscode);
+      await settle();
 
-  test('N agreeing reads with no db hit resolve to unknown', () async {
-    await feed(unknownPasscode);
-    await feed(unknownPasscode);
-    await feed(unknownPasscode);
-    await settle();
+      expect(state().status, ScanStatus.unknown);
+      expect(state().unknownPasscode, unknownPasscode);
+    });
 
-    expect(state().status, ScanStatus.unknown);
-    expect(state().unknownPasscode, unknownPasscode);
-  });
+    test('cancel returns to detecting', () async {
+      controller().requestPasscodeRead();
+      expect(state().status, ScanStatus.readingCode);
+      controller().cancelPasscodeRead();
+      expect(state().status, ScanStatus.detecting);
+    });
 
-  test('confirm writes the reviewed entry and resumes', () async {
-    await feed(darkMagician);
-    await feed(darkMagician);
-    await feed(darkMagician);
-    await settle();
+    test('times out back to detecting after too many empty frames', () async {
+      controller().requestPasscodeRead();
+      for (var i = 0; i < ScanTuning.ocrTimeoutFrames + 2; i++) {
+        await feedOcr(null);
+      }
+      expect(state().status, ScanStatus.detecting);
+    });
 
-    await container.read(scanControllerProvider.notifier).confirm();
-    await settle();
-
-    final entries = await CollectionDao(db).getEntriesForPasscode(darkMagician);
-    // The seed already logged Dark Magician as Mint; a Near Mint scan is a
-    // distinct stack, so it adds a row rather than incrementing.
-    final scanned = entries.where(
-      (e) => e.condition == CardCondition.nearMint && e.printingId == null,
-    );
-    expect(scanned, hasLength(1));
-    expect(scanned.first.quantity, 1);
-    expect(state().status, ScanStatus.confirmed);
+    test('requesting a read while a match awaits is ignored', () async {
+      fakeCandidates = [const ArtCandidate(dmCard, 2)];
+      await agreeArt(darkMagician);
+      expect(state().status, ScanStatus.matched);
+      controller().requestPasscodeRead();
+      expect(state().status, ScanStatus.matched);
+    });
   });
 
   test('setLanguage before confirm overrides the settings default', () async {
-    await feed(blueEyes);
-    await feed(blueEyes);
-    await feed(blueEyes);
-    await settle();
+    fakeCandidates = [const ArtCandidate(beCard, 2)];
+    await agreeArt(blueEyes);
     expect(state().status, ScanStatus.matched);
 
     // Camera can't read language, so it's picked by hand in the review gate.
-    container.read(scanControllerProvider.notifier).setLanguage('IT');
-    await container.read(scanControllerProvider.notifier).confirm();
+    controller().setLanguage('IT');
+    await controller().confirm();
     await settle();
 
     final scanned = (await CollectionDao(db).getEntriesForPasscode(blueEyes))
@@ -162,116 +300,9 @@ void main() {
     expect(scanned.first.language, 'IT');
   });
 
-  test('the same passcode is debounced until the frame goes empty', () async {
-    // Confirm once.
-    await feed(darkMagician);
-    await feed(darkMagician);
-    await feed(darkMagician);
-    await settle();
-    await container.read(scanControllerProvider.notifier).confirm();
-    await settle();
-
-    // The card is still in view: re-reads must NOT re-match.
-    await feed(darkMagician);
-    await feed(darkMagician);
-    await feed(darkMagician);
-    expect(state().status, isNot(ScanStatus.matched));
-
-    // The card leaves the frame for M empty frames, then returns.
-    for (var i = 0; i < 5; i++) {
-      await feed(null);
-    }
-    await feed(darkMagician);
-    await feed(darkMagician);
-    await feed(darkMagician);
-    await settle();
-
-    expect(state().status, ScanStatus.matched);
-  });
-
-  group('artwork-match fallback', () {
-    const dmCard = YgoCard(
-      passcode: darkMagician,
-      name: 'Dark Magician',
-      type: 'Normal Monster',
-    );
-
-    Future<void> matchByArtwork() async {
-      await container.read(scanControllerProvider.notifier).matchByArtwork();
-      await settle();
-    }
-
-    test('surfaces ranked candidates for the user to pick', () async {
-      fakeCandidates = [const ArtCandidate(dmCard, 3)];
-      await matchByArtwork();
-
-      expect(state().status, ScanStatus.candidates);
-      expect(state().candidates, hasLength(1));
-      expect(state().candidates.first.card.name, 'Dark Magician');
-    });
-
-    test('no candidates falls back to unknown (search by name)', () async {
-      fakeCandidates = [];
-      await matchByArtwork();
-
-      expect(state().status, ScanStatus.unknown);
-      expect(state().candidates, isEmpty);
-    });
-
-    test('selecting a candidate enters the review gate with defaults', () async {
-      fakeCandidates = [const ArtCandidate(dmCard, 3)];
-      await matchByArtwork();
-
-      container.read(scanControllerProvider.notifier).selectCandidate(dmCard);
-      expect(state().status, ScanStatus.matched);
-      expect(state().matchedCard?.passcode, darkMagician);
-      expect(state().condition, CardCondition.nearMint);
-      expect(state().candidates, isEmpty);
-    });
-
-    test('full flow: unknown → artwork match → pick → confirm writes one row',
-        () async {
-      // OCR agreed on a passcode not in the db.
-      await feed(unknownPasscode);
-      await feed(unknownPasscode);
-      await feed(unknownPasscode);
-      await settle();
-      expect(state().status, ScanStatus.unknown);
-
-      // Fall back to artwork, which finds the real card.
-      fakeCandidates = [const ArtCandidate(dmCard, 5)];
-      await matchByArtwork();
-      expect(state().status, ScanStatus.candidates);
-
-      container.read(scanControllerProvider.notifier).selectCandidate(dmCard);
-      await container.read(scanControllerProvider.notifier).confirm();
-      await settle();
-
-      final scanned = (await CollectionDao(db)
-              .getEntriesForPasscode(darkMagician))
-          .where(
-        (e) => e.condition == CardCondition.nearMint && e.printingId == null,
-      );
-      expect(scanned, hasLength(1));
-      expect(state().status, ScanStatus.confirmed);
-    });
-
-    test('dismiss from candidates returns to detecting', () async {
-      fakeCandidates = [const ArtCandidate(dmCard, 3)];
-      await matchByArtwork();
-      expect(state().status, ScanStatus.candidates);
-
-      container.read(scanControllerProvider.notifier).dismiss();
-      expect(state().status, ScanStatus.detecting);
-      expect(state().candidates, isEmpty);
-    });
-  });
-
   group('settings defaults', () {
     late ProviderContainer configured;
 
-    /// A container whose settings resolve to non-default preferences, so a
-    /// value that leaked through from the old hardcoded literals is visible.
     setUp(() async {
       await SettingsRepository(MetaDao(db)).save(
         const AppSettings(
@@ -283,11 +314,15 @@ void main() {
       configured = ProviderContainer(
         overrides: [
           appDatabaseProvider.overrideWith((ref) async => db),
+          artReadingsProvider.overrideWith((ref) => artReadings.stream),
           passcodeReadingsProvider.overrideWith((ref) => readings.stream),
+          artMatcherProvider.overrideWith(
+            (ref) async => _FakeArtMatcher(const [ArtCandidate(dmCard, 2)]),
+          ),
         ],
       );
-      // Settings are read synchronously at controller build, so they have to
-      // be resolved first — exactly what App's gate guarantees in production.
+      // Settings are read synchronously at controller build, so they have to be
+      // resolved first — exactly what App's gate guarantees in production.
       await configured.read(settingsControllerProvider.future);
       configured.listen(scanControllerProvider, (previous, next) {});
       await settle();
@@ -295,36 +330,36 @@ void main() {
 
     tearDown(() => configured.dispose());
 
-    test('a match is offered for review with the configured defaults',
-        () async {
-      for (var i = 0; i < 3; i++) {
-        readings.add(PasscodeReading(seq++, darkMagician));
+    Future<void> agreeConfigured(String passcode) async {
+      for (var i = 0; i < ScanTuning.artAgreementFrames; i++) {
+        artReadings.add(ArtReading(artSeq++, HashMatch(passcode, 2)));
         await settle();
       }
       await settle();
+    }
+
+    test('a match is offered for review with the configured defaults',
+        () async {
+      await agreeConfigured(darkMagician);
 
       final s = configured.read(scanControllerProvider);
       expect(s.status, ScanStatus.matched);
       expect(s.condition, CardCondition.lightPlayed);
       expect(s.edition, CardEdition.first);
+      expect(s.language, 'DE');
     });
 
     test('confirm writes the configured condition, edition and language',
         () async {
-      for (var i = 0; i < 3; i++) {
-        readings.add(PasscodeReading(seq++, blueEyes));
-        await settle();
-      }
-      await settle();
+      await agreeConfigured(darkMagician);
       await configured.read(scanControllerProvider.notifier).confirm();
       await settle();
 
-      // Before this step the scan path never passed `language` at all, so
-      // every scanned row silently landed on the model's 'EN' default.
-      final scanned = (await CollectionDao(db).getEntriesForPasscode(blueEyes))
-          .where((e) => e.printingId == null);
+      final scanned = (await CollectionDao(db).getEntriesForPasscode(darkMagician))
+          .where(
+        (e) => e.printingId == null && e.condition == CardCondition.lightPlayed,
+      );
       expect(scanned, hasLength(1));
-      expect(scanned.first.condition, CardCondition.lightPlayed);
       expect(scanned.first.edition, CardEdition.first);
       expect(scanned.first.language, 'DE');
     });

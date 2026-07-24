@@ -75,10 +75,14 @@ class YgoProdeckClient {
     return YgoProdeckCard(card: card, printings: printings);
   }
 
+  /// The first artwork's URL, preferring the smaller full-card variant
+  /// (`image_url_small`) to save on-device storage, and falling back to the
+  /// full-resolution `image_url` when a card has no small variant. Both are the
+  /// whole card (unlike `image_url_cropped`, which is the art box only).
   String? _firstImageUrl(Object? images) {
     if (images is! List || images.isEmpty) return null;
     final first = images.first;
     if (first is! Map<String, Object?>) return null;
-    return first['image_url'] as String?;
+    return (first['image_url_small'] ?? first['image_url']) as String?;
   }
 }

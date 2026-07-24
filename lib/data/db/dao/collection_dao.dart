@@ -151,6 +151,81 @@ class CollectionDao {
     await _db.delete('collection_entries', where: 'id = ?', whereArgs: [id]);
   }
 
+  /// Edits the entry [id]'s printing/condition/edition/language in place. If the
+  /// new combination collides with a *different* existing entry for the same
+  /// card (the same `collection_entries` UNIQUE key), the two are **merged**:
+  /// the other entry absorbs this one's quantity and this row is deleted, so the
+  /// list never shows two rows that are identical in every graded respect.
+  ///
+  /// Returns the id of the surviving entry — the same [id] on a plain edit, or
+  /// the absorbing entry's id on a merge (so the caller can tell them apart).
+  ///
+  /// Mirrors [addOrIncrement]'s handling of a null [printingId]: SQLite treats
+  /// every NULL as distinct under a UNIQUE constraint, so the collision lookup
+  /// must use `printing_id IS NULL` rather than `printing_id = NULL`.
+  Future<int> updateEntryDetails(
+    int id, {
+    required int? printingId,
+    required CardCondition condition,
+    required CardEdition edition,
+    required String language,
+  }) {
+    return _db.transaction((txn) async {
+      final current = await txn.query(
+        'collection_entries',
+        where: 'id = ?',
+        whereArgs: [id],
+        limit: 1,
+      );
+      if (current.isEmpty) return id;
+      final passcode = current.first['passcode']! as String;
+      final quantity = current.first['quantity']! as int;
+      final now = DateTime.now().millisecondsSinceEpoch;
+
+      final collision = await txn.query(
+        'collection_entries',
+        where: printingId != null
+            ? 'id != ? AND passcode = ? AND printing_id = ? '
+                  'AND condition = ? AND edition = ? AND language = ?'
+            : 'id != ? AND passcode = ? AND printing_id IS NULL '
+                  'AND condition = ? AND edition = ? AND language = ?',
+        whereArgs: printingId != null
+            ? [id, passcode, printingId, condition.toDb(), edition.toDb(), language]
+            : [id, passcode, condition.toDb(), edition.toDb(), language],
+        limit: 1,
+      );
+
+      if (collision.isEmpty) {
+        await txn.update(
+          'collection_entries',
+          {
+            'printing_id': printingId,
+            'condition': condition.toDb(),
+            'edition': edition.toDb(),
+            'language': language,
+            'updated_at': now,
+          },
+          where: 'id = ?',
+          whereArgs: [id],
+        );
+        return id;
+      }
+
+      final survivorId = collision.first['id']! as int;
+      await txn.update(
+        'collection_entries',
+        {
+          'quantity': (collision.first['quantity']! as int) + quantity,
+          'updated_at': now,
+        },
+        where: 'id = ?',
+        whereArgs: [survivorId],
+      );
+      await txn.delete('collection_entries', where: 'id = ?', whereArgs: [id]);
+      return survivorId;
+    });
+  }
+
   Future<List<CollectionEntryWithCard>> getAll({
     CollectionFilter filter = const CollectionFilter(),
   }) async {

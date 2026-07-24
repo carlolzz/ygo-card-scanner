@@ -15,6 +15,8 @@ const _conditionKey = 'settings.default_condition';
 const _editionKey = 'settings.default_edition';
 const _languageKey = 'settings.language';
 const _themeModeKey = 'settings.theme_mode';
+const _showScanDiagnosticsKey = 'settings.show_scan_diagnostics';
+const _confirmBeforeDeleteKey = 'settings.confirm_before_delete';
 
 /// Reads and writes [AppSettings] as key/value pairs in the existing `meta`
 /// table. No schema change: `meta` has carried arbitrary keys since v1, and
@@ -43,6 +45,14 @@ class SettingsRepository {
         AppThemeMode.fromDb,
         defaults.themeMode,
       ),
+      showScanDiagnostics: _parseBool(
+        await _metaDao.get(_showScanDiagnosticsKey),
+        defaults.showScanDiagnostics,
+      ),
+      confirmBeforeDelete: _parseBool(
+        await _metaDao.get(_confirmBeforeDeleteKey),
+        defaults.confirmBeforeDelete,
+      ),
     );
   }
 
@@ -51,6 +61,14 @@ class SettingsRepository {
     await _metaDao.set(_editionKey, settings.defaultEdition.toDb());
     await _metaDao.set(_languageKey, settings.language);
     await _metaDao.set(_themeModeKey, settings.themeMode.toDb());
+    await _metaDao.set(
+      _showScanDiagnosticsKey,
+      settings.showScanDiagnostics.toString(),
+    );
+    await _metaDao.set(
+      _confirmBeforeDeleteKey,
+      settings.confirmBeforeDelete.toString(),
+    );
   }
 
   /// Every `fromDb` throws on an unrecognized value. A stored value can be
@@ -66,6 +84,14 @@ class SettingsRepository {
       return fallback;
     }
   }
+
+  /// Booleans are stored as `bool.toString()` (`'true'`/`'false'`). Anything
+  /// else — a missing key or a hand-edited value — falls back to [fallback].
+  static bool _parseBool(String? stored, bool fallback) => switch (stored) {
+    'true' => true,
+    'false' => false,
+    _ => fallback,
+  };
 }
 
 @riverpod

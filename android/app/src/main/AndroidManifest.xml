@@ -11,7 +11,7 @@
          card-image downloads fail. -->
     <uses-permission android:name="android.permission.INTERNET"/>
     <application
-        android:label="ygo_scanner"
+        android:label="YGO Scanner"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
         android:allowBackup="false"

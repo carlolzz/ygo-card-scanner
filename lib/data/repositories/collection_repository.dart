@@ -2,6 +2,8 @@ import 'dart:async';
 
 import 'package:riverpod_annotation/riverpod_annotation.dart';
 
+import '../../models/card_condition.dart';
+import '../../models/card_edition.dart';
 import '../../models/collection_entry.dart';
 import '../../models/collection_entry_with_card.dart';
 import '../db/dao/collection_dao.dart';
@@ -28,6 +30,23 @@ class CollectionRepository {
   Future<void> decrement(int id) => _dao.decrement(id);
 
   Future<void> delete(int id) => _dao.delete(id);
+
+  /// Edits an entry's printing/condition/edition/language, merging into a
+  /// matching entry when the change makes it a duplicate. See
+  /// [CollectionDao.updateEntryDetails]. Returns the surviving entry's id.
+  Future<int> updateEntryDetails(
+    int id, {
+    required int? printingId,
+    required CardCondition condition,
+    required CardEdition edition,
+    required String language,
+  }) => _dao.updateEntryDetails(
+    id,
+    printingId: printingId,
+    condition: condition,
+    edition: edition,
+    language: language,
+  );
 
   Future<List<CollectionEntryWithCard>> getAll({
     CollectionFilter filter = const CollectionFilter(),

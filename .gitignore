@@ -31,6 +31,7 @@ migrate_working_dir/
 .pub-cache/
 .pub/
 /build/
+/android/build/
 /coverage/
 
 # Symbolication related
@@ -55,6 +56,7 @@ tools/.image_cache/
 # Android release signing — never commit the keystore or its passwords.
 # key.properties.example (the committed template) is kept: it is a different
 # filename, so the pattern below does not match it.
+android/key.properties
 **/key.properties
 *.jks
 *.keystore

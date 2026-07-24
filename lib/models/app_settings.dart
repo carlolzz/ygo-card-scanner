@@ -19,6 +19,8 @@ class AppSettings {
     this.language = kDefaultCardLanguage,
     // Dark-first, per the project's design direction.
     this.themeMode = AppThemeMode.dark,
+    this.showScanDiagnostics = false,
+    this.confirmBeforeDelete = true,
   });
 
   /// Pre-selected grade for a newly logged card, in both the scan review gate
@@ -33,17 +35,30 @@ class AppSettings {
 
   final AppThemeMode themeMode;
 
+  /// Whether the developer recognition-diagnostics overlay is shown on the scan
+  /// screen. Off by default — it's a tuning aid, not a normal-use feature.
+  final bool showScanDiagnostics;
+
+  /// Whether removing a card from the collection (deleting, or decrementing the
+  /// last copy) asks for confirmation first. On by default — a deletion can't
+  /// be undone.
+  final bool confirmBeforeDelete;
+
   AppSettings copyWith({
     CardCondition? defaultCondition,
     CardEdition? defaultEdition,
     String? language,
     AppThemeMode? themeMode,
+    bool? showScanDiagnostics,
+    bool? confirmBeforeDelete,
   }) {
     return AppSettings(
       defaultCondition: defaultCondition ?? this.defaultCondition,
       defaultEdition: defaultEdition ?? this.defaultEdition,
       language: language ?? this.language,
       themeMode: themeMode ?? this.themeMode,
+      showScanDiagnostics: showScanDiagnostics ?? this.showScanDiagnostics,
+      confirmBeforeDelete: confirmBeforeDelete ?? this.confirmBeforeDelete,
     );
   }
 }

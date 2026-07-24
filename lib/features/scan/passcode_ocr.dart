@@ -20,11 +20,20 @@ class RecognizedSpan {
 /// highly specific — ATK/DEF, levels, and set codes never reach eight digits.
 ///
 /// Rules, straight from `.claude/skills/scan-pipeline.md`:
-/// - A span must clean to *exactly* eight digits. Seven or nine is a misread,
-///   not a partial result — we never pad or truncate, so such spans are
-///   ignored rather than salvaged.
-/// - If two spans yield *different* eight-digit values, the frame is ambiguous
-///   and we return null; consecutive-frame agreement upstream resolves it.
+/// - The passcode is an *exactly*-eight-digit run. Seven or nine is a misread,
+///   not a partial result — we never pad or truncate.
+/// - If two spans (or two runs in one span) yield *different* eight-digit
+///   values, the frame is ambiguous and we return null; consecutive-frame
+///   agreement upstream resolves it.
+///
+/// Matching works on maximal digit *runs* (`\d+`) rather than stripping every
+/// non-digit from a line: on a real card the passcode often sits on the same
+/// OCR line as neighbouring text ("46986414 1st Edition"), and cleaning the
+/// whole line would count the stray "1" as a ninth digit and reject the frame.
+/// A run of exactly eight digits is the passcode; the "1" of "1st" is a
+/// separate one-digit run and is ignored. When a span has *no* eight-digit run
+/// we fall back to the joined runs — this preserves ML Kit's habit of splitting
+/// a passcode across elements ("4698 6414" → two four-digit runs → "46986414").
 ///
 /// [roi], when supplied together with [frameSize], restricts matching to spans
 /// whose centre falls inside a normalized (0..1) rectangle of the frame. It is
@@ -37,7 +46,7 @@ String? extractPasscode(
   Size? frameSize,
   Rect? roi,
 }) {
-  String? found;
+  final found = <String>{};
   for (final span in spans) {
     if (roi != null && frameSize != null && frameSize.width > 0) {
       final centre = Offset(
@@ -47,13 +56,20 @@ String? extractPasscode(
       if (!roi.contains(centre)) continue;
     }
 
-    final digits = span.text.replaceAll(RegExp(r'\D'), '');
-    if (digits.length != 8) continue;
-
-    if (found != null && found != digits) return null; // ambiguous frame
-    found = digits;
+    final runs =
+        RegExp(r'\d+').allMatches(span.text).map((m) => m.group(0)!).toList();
+    final eights = runs.where((run) => run.length == 8).toSet();
+    if (eights.isNotEmpty) {
+      found.addAll(eights);
+    } else {
+      // No isolated 8-run: try joining space-split digit groups.
+      final joined = runs.join();
+      if (joined.length == 8) found.add(joined);
+    }
   }
-  return found;
+  // Exactly one distinct value is a confident read; zero is a miss and more
+  // than one is an ambiguous frame — both resolve to null.
+  return found.length == 1 ? found.first : null;
 }
 
 /// Reads a card passcode from a single camera frame. An abstraction so tests

@@ -104,6 +104,11 @@ class AppStrings {
   static const String scanDiagnosticsNotDetected = 'no card detected';
   static const String scanDiagnosticsDetected = 'card detected';
   static const String scanDiagnosticsNoCandidates = 'detected, nothing close';
+  // Whether the crop was corrected to a located artwork window, or fell back to
+  // the fixed ROI — the first thing to check when a real card is detected but
+  // every distance is large.
+  static const String scanDiagnosticsArtBoxLocked = 'art box: located';
+  static const String scanDiagnosticsArtBoxFallback = 'art box: fixed roi';
 
   // Passcode OCR — the on-demand fallback, and a mode that stays on until the
   // user turns it off or leaves the screen.
@@ -119,6 +124,12 @@ class AppStrings {
   // The set/expansion picker in the scan review gate.
   static const String scanSetLabel = 'Set';
   static const String scanNoSetOption = 'No specific set';
+
+  // The shared set/expansion search box (scan review gate, manual add wizard,
+  // collection edit sheet).
+  static const String setPickerSearchHint = 'Type a set name, code or rarity';
+  static const String setPickerClearTooltip = 'Clear';
+  static const String setPickerNoMatches = 'No set matches that.';
 
   static const String addCardTitle = 'Log Cards';
   static const String addCardSearchHint = 'Search by name';

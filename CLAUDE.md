@@ -251,9 +251,17 @@ order):
 6. `tools/build_hash_index.py` — download all card art, compute pHashes, emit
    `assets/card_hashes.json` ← done (host-side Python build tool, not shipped
    in the app). Single bulk `cardinfo.php` fetch (same endpoint as
-   `lib/data/api/ygoprodeck_client.dart`), then downloads each artwork's
-   **cropped** variant (`image_url_cropped` — art box only, matching the scan
-   crop) and computes `imagehash.phash(hash_size=8)` → 16-hex-char string.
+   `lib/data/api/ygoprodeck_client.dart`), then computes
+   `imagehash.phash(hash_size=8)` → 16-hex-char string.
+   **The shipped index is v2**: it downloads each artwork's **full** image
+   (`image_url`) and hashes the `ART_BOX_ROI` crop of it — the same fractional
+   window of a canonical upright card that the runtime crops
+   (`ArtMatchTuning.artBoxRoi`), so index and runtime hash the same function of
+   the same region. (v1 hashed YGOPRODeck's own `image_url_cropped`, a
+   differently-shaped art crop — a systematic mismatch. The two constants must
+   stay in sync; since step 13 `HashIndex.fromJson` **enforces** that by
+   validating the `roi` header the file carries, so drift fails loudly at
+   startup instead of quietly degrading every distance.)
    **Alt-arts**: every entry in a card's `card_images` array is indexed by its
    **own** `id` (its own passcode), so the index is richer than the app DB
    (which stores only `card_images[0]`). Output is a wrapper object
@@ -626,6 +634,148 @@ order):
     switch landed at y=608 in the 600px test viewport, so the tap missed) — the
     scanning switches reuse the existing `scrollToDatabaseSection` helper
     instead, since they sit just above that section.
+
+13. Third on-device feedback pass — detection robustness, live outline, set
+    search box, list-tile layout ← done (verified: `flutter analyze` clean +
+    full `flutter test` green, 263 tests). **No DB migration, no schema change,
+    no new dependency.**
+    **Collection list tile, re-laid out** (`collection_list_tile.dart`): the row
+    now reads grade → art → name/set → quantity → actions. The condition chip
+    and artwork are unchanged and stay centred in their own boxes; the name and
+    set/edition line moved to the *right of the artwork* (centred in the space
+    between it and the quantity); the quantity is a plain number in a
+    fixed-width slot (`CollectionTileTokens.quantityWidth`, fixed so the action
+    column doesn't shift as the count gains a digit); and add/remove/delete are
+    stacked in one column on the right, in that order. Everything is
+    `CrossAxisAlignment.center`, so the quantity lands on the row's midline —
+    which is exactly where the middle (remove) button sits. A plain `IconButton`
+    carries a 48pt minimum on every side, and three of those make the row twice
+    the height of its artwork, so the buttons render through a private
+    `_TileAction` trimmed to `CollectionTileTokens.actionButtonSize` (36) while
+    keeping icon, colour and ripple.
+    **Set/expansion is now a search box, not a dropdown** — a reprinted card can
+    carry a dozen printings and the user knows which one is in their hand.
+    `PrintingPicker` (`lib/shared/widgets/printing_picker.dart`) is a text field
+    that narrows the card's known printings as you type, backed by the pure
+    `filterPrintings` in `lib/models/printing.dart` (every whitespace-separated
+    term must appear in `Printing.displayLabel`, case-insensitive, any order —
+    so "raiders super" finds `MRD-EN094 · Metal Raiders · Super Rare`). It
+    replaces the `DropdownButton` in the scan review gate (`_SetPicker`) and the
+    collection edit sheet, and the manual add wizard's `_PrintingStep` gained
+    the same search field above its full-page list (that step keeps its own
+    list shape — a capped inline list on an otherwise empty page is worse — but
+    shares the one filter rule). **Search is over known printings only**
+    (decided with the user): a pick always resolves to a real `printings.id`,
+    so there is no free-text set, no synthetic rows and no DAO change.
+    The query is local widget state in both places, deliberately: it is
+    ephemeral input, not part of the card being logged. The field doubles as
+    query and selection — on blur it snaps back to the selected printing's
+    label, so a half-typed query can never read as a choice.
+    **Scan diagnostics moved above the status banner.** They previously shared
+    the *identical* top inset (`kToolbarHeight + AppSpacing.sm`), one topLeft
+    and one topCenter, so on a narrow screen they overlapped and the diagnostics
+    box painted over "Point at a card". Both now live in one `_TopOverlays`
+    column — diagnostics first, banner below — so the order is structural
+    rather than a coincidence of two equal paddings, and the banner moves down
+    when diagnostics is on. Its hard-coded 12pt monospace became
+    `ScanDiagnosticsTokens`.
+    **Card detection, substantially reworked** — the reported failure was
+    sleeved cards on a non-monochromatic surface. Four changes, in order of
+    expected value:
+    - **The search follows the reticle.** `detectCard` gained a `searchRoi`, and
+      `scan_geometry.dart` maps the on-screen guide box into upright-frame
+      fractions. This is *not* the identity mapping and that is the whole point:
+      the preview is a `BoxFit.cover` crop of the sensor frame, so on a 1080x2340
+      viewport against a 4:3 sensor the reticle covers 78% of the screen's width
+      but only ~48% of the frame's. `reticleRectInViewport` is now the single
+      source of truth for the guide's geometry — `_ReticleOverlay` draws it and
+      the detector searches it, so they cannot drift apart. The viewport reaches
+      the pipeline via `scanViewportSizeProvider`, written from a post-frame
+      callback by a `_ViewportProbe` at the base of the stack; **null (no screen
+      laid out — i.e. every host test) degrades to the old whole-frame search**.
+      The provider is `keepAlive: true`, load-bearing: writer and readers all
+      use `ref.read`, which holds no subscription, so an autoDispose provider
+      would be torn down between the write and the next frame and the ROI would
+      silently stay whole-frame forever.
+      The crop is applied to the Mat **before** the edge map, not just used to
+      filter candidates afterwards: Canny's thresholds come from an Otsu split,
+      and over the whole frame that histogram is dominated by whatever the card
+      is lying on — which is precisely why a busy surface washed the card's own
+      edges out. Spending the same 480px detection budget on the guide box also
+      roughly doubles the card's linear resolution, and the warp now reads from
+      the **full-resolution** image (free: `warpPerspective` costs by its
+      destination size) via `getPerspectiveTransform2f`, so corners are no
+      longer rounded to integers.
+    - **Shape scoring replaces "largest quad wins".** All the decision logic
+      moved to a new **pure, host-tested** `lib/features/scan/card_quad.dart`
+      with its thresholds in `CardDetectionTuning` — the detector imports
+      OpenCV, so nothing left inside it could ever be tested, and a wrong
+      threshold here doesn't crash, it silently recognises the wrong card.
+      Candidates are gated on card aspect ratio, rectangularity, opposite-side
+      balance, in-plane tilt (past ~25° the corner ordering mis-assigns corners
+      and warps the card rotated — a plausible-looking detection that hashes to
+      nonsense) and area *as a fraction of the search region*, then scored on
+      four **bounded** 0..1 terms. The old score multiplied by raw pixel area,
+      so it was still largest-wins with a shape prefilter.
+    - **The sleeve fix.** A sleeve's outline is concentric with the card's and a
+      few percent larger, so largest-wins picks the sleeve and shifts every
+      subsequent crop — the reason `autoMatchMaxDistance` and
+      `maxHammingDistance` had been loosened to 13/18. `selectCardQuad` steps
+      **one** level inward into a nested quad. Exactly one: a card carries a
+      printed inner border at ~0.81 of its own area, overlapping the sleeve
+      ratio, so an unbounded descent walks sleeve → card → border and shrinks
+      the warp ~11%. Near-duplicate quads (the two sides of one dilated edge
+      band) are collapsed first so they can't consume that single step. Both
+      cases are regression-tested.
+    - **The crop is corrected to the located art box.** `_findArtBox` looks for
+      the artwork rectangle inside the rectified card and, when it finds one,
+      hashes that instead of the fixed fractions. This matters because the index
+      hashes a fixed fractional ROI of a *clean* card, so any error in the outer
+      outline rescales the rectification and the fixed ROI then samples the
+      wrong pixels. **The standing assumption is documented at the function**:
+      it treats `ArtMatchTuning.artBoxRoi` as the artwork's true position, which
+      holds to the precision of those hand-rounded fractions. The trade is
+      favourable (a sleeve misrectifies by ~5-8%; the ROI approximates the real
+      window to a percent or two) but measuring the true rect across the cached
+      reference images in `tools/.image_cache/full/` and, if it differs,
+      rebuilding the index with the measured value would remove the assumption
+      outright — **the one open follow-up here**. Ties break on *size*, not on
+      closeness to the expected box: ranking by closeness is circular and
+      prefers making no correction, discarding exactly the shifted art box the
+      pass exists to find.
+      The old unconditional bounding-box fallback (which warped the largest
+      contour of *any* shape, so a blob of desk became a "card") is gone; a
+      validated one survives, run through the same shape gate.
+    **Live detection outline** (`_DetectionOutline`/`_DetectionPainter`), the
+    behaviour the user saw in store apps: the detected card and the artwork
+    window are drawn on the preview, the art box heavier since it is the region
+    actually hashed. `DetectedCard` carries its quad in upright-frame fractions,
+    which flows through `ArtFrameResult` → `ArtReading` to the painter; the
+    painter repeats the preview's cover transform via `frameFractionToViewport`.
+    Detections arrive on the 300ms camera throttle, so corners glide over
+    `ScanOutlineTokens.transition` (260ms) from wherever the animation had
+    actually reached, and a lost card fades rather than blinks. **Cosmetic
+    only** — nothing here feeds back into matching, so a rotation mismatch on
+    some device can never affect what gets logged; conversely a correctly
+    hugging outline is the on-device acceptance test for the ROI mapping.
+    **Two smaller fixes**: `PHashArtMatcher` now caches the last ranked result
+    so `match()` resolves *that* frame instead of re-detecting a newer one (the
+    review panel could otherwise present a different card than the outline had
+    locked onto); and `camera_service` meters focus/exposure on the frame centre
+    (`setFocusPoint`/`setExposurePoint`), since left alone the camera weights
+    the whole scene and exposes for the desk.
+    **Gotcha, twice over**: a `late final` field whose initializer runs on first
+    *access* will run it inside `dispose()` if nothing touched it during build —
+    both `_DetectionOutline`'s `AnimationController` (ticker assertion) and
+    `_ViewportProbe`'s notifier (`Using "ref" when a widget ... has been
+    unmounted`) failed this way. Assign such fields in `initState`.
+    **Still open / not done** (the user scoped these out): detection and the
+    14,636-entry index scan still run on the UI isolate; no multi-crop hash
+    voting; `ScanTuning.frameInterval` unchanged at 300ms. And
+    `autoMatchMaxDistance`/`maxHammingDistance` are still 13/18 — they were
+    loosened to absorb the sleeve drift this step removes, so **being unable to
+    tighten them back toward 10/14 on device is evidence the art-box correction
+    isn't landing**.
 
 ## Standing rules
 

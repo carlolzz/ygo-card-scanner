@@ -38,3 +38,23 @@ abstract class Printing with _$Printing {
     'rarity': rarity,
   };
 }
+
+/// Narrows [printings] to those matching a free-typed [query], for the set
+/// search box shared by the scan review gate, the manual add wizard and the
+/// collection edit sheet.
+///
+/// Every whitespace-separated term must appear somewhere in the printing's
+/// [Printing.displayLabel], case-insensitively and in any order — so "raiders
+/// super" finds "MRD-EN094 · Metal Raiders · Super Rare", and a set code typed
+/// with or without its language block still matches. An empty query keeps the
+/// list intact rather than emptying it: the box starts as a plain list the user
+/// can scroll, and typing only ever narrows it.
+List<Printing> filterPrintings(List<Printing> printings, String query) {
+  final terms = query.toLowerCase().split(RegExp(r'\s+'))
+    ..removeWhere((term) => term.isEmpty);
+  if (terms.isEmpty) return printings;
+  return [
+    for (final printing in printings)
+      if (terms.every(printing.displayLabel.toLowerCase().contains)) printing,
+  ];
+}

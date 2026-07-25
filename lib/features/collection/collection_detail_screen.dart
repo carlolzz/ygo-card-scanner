@@ -11,6 +11,7 @@ import '../../models/collection_entry_with_card.dart';
 import '../../models/printing.dart';
 import '../../shared/widgets/card_thumbnail.dart';
 import '../../shared/widgets/labeled_choice_chip.dart';
+import '../../shared/widgets/printing_picker.dart';
 import 'collection_delete_confirm.dart';
 import 'collection_providers.dart';
 
@@ -455,13 +456,12 @@ class _EditEntrySheetState extends ConsumerState<_EditEntrySheet> {
               const SizedBox(height: AppSpacing.md),
               _label(AppStrings.collectionEditSetLabel),
               printingsAsync.when(
-                data: (printings) => _printingDropdown(printings, palette),
+                data: _printingPicker,
                 loading: () => const Padding(
                   padding: EdgeInsets.symmetric(vertical: AppSpacing.sm),
                   child: LinearProgressIndicator(),
                 ),
-                error: (_, _) =>
-                    _printingDropdown(const <Printing>[], palette),
+                error: (_, _) => _printingPicker(const <Printing>[]),
               ),
               const SizedBox(height: AppSpacing.lg),
               Row(
@@ -497,34 +497,16 @@ class _EditEntrySheetState extends ConsumerState<_EditEntrySheet> {
     ),
   );
 
-  Widget _printingDropdown(List<Printing> printings, AppPalette palette) {
+  Widget _printingPicker(List<Printing> printings) {
     // Keep the selection valid: a printing_id always refers to a printing of
     // this passcode (the schema forbids deleting one with entries), but guard
-    // anyway so a stale value can't trip the dropdown's value==item assertion.
+    // anyway so a stale value can't select a row the picker isn't showing.
     final ids = printings.map((p) => p.id).toSet();
-    final value = ids.contains(_printingId) ? _printingId : null;
-    return DropdownButton<int?>(
-      value: value,
-      isExpanded: true,
-      dropdownColor: palette.surfaceRaised,
-      style: TextStyle(color: palette.onSurface),
-      items: [
-        const DropdownMenuItem<int?>(
-          value: null,
-          child: Text(AppStrings.collectionEditNoPrinting),
-        ),
-        for (final printing in printings)
-          DropdownMenuItem<int?>(
-            value: printing.id,
-            child: Text(
-              printing.displayLabel.isEmpty
-                  ? AppStrings.collectionEditNoPrinting
-                  : printing.displayLabel,
-              overflow: TextOverflow.ellipsis,
-            ),
-          ),
-      ],
-      onChanged: (id) => setState(() => _printingId = id),
+    return PrintingPicker(
+      printings: printings,
+      selectedId: ids.contains(_printingId) ? _printingId : null,
+      noSetLabel: AppStrings.collectionEditNoPrinting,
+      onSelected: (id) => setState(() => _printingId = id),
     );
   }
 }

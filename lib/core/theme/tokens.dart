@@ -164,6 +164,34 @@ class CardThumbnailSizes {
   static const double detail = 200;
 }
 
+/// Geometry of one collection list row. The row reads left-to-right as
+/// grade → art → name/set → quantity → actions, with the three action buttons
+/// stacked in a single column on the right (add, remove, delete).
+class CollectionTileTokens {
+  const CollectionTileTokens._();
+
+  /// Fixed width for the quantity slot, so the action column stays put as the
+  /// count grows from 1 to 99 instead of shifting the row's right edge.
+  static const double quantityWidth = 28;
+
+  /// The stacked action buttons are held below the app's usual 48pt target:
+  /// three of them at full size make the row twice the height of its artwork.
+  /// The row itself stays well above [AppTapTarget.minSize], and each button
+  /// keeps its own ripple, so they remain comfortably tappable.
+  static const double actionButtonSize = 36;
+  static const double actionIconSize = 22;
+}
+
+/// Geometry of the shared set/expansion search box.
+class PrintingPickerTokens {
+  const PrintingPickerTokens._();
+
+  /// Cap on the results list so the box can open inside a bottom sheet or the
+  /// scan review panel without pushing the confirm button off-screen. Beyond
+  /// this the list scrolls.
+  static const double maxListHeight = 168;
+}
+
 /// Tuning constants for the continuous-scan pipeline. See
 /// `.claude/skills/scan-pipeline.md` for the rationale behind each value —
 /// these are behavioural knobs, kept named here rather than as scattered
@@ -249,6 +277,129 @@ class ScanHelpTokens {
   static const double iconSize = 16;
 }
 
+/// How the on-screen guide box relates to the region the detector searches.
+class ScanDetectionTokens {
+  const ScanDetectionTokens._();
+
+  /// Slack around the reticle when it is mapped into frame coordinates, as a
+  /// fraction of the reticle's own size. Generous on purpose: the guide box is
+  /// advice, and a card held a little large should still be found rather than
+  /// silently dropped for overhanging it.
+  static const double reticleRoiMargin = 0.15;
+}
+
+/// Gates and weights for choosing which quadrilateral in a frame is the card.
+///
+/// These live here rather than private to `opencv_card_detector.dart` because
+/// the decision logic they drive was deliberately extracted into
+/// `lib/features/scan/card_quad.dart` so it can be host-tested — the detector
+/// itself can't be, since the OpenCV native library doesn't load off-device.
+/// Anything only the native pipeline names (working resolution, kernel sizes,
+/// approx epsilons) stays private in the detector.
+class CardDetectionTuning {
+  const CardDetectionTuning._();
+
+  /// How far a candidate's width/height ratio may sit from a real card's, as a
+  /// factor either way. Tolerates the foreshortening of a card held at a
+  /// moderate angle while rejecting a square coaster or a long desk edge.
+  static const double aspectTolerance = 1.35;
+
+  /// Quad area / (mean width x mean height). 1.0 is a parallelogram; a blob
+  /// whose four "corners" don't describe a rectangle scores far lower. This is
+  /// what rejects merged card-plus-background contours.
+  static const double minRectangularity = 0.82;
+
+  /// Product of the two opposite-side length ratios. Guards against a quad with
+  /// one wildly longer side — extreme perspective, or two objects' edges
+  /// stitched into one contour.
+  static const double minSideBalance = 0.72;
+
+  /// Maximum in-plane rotation of the card. Corner ordering keys off the
+  /// coordinate sum and difference, which starts mis-assigning corners past
+  /// roughly this angle — and a mis-assigned corner warps the card rotated or
+  /// mirrored, which looks like a perfectly good detection and hashes to
+  /// nonsense. Rejecting is much better than silently mis-warping.
+  static const double maxTiltDegrees = 25;
+
+  /// Area band, as a fraction of the *search region* (not the whole frame): a
+  /// card the user has framed in the guide box fills most of it.
+  static const double minRoiAreaFraction = 0.20;
+  static const double maxRoiAreaFraction = 1.05;
+
+  /// The candidate area fraction that earns a full fill score.
+  static const double targetRoiAreaFraction = 0.75;
+
+  /// Slack, as a fraction of the image, allowed when testing that a candidate
+  /// lies inside the search region — a card pressed right against the guide box
+  /// shouldn't be thrown away over a pixel.
+  static const double searchRoiSlack = 0.02;
+
+  /// A nested quad is preferred over the one containing it only when it is at
+  /// least this fraction of its area. A sleeve/card pair sits around 0.85–0.92.
+  static const double innerQuadMinAreaRatio = 0.78;
+
+  /// …and the descent runs **once**. Canny-plus-dilate turns every edge into a
+  /// band, and a card carries a printed inner border at roughly 0.81 of its own
+  /// area — overlapping the sleeve ratio above. An unbounded descent therefore
+  /// walks sleeve → card → inner border and shrinks the warp by ~11% linear,
+  /// which is a plausible-looking detection with a systematically wrong crop.
+  /// One step is exactly "a sleeve may hide the card"; anything further is the
+  /// card's own artwork furniture.
+  static const int maxNestedDescents = 1;
+
+  /// Two quads this close in area, with near-identical centres, are the two
+  /// sides of one dilated edge band rather than two real rectangles. Collapsed
+  /// to one (the outer) before the sleeve rule, so a duplicate can't consume
+  /// the single permitted descent.
+  static const double duplicateAreaRatio = 0.95;
+  static const double duplicateCentreFraction = 0.02;
+
+  /// Minimum overall shape score. Kept low deliberately: the hard gates above
+  /// do the rejecting, and the score exists mainly to *rank* survivors. A high
+  /// bar here would trade the old failure ("recognises the wrong thing") for a
+  /// worse one ("scanning does nothing").
+  static const double minScore = 0.35;
+
+  /// Score weights, summing to 1.
+  static const double aspectWeight = 0.35;
+  static const double rectangularityWeight = 0.25;
+  static const double fillWeight = 0.20;
+  static const double centreWeight = 0.20;
+}
+
+/// The live outline drawn over the preview when a card is detected — the
+/// feedback that tells the user the app has actually locked on, rather than
+/// leaving them guessing at a static guide box.
+class ScanOutlineTokens {
+  const ScanOutlineTokens._();
+
+  /// How long the outline takes to glide from one detection to the next (and to
+  /// fade in or out). Detections arrive on the camera throttle
+  /// ([ScanTuning.frameInterval]), so without interpolation the outline would
+  /// visibly strobe between positions; matching that interval means each
+  /// detection has just about arrived at its target when the next one lands.
+  static const Duration transition = Duration(milliseconds: 260);
+
+  static const double cardStrokeWidth = 2;
+
+  /// The artwork box is drawn heavier than the card outline: it is the region
+  /// actually being hashed, so it is what the user should be framing.
+  static const double artStrokeWidth = 3;
+
+  /// Alpha of the wash inside the artwork box.
+  static const double artFillOpacity = 0.14;
+}
+
+/// Type for the developer diagnostics readout on the scan screen. Monospace and
+/// small: it is a dense column of passcodes and distances that must line up,
+/// and it sits above the status banner without crowding the reticle.
+class ScanDiagnosticsTokens {
+  const ScanDiagnosticsTokens._();
+
+  static const double fontSize = 12;
+  static const String fontFamily = 'monospace';
+}
+
 /// Tuning for the pHash artwork-match fallback (step 8). A runtime pHash of a
 /// handheld frame is not bit-identical to the index (built from clean CDN art),
 /// so matching ranks the [candidateCount] nearest cards within
@@ -286,5 +437,22 @@ class ArtMatchTuning {
   /// index's cropped art was taken from. Applied to the captured luma before
   /// hashing. Pendulum/full-art frames crop imperfectly; acceptable for a
   /// fallback that the user still confirms.
+  ///
+  /// MUST stay in sync with `ART_BOX_ROI` in `tools/build_hash_index.py`: the
+  /// index hashes exactly this fractional region of a clean upright card, so
+  /// the runtime has to hash the same region of the card it captured.
   static const Rect artBoxRoi = Rect.fromLTRB(0.09, 0.19, 0.91, 0.68);
+
+  /// Where in the frame a card is looked for, as fractions of the *upright*
+  /// camera frame. The user is told to put the card in the reticle, which is
+  /// comfortably inside this region for every plausible preview aspect ratio
+  /// (the reticle is at most 0.78 x 0.62 of the viewport, and the preview is a
+  /// `BoxFit.cover` crop of the frame, never a letterbox).
+  ///
+  /// Candidate quads outside it are discarded, which is what stops a table
+  /// edge, a keyboard or the neighbouring card in the stack from being warped
+  /// as if it were the card — the failure the user hit on a non-monochromatic
+  /// surface. It also excludes the frame border itself, which is otherwise a
+  /// perfect, always-present rectangle.
+  static const Rect cardSearchRoi = Rect.fromLTRB(0.04, 0.04, 0.96, 0.96);
 }

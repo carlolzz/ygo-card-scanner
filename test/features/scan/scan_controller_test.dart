@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/painting.dart' show Size;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite/sqflite.dart';
@@ -31,9 +32,9 @@ class _FakeArtMatcher implements ArtMatcher {
   _FakeArtMatcher(this.result);
   final List<ArtCandidate> result;
   @override
-  Future<List<ArtCandidate>> match() async => result;
+  Future<List<ArtCandidate>> match({Size? viewportSize}) async => result;
   @override
-  ArtFrameResult rankFrame({bool includeNearest = false}) =>
+  ArtFrameResult rankFrame({bool includeNearest = false, Size? viewportSize}) =>
       const ArtFrameResult(ArtFrameStatus.notDetected, []);
 }
 

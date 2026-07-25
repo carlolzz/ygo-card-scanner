@@ -6,6 +6,7 @@ import '../../core/theme/tokens.dart';
 import '../../models/card_condition.dart';
 import '../../models/card_edition.dart';
 import '../../models/card_language.dart';
+import '../../models/printing.dart';
 import '../../shared/widgets/labeled_choice_chip.dart';
 import 'add_card_providers.dart';
 
@@ -128,52 +129,125 @@ class _SearchStep extends ConsumerWidget {
   }
 }
 
-class _PrintingStep extends ConsumerWidget {
+/// The printing step of the wizard: pick which set/expansion this copy is from.
+///
+/// Stateful only for the search box's [TextEditingController] — the query is
+/// ephemeral input state, not part of the card being logged, so it stays out of
+/// [AddCardSelection] (which resets between cards anyway).
+class _PrintingStep extends ConsumerStatefulWidget {
   const _PrintingStep({required this.selection});
 
   final AddCardSelection selection;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<_PrintingStep> createState() => _PrintingStepState();
+}
+
+class _PrintingStepState extends ConsumerState<_PrintingStep> {
+  final TextEditingController _searchController = TextEditingController();
+  String _query = '';
+
+  @override
+  void didUpdateWidget(_PrintingStep oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // A different card means a different set list — don't carry the last card's
+    // query over and show an empty list.
+    if (widget.selection.card?.passcode !=
+        oldWidget.selection.card?.passcode) {
+      _searchController.clear();
+      _query = '';
+    }
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final controller = ref.read(addCardSelectionControllerProvider.notifier);
-    final card = selection.card!;
+    final card = widget.selection.card!;
     final palette = AppPalette.of(context);
+    final matches = filterPrintings(widget.selection.printings, _query);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Padding(
           padding: const EdgeInsets.all(AppSpacing.md),
-          child: Text(
-            card.name,
-            style: TextStyle(
-              color: palette.onSurface,
-              fontWeight: FontWeight.bold,
-              fontSize: 18,
-            ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                card.name,
+                style: TextStyle(
+                  color: palette.onSurface,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 18,
+                ),
+              ),
+              const SizedBox(height: AppSpacing.sm),
+              // Type the set instead of scrolling: a reprinted card can carry a
+              // dozen printings, and the user knows which one is in their hand.
+              TextField(
+                controller: _searchController,
+                style: TextStyle(color: palette.onSurface),
+                onChanged: (value) => setState(() => _query = value),
+                decoration: InputDecoration(
+                  isDense: true,
+                  hintText: AppStrings.setPickerSearchHint,
+                  hintStyle: TextStyle(color: palette.onSurfaceMuted),
+                  prefixIcon: Icon(Icons.search, color: palette.onSurfaceMuted),
+                  suffixIcon: _query.isEmpty
+                      ? null
+                      : IconButton(
+                          icon: const Icon(Icons.clear),
+                          color: palette.onSurfaceMuted,
+                          tooltip: AppStrings.setPickerClearTooltip,
+                          onPressed: () {
+                            _searchController.clear();
+                            setState(() => _query = '');
+                          },
+                        ),
+                  border: const OutlineInputBorder(),
+                ),
+              ),
+            ],
           ),
         ),
         Expanded(
-          child: ListView.builder(
-            itemCount: selection.printings.length,
-            itemBuilder: (context, index) {
-              final printing = selection.printings[index];
-              return ListTile(
-                title: Text(
-                  printing.setCode ?? printing.setName ?? '',
-                  style: TextStyle(color: palette.onSurface),
+          child: matches.isEmpty
+              ? Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: AppSpacing.md,
+                  ),
+                  child: Text(
+                    AppStrings.setPickerNoMatches,
+                    style: TextStyle(color: palette.onSurfaceMuted),
+                  ),
+                )
+              : ListView.builder(
+                  itemCount: matches.length,
+                  itemBuilder: (context, index) {
+                    final printing = matches[index];
+                    return ListTile(
+                      title: Text(
+                        printing.setCode ?? printing.setName ?? '',
+                        style: TextStyle(color: palette.onSurface),
+                      ),
+                      subtitle: Text(
+                        [
+                          if (printing.setName != null) printing.setName!,
+                          if (printing.rarity != null) printing.rarity!,
+                        ].join(' · '),
+                        style: TextStyle(color: palette.onSurfaceMuted),
+                      ),
+                      onTap: () => controller.selectPrinting(printing),
+                    );
+                  },
                 ),
-                subtitle: Text(
-                  [
-                    if (printing.setName != null) printing.setName!,
-                    if (printing.rarity != null) printing.rarity!,
-                  ].join(' · '),
-                  style: TextStyle(color: palette.onSurfaceMuted),
-                ),
-                onTap: () => controller.selectPrinting(printing),
-              );
-            },
-          ),
         ),
         Padding(
           padding: const EdgeInsets.all(AppSpacing.md),

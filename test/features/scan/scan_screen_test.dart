@@ -38,9 +38,9 @@ class _FakeArtMatcher implements ArtMatcher {
   _FakeArtMatcher(this.result);
   final List<ArtCandidate> result;
   @override
-  Future<List<ArtCandidate>> match() async => result;
+  Future<List<ArtCandidate>> match({Size? viewportSize}) async => result;
   @override
-  ArtFrameResult rankFrame({bool includeNearest = false}) =>
+  ArtFrameResult rankFrame({bool includeNearest = false, Size? viewportSize}) =>
       const ArtFrameResult(ArtFrameStatus.notDetected, []);
 }
 

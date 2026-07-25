@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:flutter/painting.dart' show Offset, Rect;
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:riverpod_annotation/riverpod_annotation.dart';
 
@@ -60,6 +61,8 @@ class ArtReading {
     this.top, {
     this.status = ArtFrameStatus.noFrame,
     this.nearest = const [],
+    this.quad,
+    this.artBox,
   });
 
   /// Monotonic frame counter, for debugging/logging only.
@@ -74,6 +77,17 @@ class ArtReading {
   /// The unthresholded nearest few hits, populated only while diagnostics is on
   /// (see [artReadings]); empty otherwise.
   final List<HashMatch> nearest;
+
+  /// The detected card's corners as fractions of the upright frame, for the
+  /// on-screen outline. Null when nothing was detected this frame.
+  final List<Offset>? quad;
+
+  /// The artwork window located inside the card, as fractions of it, or null
+  /// when the fixed ROI was used. The overlay outlines this, so what the user
+  /// sees highlighted is the region actually being hashed.
+  final Rect? artBox;
+
+  bool get artBoxLocked => artBox != null;
 }
 
 /// The automatic primary path: per-frame artwork ranking. Drives the same
@@ -98,12 +112,19 @@ Stream<ArtReading> artReadings(Ref ref) async* {
     // without making this stream depend on it (a dependency would tear down and
     // restart the whole camera subscription on every toggle).
     final diagnostics = ref.read(scanDiagnosticsEnabledProvider);
-    final result = matcher.rankFrame(includeNearest: diagnostics);
+    // `read` for the same reason: a `watch` on the viewport would tear down and
+    // restart the whole camera subscription on every rotation or resize.
+    final result = matcher.rankFrame(
+      includeNearest: diagnostics,
+      viewportSize: ref.read(scanViewportSizeProvider),
+    );
     yield ArtReading(
       sequence++,
       result.matches.isEmpty ? null : result.matches.first,
       status: result.status,
       nearest: result.nearest,
+      quad: result.quad,
+      artBox: result.artBox,
     );
   }
 }

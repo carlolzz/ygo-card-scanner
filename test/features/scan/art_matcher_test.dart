@@ -1,6 +1,6 @@
 import 'package:camera/camera.dart';
 import 'package:flutter/foundation.dart';
-import 'package:flutter/painting.dart' show Rect;
+import 'package:flutter/painting.dart' show Offset, Rect;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
 import 'package:sqflite/sqflite.dart';
@@ -50,11 +50,20 @@ class _FakeCamera implements CameraService {
 
 /// Reproduces the pre-OpenCV behaviour (orient only, no card detection) so the
 /// existing hash assertions still hold without loading the OpenCV native
-/// library, which doesn't load on the host.
+/// library, which doesn't load on the host. Reports the whole frame as the
+/// detected quad and no art box, so the matcher takes its fixed-ROI path.
 class _IdentityCardDetector implements CardDetector {
   const _IdentityCardDetector();
   @override
-  ArtFrame? detectCard(ArtFrame frame) => frame.oriented();
+  DetectedCard? detectCard(ArtFrame frame, {Rect? searchRoi}) => DetectedCard(
+    image: frame.oriented(),
+    quad: const [
+      Offset(0, 0),
+      Offset(1, 0),
+      Offset(1, 1),
+      Offset(0, 1),
+    ],
+  );
 }
 
 /// Builds a synthetic upright luma frame with enough structure that its pHash is

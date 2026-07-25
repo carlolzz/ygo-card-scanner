@@ -138,7 +138,9 @@ class ScanController extends _$ScanController {
   /// scanning rather than showing a dead end.
   Future<void> _resolveArtMatch() async {
     final matcher = await ref.read(artMatcherProvider.future);
-    final candidates = await matcher.match();
+    final candidates = await matcher.match(
+      viewportSize: ref.read(scanViewportSizeProvider),
+    );
     // The user may have acted, or a disagreement/empty frame moved us on.
     if (state.status != ScanStatus.reading) return;
 

@@ -132,6 +132,12 @@ class CameraScanService implements CameraService {
     try {
       await controller.setFocusMode(FocusMode.auto);
       await controller.setExposureMode(ExposureMode.auto);
+      // Meter on the centre of the frame, where the guide box (and so the
+      // card) is. Left to its own devices the camera weights the whole scene,
+      // so on a busy or bright desk it focuses and exposes for the surface
+      // rather than the card — which is precisely when recognition struggles.
+      await controller.setFocusPoint(_meteringPoint);
+      await controller.setExposurePoint(_meteringPoint);
     } catch (_) {
       // Unsupported on this device — fall back to the plugin's defaults.
     }
@@ -141,6 +147,10 @@ class CameraScanService implements CameraService {
     _preview.value = controller;
     await controller.startImageStream(_onFrame);
   }
+
+  /// Where focus and exposure are metered, in normalized preview coordinates.
+  /// The reticle is centred, so this is the card.
+  static const Offset _meteringPoint = Offset(0.5, 0.5);
 
   void _onFrame(CameraImage image) {
     // Time-throttle: OCR is far slower than the camera's frame rate, and the

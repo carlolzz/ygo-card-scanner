@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:ygo_scanner/core/theme/tokens.dart';
 import 'package:ygo_scanner/features/scan/hamming.dart';
 import 'package:ygo_scanner/features/scan/hash_index.dart';
 
@@ -38,6 +39,27 @@ void main() {
           'hash_size': 8,
         }),
         throwsFormatException,
+      );
+    });
+
+    test('accepts an index whose recorded ROI is the one we crop', () {
+      final roi = ArtMatchTuning.artBoxRoi;
+      final json = validJson({'1': '0000000000000000'})
+        ..['roi'] = [roi.left, roi.top, roi.right, roi.bottom];
+      expect(HashIndex.fromJson(json).length, 1);
+    });
+
+    test('rejects an index built for a different art-box ROI', () {
+      // Silent drift otherwise: every distance would degrade with no error.
+      final json = validJson({'1': '0000000000000000'})
+        ..['roi'] = [0.05, 0.15, 0.95, 0.72];
+      expect(() => HashIndex.fromJson(json), throwsFormatException);
+    });
+
+    test('a v1 index without a roi header still parses', () {
+      expect(
+        HashIndex.fromJson(validJson({'1': '0000000000000000'})).length,
+        1,
       );
     });
   });

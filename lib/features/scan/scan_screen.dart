@@ -1,4 +1,5 @@
 import 'package:camera/camera.dart';
+import 'package:flutter/foundation.dart' show listEquals;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -11,11 +12,13 @@ import '../../models/card_edition.dart';
 import '../../models/card_language.dart';
 import '../../shared/widgets/card_art_thumbnail.dart';
 import '../../shared/widgets/labeled_choice_chip.dart';
+import '../../shared/widgets/printing_picker.dart';
 import '../collection/collection_providers.dart';
 import '../settings/settings_providers.dart';
 import 'art_matcher.dart';
 import 'art_providers.dart';
 import 'scan_controller.dart';
+import 'scan_geometry.dart';
 import 'scan_providers.dart';
 import 'scan_state.dart';
 
@@ -127,13 +130,14 @@ class _ScanScreenState extends ConsumerState<ScanScreen>
       body: Stack(
         fit: StackFit.expand,
         children: [
+          const _ViewportProbe(),
           const _CameraLayer(),
           if (scan.status == ScanStatus.detecting ||
-              scan.status == ScanStatus.reading)
-            const _ReticleOverlay()
-          else if (scan.status == ScanStatus.readingCode)
+              scan.status == ScanStatus.reading) ...[
+            const _ReticleOverlay(),
+            const _DetectionOutline(),
+          ] else if (scan.status == ScanStatus.readingCode)
             const _PasscodeReticle(),
-          _StatusBanner(status: scan.status),
           if (scan.status == ScanStatus.matched)
             _MatchedPanel(state: scan)
           else if (scan.status == ScanStatus.candidates)
@@ -151,7 +155,8 @@ class _ScanScreenState extends ConsumerState<ScanScreen>
                   scan.status == ScanStatus.reading) &&
               ref.watch(scanHelpEnabledProvider))
             const _HelpPanel(),
-          const _DiagnosticsOverlay(),
+          // Last, so the top overlays stay above every panel.
+          _TopOverlays(status: scan.status),
         ],
       ),
     );
@@ -228,9 +233,58 @@ class _FullBleedPreview extends StatelessWidget {
   }
 }
 
+/// Publishes the preview's size to [scanViewportSizeProvider] so the detector
+/// can map the on-screen guide box into camera-frame coordinates and search
+/// only that region.
+///
+/// Its own zero-cost widget rather than a `LayoutBuilder` wrapped around the
+/// stack: the write has to happen in a post-frame callback (never during
+/// layout), and keeping it isolated means nothing else rebuilds when it lands.
+class _ViewportProbe extends ConsumerStatefulWidget {
+  const _ViewportProbe();
+
+  @override
+  ConsumerState<_ViewportProbe> createState() => _ViewportProbeState();
+}
+
+class _ViewportProbeState extends ConsumerState<_ViewportProbe> {
+  /// Captured eagerly in [initState]: `dispose` can't do an inherited-widget
+  /// lookup, and a lazy `late` field would run its initializer *during*
+  /// dispose, which is exactly the unsafe `ref` use it's meant to avoid.
+  late final ScanViewportSize _viewport;
+
+  @override
+  void initState() {
+    super.initState();
+    _viewport = ref.read(scanViewportSizeProvider.notifier);
+  }
+
+  @override
+  void dispose() {
+    // The detector falls back to the whole frame once the screen is gone.
+    _viewport.set(null);
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final size = constraints.biggest;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          _viewport.set(size);
+        });
+        return const SizedBox.expand();
+      },
+    );
+  }
+}
+
 /// A card-shaped guide the user fills with the *whole* card so its artwork
-/// fills the frame. Width comes from the preview; height follows the card
-/// aspect ratio, capped so the outline never crowds the status banner/panels.
+/// fills the frame. Its geometry comes from [reticleRectInViewport], the same
+/// function the detector's search region is derived from — so the box the user
+/// is asked to fill and the box actually searched cannot drift apart.
 class _ReticleOverlay extends StatelessWidget {
   const _ReticleOverlay();
 
@@ -238,18 +292,11 @@ class _ReticleOverlay extends StatelessWidget {
   Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (context, constraints) {
-        var width = constraints.maxWidth * ScanReticleTokens.widthFraction;
-        var height = width / ScanReticleTokens.cardAspectRatio;
-        final maxHeight =
-            constraints.maxHeight * ScanReticleTokens.maxHeightFraction;
-        if (height > maxHeight) {
-          height = maxHeight;
-          width = height * ScanReticleTokens.cardAspectRatio;
-        }
+        final reticle = reticleRectInViewport(constraints.biggest);
         return Center(
           child: Container(
-            width: width,
-            height: height,
+            width: reticle.width,
+            height: reticle.height,
             alignment: Alignment.bottomCenter,
             padding: const EdgeInsets.all(AppSpacing.sm),
             decoration: BoxDecoration(
@@ -270,6 +317,231 @@ class _ReticleOverlay extends StatelessWidget {
       },
     );
   }
+}
+
+/// Draws the card the detector just found, and the artwork window inside it,
+/// directly onto the preview — so the user can see the app lock on instead of
+/// guessing from a static guide box, and can tell at once whether a failure is
+/// "it can't see the card" or "it sees it but can't name it".
+///
+/// Cosmetic only: nothing here feeds back into detection or matching, so a
+/// geometry mismatch on some device can never affect what gets logged.
+///
+/// Detections arrive on the camera throttle (~300 ms), which would strobe if
+/// painted raw, so the outline glides from its last position to the new one
+/// over [ScanOutlineTokens.transition] and fades rather than blinks.
+class _DetectionOutline extends ConsumerStatefulWidget {
+  const _DetectionOutline();
+
+  @override
+  ConsumerState<_DetectionOutline> createState() => _DetectionOutlineState();
+}
+
+class _DetectionOutlineState extends ConsumerState<_DetectionOutline>
+    with SingleTickerProviderStateMixin {
+  /// Created in [initState], not as a `late final` initializer: the widget can
+  /// be disposed without ever building (the scan screen swaps this out the
+  /// moment a match arrives), and a lazy field would then construct a
+  /// controller *inside* `dispose` — which trips the ticker assertion.
+  late final AnimationController _controller;
+
+  /// Where the outline is coming from, and where it is heading. A null [_to] is
+  /// "no card this frame" — [_from] then fades out in place.
+  List<Offset>? _from;
+  List<Offset>? _to;
+
+  /// The artwork window inside the card, as fractions of it — the region
+  /// actually hashed. Falls back to the nominal ROI when the detector couldn't
+  /// locate it, which is exactly what the matcher then crops.
+  Rect _artBox = ArtMatchTuning.artBoxRoi;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: ScanOutlineTokens.transition,
+    );
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _onQuad(List<Offset>? quad, Rect? artBox) {
+    _artBox = artBox ?? ArtMatchTuning.artBoxRoi;
+    // Re-target from wherever the outline has actually reached, so a detection
+    // landing mid-glide doesn't snap.
+    final current = _interpolate(_controller.value);
+    if (quad == null) {
+      if (_to == null) return;
+      _from = current;
+      _to = null;
+    } else {
+      _from = current;
+      _to = quad;
+    }
+    _controller.forward(from: 0);
+  }
+
+  /// The quad to paint at animation position [t], or null if there's nothing.
+  List<Offset>? _interpolate(double t) {
+    final from = _from;
+    final to = _to;
+    if (to == null) return from;
+    if (from == null || from.length != to.length) return to;
+    return [
+      for (var i = 0; i < to.length; i++) Offset.lerp(from[i], to[i], t)!,
+    ];
+  }
+
+  /// 0..1 — fades in on a new detection, out when the card leaves.
+  double _opacity(double t) {
+    if (_to == null) return _from == null ? 0 : 1 - t;
+    return _from == null ? t : 1;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    ref.listen(artReadingsProvider, (_, next) {
+      final reading = next.value;
+      if (reading == null) return;
+      _onQuad(reading.quad, reading.artBox);
+    });
+
+    // The preview's own aspect ratio, flipped for portrait exactly as
+    // `_FullBleedPreview` does — the outline has to repeat the preview's
+    // `BoxFit.cover` transform to land on the card.
+    return ValueListenableBuilder<CameraController?>(
+      valueListenable: ref.watch(cameraServiceProvider).preview,
+      builder: (context, controller, _) {
+        if (controller == null || !controller.value.isInitialized) {
+          return const SizedBox.shrink();
+        }
+        final ratio =
+            MediaQuery.orientationOf(context) == Orientation.landscape
+            ? controller.value.aspectRatio
+            : 1 / controller.value.aspectRatio;
+        return IgnorePointer(
+          child: AnimatedBuilder(
+            animation: _controller,
+            builder: (context, _) {
+              final quad = _interpolate(_controller.value);
+              final opacity = _opacity(_controller.value);
+              if (quad == null || opacity <= 0) {
+                return const SizedBox.shrink();
+              }
+              // Repaints every frame for the length of the transition, so keep
+              // it off the rest of the scan screen's layer.
+              return RepaintBoundary(
+                child: CustomPaint(
+                  painter: _DetectionPainter(
+                    quad: quad,
+                    artBox: _artBox,
+                    frameAspect: ratio,
+                    opacity: opacity,
+                    color: AppPalette.dark.accent,
+                  ),
+                ),
+              );
+            },
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _DetectionPainter extends CustomPainter {
+  const _DetectionPainter({
+    required this.quad,
+    required this.artBox,
+    required this.frameAspect,
+    required this.opacity,
+    required this.color,
+  });
+
+  /// Card corners as fractions of the upright frame: TL, TR, BR, BL.
+  final List<Offset> quad;
+
+  /// The hashed region, as fractions of the card.
+  final Rect artBox;
+
+  /// Upright frame width / height, for the cover transform.
+  final double frameAspect;
+  final double opacity;
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    // Any size with the right aspect works — only the shape feeds the scale.
+    final frame = Size(frameAspect * size.height, size.height);
+    Offset toViewport(Offset fraction) =>
+        frameFractionToViewport(fraction, frame, size);
+
+    final corners = [for (final corner in quad) toViewport(corner)];
+    final cardPath = _pathThrough(corners);
+
+    final tint = color.withValues(alpha: opacity);
+    canvas.drawPath(
+      cardPath,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = ScanOutlineTokens.cardStrokeWidth
+        ..color = tint.withValues(alpha: opacity * 0.7),
+    );
+
+    // The artwork window — the region actually hashed — placed on the card by
+    // blending the quad's corners: exact for an affine view, and close enough
+    // for the mild perspective a hand-held card actually shows.
+    final roi = artBox;
+    final artPath = _pathThrough([
+      toViewport(_onQuad(roi.left, roi.top)),
+      toViewport(_onQuad(roi.right, roi.top)),
+      toViewport(_onQuad(roi.right, roi.bottom)),
+      toViewport(_onQuad(roi.left, roi.bottom)),
+    ]);
+    canvas.drawPath(
+      artPath,
+      Paint()
+        ..style = PaintingStyle.fill
+        ..color = tint.withValues(
+          alpha: opacity * ScanOutlineTokens.artFillOpacity,
+        ),
+    );
+    canvas.drawPath(
+      artPath,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = ScanOutlineTokens.artStrokeWidth
+        ..color = tint,
+    );
+  }
+
+  /// Bilinear point inside the detected quad, in frame fractions.
+  Offset _onQuad(double u, double v) {
+    final top = Offset.lerp(quad[0], quad[1], u)!;
+    final bottom = Offset.lerp(quad[3], quad[2], u)!;
+    return Offset.lerp(top, bottom, v)!;
+  }
+
+  static Path _pathThrough(List<Offset> points) {
+    final path = Path()..moveTo(points.first.dx, points.first.dy);
+    for (final point in points.skip(1)) {
+      path.lineTo(point.dx, point.dy);
+    }
+    return path..close();
+  }
+
+  @override
+  bool shouldRepaint(_DetectionPainter old) =>
+      old.opacity != opacity ||
+      old.frameAspect != frameAspect ||
+      old.color != color ||
+      old.artBox != artBox ||
+      !listEquals(old.quad, quad);
 }
 
 /// A small centered box for the on-demand passcode read: the user aims just the
@@ -390,18 +662,49 @@ class _HelpLine extends StatelessWidget {
   }
 }
 
-/// Developer overlay (top-left) that reports each frame's detection status and
-/// nearest candidate distances, so recognition failures can be diagnosed as
-/// detection (no card found) vs matching (found, but distances large). Hidden
-/// unless [ScanDiagnosticsEnabled] is on. Fixed to the dark palette — on camera.
-class _DiagnosticsOverlay extends ConsumerWidget {
-  const _DiagnosticsOverlay();
+/// The stack of overlays pinned under the app bar, in a single column so their
+/// order is structural rather than a coincidence of two equal top insets: the
+/// developer diagnostics box sits **above** the status banner, and the banner
+/// moves down to make room whenever diagnostics is on.
+///
+/// Both are fixed to the dark palette — they sit on live camera imagery.
+class _TopOverlays extends ConsumerWidget {
+  const _TopOverlays({required this.status});
+
+  final ScanStatus status;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    if (!ref.watch(scanDiagnosticsEnabledProvider)) {
-      return const SizedBox.shrink();
-    }
+    final diagnostics = ref.watch(scanDiagnosticsEnabledProvider);
+    return SafeArea(
+      child: Align(
+        alignment: Alignment.topCenter,
+        child: Padding(
+          padding: const EdgeInsets.only(top: kToolbarHeight + AppSpacing.sm),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (diagnostics) ...[
+                const _DiagnosticsBox(),
+                const SizedBox(height: AppSpacing.sm),
+              ],
+              _StatusBanner(status: status),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Developer readout of each frame's detection status and nearest candidate
+/// distances, so a recognition failure can be diagnosed as detection (no card
+/// found) vs matching (found, but distances large).
+class _DiagnosticsBox extends ConsumerWidget {
+  const _DiagnosticsBox();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
     final reading = ref.watch(artReadingsProvider).value;
     final palette = AppPalette.dark;
 
@@ -414,6 +717,11 @@ class _DiagnosticsOverlay extends ConsumerWidget {
       },
     ];
     if (reading != null && status == ArtFrameStatus.detected) {
+      lines.add(
+        reading.artBoxLocked
+            ? AppStrings.scanDiagnosticsArtBoxLocked
+            : AppStrings.scanDiagnosticsArtBoxFallback,
+      );
       if (reading.nearest.isEmpty) {
         lines.add(AppStrings.scanDiagnosticsNoCandidates);
       } else {
@@ -423,40 +731,29 @@ class _DiagnosticsOverlay extends ConsumerWidget {
       }
     }
 
-    return SafeArea(
-      child: Align(
-        alignment: Alignment.topLeft,
-        child: Padding(
-          padding: const EdgeInsets.only(
-            top: kToolbarHeight + AppSpacing.sm,
-            left: AppSpacing.sm,
-          ),
-          child: Container(
-            padding: const EdgeInsets.symmetric(
-              horizontal: AppSpacing.sm,
-              vertical: AppSpacing.xs,
+    return Container(
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppSpacing.sm,
+        vertical: AppSpacing.xs,
+      ),
+      decoration: BoxDecoration(
+        color: _cameraScrim.withValues(alpha: 0.8),
+        borderRadius: BorderRadius.circular(AppRadius.sm),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          for (final line in lines)
+            Text(
+              line,
+              style: TextStyle(
+                color: palette.onSurface,
+                fontSize: ScanDiagnosticsTokens.fontSize,
+                fontFamily: ScanDiagnosticsTokens.fontFamily,
+              ),
             ),
-            decoration: BoxDecoration(
-              color: _cameraScrim.withValues(alpha: 0.8),
-              borderRadius: BorderRadius.circular(AppRadius.sm),
-            ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                for (final line in lines)
-                  Text(
-                    line,
-                    style: TextStyle(
-                      color: palette.onSurface,
-                      fontSize: 12,
-                      fontFamily: 'monospace',
-                    ),
-                  ),
-              ],
-            ),
-          ),
-        ),
+        ],
       ),
     );
   }
@@ -478,42 +775,31 @@ class _StatusBanner extends StatelessWidget {
     };
     if (label == null) return const SizedBox.shrink();
     final busy = status == ScanStatus.reading;
-    return SafeArea(
-      child: Align(
-        alignment: Alignment.topCenter,
-        child: Padding(
-          padding: const EdgeInsets.only(top: kToolbarHeight + AppSpacing.sm),
-          child: Container(
-            padding: const EdgeInsets.symmetric(
-              horizontal: AppSpacing.md,
-              vertical: AppSpacing.sm,
+    return Container(
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppSpacing.md,
+        vertical: AppSpacing.sm,
+      ),
+      decoration: BoxDecoration(
+        color: _cameraScrim.withValues(alpha: 0.8),
+        borderRadius: BorderRadius.circular(AppRadius.lg),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (busy) ...[
+            SizedBox(
+              width: 16,
+              height: 16,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                color: AppPalette.dark.accent,
+              ),
             ),
-            decoration: BoxDecoration(
-              color: _cameraScrim.withValues(alpha: 0.8),
-              borderRadius: BorderRadius.circular(AppRadius.lg),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                if (busy) ...[
-                  SizedBox(
-                    width: 16,
-                    height: 16,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      color: AppPalette.dark.accent,
-                    ),
-                  ),
-                  const SizedBox(width: AppSpacing.sm),
-                ],
-                Text(
-                  label,
-                  style: TextStyle(color: AppPalette.dark.onSurface),
-                ),
-              ],
-            ),
-          ),
-        ),
+            const SizedBox(width: AppSpacing.sm),
+          ],
+          Text(label, style: TextStyle(color: AppPalette.dark.onSurface)),
+        ],
       ),
     );
   }
@@ -718,8 +1004,6 @@ class _SetPicker extends ConsumerWidget {
     if (printings == null || printings.isEmpty) return const SizedBox.shrink();
 
     final palette = AppPalette.of(context);
-    // Guard the selection: the dropdown asserts its value is among its items.
-    final ids = printings.map((printing) => printing.id).toSet();
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -728,26 +1012,12 @@ class _SetPicker extends ConsumerWidget {
           AppStrings.scanSetLabel,
           style: TextStyle(color: palette.onSurfaceMuted),
         ),
-        DropdownButton<int?>(
-          value: ids.contains(printingId) ? printingId : null,
-          isExpanded: true,
-          dropdownColor: palette.surfaceRaised,
-          style: TextStyle(color: palette.onSurface),
-          items: [
-            const DropdownMenuItem<int?>(
-              value: null,
-              child: Text(AppStrings.scanNoSetOption),
-            ),
-            for (final printing in printings)
-              DropdownMenuItem<int?>(
-                value: printing.id,
-                child: Text(
-                  printing.displayLabel,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-          ],
-          onChanged: ref.read(scanControllerProvider.notifier).setPrinting,
+        const SizedBox(height: AppSpacing.xs),
+        PrintingPicker(
+          printings: printings,
+          selectedId: printingId,
+          noSetLabel: AppStrings.scanNoSetOption,
+          onSelected: ref.read(scanControllerProvider.notifier).setPrinting,
         ),
       ],
     );

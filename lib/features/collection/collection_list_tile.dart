@@ -48,9 +48,10 @@ class CollectionListTile extends StatelessWidget {
           child: Padding(
             padding: const EdgeInsets.all(AppSpacing.md),
             child: Row(
-              // Centre the leading condition chip + art against the (taller)
-              // name/quantity column, so they sit in the middle of the row
-              // rather than hugging the top.
+              // Everything is centred against the (tallest) action column, so
+              // the chip, the art, the name block and the quantity all sit on
+              // the row's midline — which is also where the middle action
+              // button (remove) lands.
               crossAxisAlignment: CrossAxisAlignment.center,
               children: [
                 // Grade first, then the art: the chip is what the eye scans a
@@ -81,11 +82,12 @@ class CollectionListTile extends StatelessWidget {
                   fit: BoxFit.contain,
                 ),
                 const SizedBox(width: AppSpacing.md),
-                // Name (up to 2 lines) + edition (1 line), centred over the
-                // quantity/delete controls; the name gets the row's full
-                // remaining width instead of being squeezed against the buttons.
+                // Name (up to 2 lines) + set/edition (1 line), sitting to the
+                // right of the artwork and centred in the space left between it
+                // and the quantity, rather than stacked above the controls.
                 Expanded(
                   child: Column(
+                    mainAxisSize: MainAxisSize.min,
                     crossAxisAlignment: CrossAxisAlignment.center,
                     children: [
                       Text(
@@ -103,38 +105,79 @@ class CollectionListTile extends StatelessWidget {
                         textAlign: TextAlign.center,
                         style: TextStyle(color: palette.onSurfaceMuted),
                       ),
-                      const SizedBox(height: AppSpacing.xs),
-                      Row(
-                        children: [
-                          IconButton(
-                            icon: const Icon(Icons.remove_circle_outline),
-                            color: palette.onSurfaceMuted,
-                            onPressed: onDecrement,
-                          ),
-                          Text(
-                            '${entry.quantity}',
-                            style: TextStyle(color: palette.onSurface),
-                          ),
-                          IconButton(
-                            icon: const Icon(Icons.add_circle_outline),
-                            color: palette.accent,
-                            onPressed: onIncrement,
-                          ),
-                          const Spacer(),
-                          IconButton(
-                            icon: const Icon(Icons.delete_outline),
-                            color: palette.onSurfaceMuted,
-                            onPressed: onDelete,
-                          ),
-                        ],
-                      ),
                     ],
                   ),
+                ),
+                const SizedBox(width: AppSpacing.sm),
+                // The count sits on the row's midline, level with the middle
+                // (remove) button it belongs to. Fixed width so the action
+                // column doesn't shift as the number gains a digit.
+                SizedBox(
+                  width: CollectionTileTokens.quantityWidth,
+                  child: Text(
+                    '${entry.quantity}',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: palette.onSurface),
+                  ),
+                ),
+                const SizedBox(width: AppSpacing.xs),
+                // Add / remove / delete stacked in one column, in that order.
+                Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    _TileAction(
+                      icon: Icons.add_circle_outline,
+                      color: palette.accent,
+                      onPressed: onIncrement,
+                    ),
+                    _TileAction(
+                      icon: Icons.remove_circle_outline,
+                      color: palette.onSurfaceMuted,
+                      onPressed: onDecrement,
+                    ),
+                    _TileAction(
+                      icon: Icons.delete_outline,
+                      color: palette.onSurfaceMuted,
+                      onPressed: onDelete,
+                    ),
+                  ],
                 ),
               ],
             ),
           ),
         ),
+      ),
+    );
+  }
+}
+
+/// One button in the tile's stacked action column. A plain [IconButton] carries
+/// a 48pt minimum on every side, which makes three of them taller than the row
+/// they sit in — this trims the box to [CollectionTileTokens.actionButtonSize]
+/// while keeping the icon, colour and ripple.
+class _TileAction extends StatelessWidget {
+  const _TileAction({
+    required this.icon,
+    required this.color,
+    required this.onPressed,
+  });
+
+  final IconData icon;
+  final Color color;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return IconButton(
+      icon: Icon(icon),
+      color: color,
+      onPressed: onPressed,
+      iconSize: CollectionTileTokens.actionIconSize,
+      padding: EdgeInsets.zero,
+      visualDensity: VisualDensity.compact,
+      constraints: const BoxConstraints.tightFor(
+        width: CollectionTileTokens.actionButtonSize,
+        height: CollectionTileTokens.actionButtonSize,
       ),
     );
   }

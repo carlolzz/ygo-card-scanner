@@ -1,3 +1,4 @@
+import 'package:flutter/painting.dart' show Size;
 import 'package:riverpod_annotation/riverpod_annotation.dart';
 
 import '../settings/settings_providers.dart';
@@ -47,6 +48,29 @@ class ScanCameraActive extends _$ScanCameraActive {
   bool build() => true;
 
   void set({required bool active}) => state = active;
+}
+
+/// The scan preview's viewport size, published by the screen once it has laid
+/// out, so the detector can map the on-screen reticle into frame coordinates
+/// and search only the guide box.
+///
+/// Null until the screen lays out, and again after it disposes — the detector
+/// then falls back to [ArtMatchTuning.cardSearchRoi], i.e. the whole frame, so
+/// every host test that never renders the screen behaves exactly as before.
+///
+/// `keepAlive` is load-bearing: both the writer (the screen's probe) and the
+/// readers ([artReadings], [ScanController]) use `ref.read`, which holds no
+/// subscription. An autoDispose provider would be torn down the instant each
+/// read released it, so the size would never survive from the write to the
+/// next frame and the ROI would silently stay whole-frame forever.
+@Riverpod(keepAlive: true)
+class ScanViewportSize extends _$ScanViewportSize {
+  @override
+  Size? build() => null;
+
+  void set(Size? size) {
+    if (state != size) state = size;
+  }
 }
 
 /// Whether the developer diagnostics overlay is on. Derived from the persisted

@@ -1,3 +1,4 @@
+import '../../core/theme/tokens.dart';
 import 'hamming.dart';
 
 /// One ranked hit from [HashIndex.rank]: a passcode and its Hamming distance to
@@ -33,6 +34,27 @@ class HashIndex {
     if (hashSize != kExpectedHashSize) {
       throw FormatException('unsupported hash size: $hashSize');
     }
+    // The index records the crop its hashes were taken from. If that ever
+    // parts company with what the runtime crops, every distance degrades
+    // quietly — no error, just worse recognition — so compare them here.
+    // Absent on v1 indexes, which predate the header; nothing to check then.
+    final rawRoi = json['roi'];
+    if (rawRoi is List && rawRoi.length == 4) {
+      final roi = [for (final value in rawRoi) (value as num).toDouble()];
+      const expected = ArtMatchTuning.artBoxRoi;
+      final matches =
+          (roi[0] - expected.left).abs() <= _roiTolerance &&
+          (roi[1] - expected.top).abs() <= _roiTolerance &&
+          (roi[2] - expected.right).abs() <= _roiTolerance &&
+          (roi[3] - expected.bottom).abs() <= _roiTolerance;
+      if (!matches) {
+        throw FormatException(
+          'index built for art-box ROI $roi, but this build crops '
+          '$expected — rebuild assets/card_hashes.json '
+          '(tools/build_hash_index.py) or restore ArtMatchTuning.artBoxRoi',
+        );
+      }
+    }
     final rawHashes = json['hashes'];
     if (rawHashes is! Map) {
       throw const FormatException('missing "hashes" map');
@@ -51,6 +73,10 @@ class HashIndex {
 
   /// The hash size (8) this runtime pHash is built for; the index must match.
   static const int kExpectedHashSize = 8;
+
+  /// Slop when comparing the index's recorded ROI to this build's — the header
+  /// stores rounded decimals, so an exact comparison would be brittle.
+  static const double _roiTolerance = 0.0005;
 
   final int version;
   final String algorithm;

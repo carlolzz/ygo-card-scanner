@@ -1,4 +1,4 @@
-import 'package:flutter/painting.dart' show Rect;
+import 'package:flutter/painting.dart' show Offset, Rect, Size;
 
 import '../../core/theme/tokens.dart';
 import '../../data/repositories/card_repository.dart';
@@ -7,6 +7,7 @@ import 'camera_service.dart';
 import 'card_detector.dart';
 import 'hash_index.dart';
 import 'phash.dart';
+import 'scan_geometry.dart';
 
 /// A card proposed by the artwork-match fallback, with its Hamming distance to
 /// the captured frame (smaller = closer). Presented to the user to pick from.
@@ -39,11 +40,26 @@ class ArtFrameResult {
     this.status,
     this.matches, {
     this.nearest = const [],
+    this.quad,
+    this.artBox,
   });
 
   final ArtFrameStatus status;
   final List<HashMatch> matches;
   final List<HashMatch> nearest;
+
+  /// Where the card was found, as fractions of the upright frame — for the
+  /// on-screen detection outline only. Null when nothing was detected.
+  final List<Offset>? quad;
+
+  /// The artwork window located inside the rectified card, as fractions of it,
+  /// or null when the fixed [ArtMatchTuning.artBoxRoi] was used instead. Drives
+  /// both the overlay (which must outline the region actually hashed, not a
+  /// nominal one) and the diagnostics readout, since "was the crop corrected?"
+  /// is the first thing worth knowing when a real card ranks far away.
+  final Rect? artBox;
+
+  bool get artBoxLocked => artBox != null;
 
   static const ArtFrameResult noFrame =
       ArtFrameResult(ArtFrameStatus.noFrame, []);
@@ -64,13 +80,18 @@ abstract class ArtMatcher {
   /// [includeNearest] additionally computes the unthresholded nearest few for
   /// the diagnostics overlay — left off on the normal path so a second ranking
   /// pass runs only while the developer overlay is on.
-  ArtFrameResult rankFrame({bool includeNearest = false});
+  ///
+  /// [viewportSize] is the scan preview's size, used to map the on-screen guide
+  /// box into frame coordinates so only that region is searched. Null (no
+  /// screen laid out, e.g. every host test) searches the whole frame, which is
+  /// the behaviour this had before the guide box was honoured.
+  ArtFrameResult rankFrame({bool includeNearest = false, Size? viewportSize});
 
-  /// [rankFrame]'s in-threshold matches resolved to cards (a DB read per hit,
-  /// skipping passcodes absent from the local `cards` table — e.g. alt-arts the
-  /// app DB doesn't store). Nearest first. Called once, when a match is
-  /// presented.
-  Future<List<ArtCandidate>> match();
+  /// The last [rankFrame]'s in-threshold matches resolved to cards (a DB read
+  /// per hit, skipping passcodes absent from the local `cards` table — e.g.
+  /// alt-arts the app DB doesn't store). Nearest first. Called once, when a
+  /// match is presented.
+  Future<List<ArtCandidate>> match({Size? viewportSize});
 }
 
 /// Production [ArtMatcher]: camera luma -> art-box crop -> pHash -> Hamming
@@ -88,19 +109,48 @@ class PHashArtMatcher implements ArtMatcher {
   final CardRepository _repository;
   final CardDetector _detector;
 
+  /// The most recent [rankFrame] result, so [match] resolves the very frame the
+  /// controller's agreement gate fired on instead of re-detecting a fresh one —
+  /// otherwise the review panel could present a different card than the outline
+  /// was sitting on.
+  ArtFrameResult? _lastResult;
+
   @override
-  ArtFrameResult rankFrame({bool includeNearest = false}) {
+  ArtFrameResult rankFrame({bool includeNearest = false, Size? viewportSize}) {
+    final result = _rank(includeNearest: includeNearest, viewportSize: viewportSize);
+    _lastResult = result;
+    return result;
+  }
+
+  ArtFrameResult _rank({required bool includeNearest, Size? viewportSize}) {
     final raw = _camera.latestArtFrame;
     if (raw == null) return ArtFrameResult.noFrame;
+
+    // Search only the on-screen guide box. The preview is a `BoxFit.cover` crop
+    // of the sensor frame, so the reticle's screen fractions are not its frame
+    // fractions — `detectionRoiInFrame` does that conversion. Without a laid-out
+    // screen (host tests) this stays the whole frame.
+    final upright = raw.rotationDegrees == 90 || raw.rotationDegrees == 270
+        ? Size(raw.height.toDouble(), raw.width.toDouble())
+        : Size(raw.width.toDouble(), raw.height.toDouble());
+    final searchRoi = viewportSize == null
+        ? ArtMatchTuning.cardSearchRoi
+        : detectionRoiInFrame(viewport: viewportSize, frame: upright);
 
     // Detect and flatten the card first, so the art box is hashed from a clean,
     // aligned crop. No card in frame -> no candidate (better a miss than a
     // garbage match on background pixels).
-    final card = _detector.detectCard(raw);
+    final card = _detector.detectCard(raw, searchRoi: searchRoi);
     if (card == null) return ArtFrameResult.notDetected;
 
-    final crop = _cropFromRoi(ArtMatchTuning.artBoxRoi, card.width, card.height);
-    final hash = phashFromLuma(card.luma, card.width, card.height, crop: crop);
+    // The artwork window the detector located, when it found one: the index
+    // hashes a fixed fractional ROI of a clean card, and a located art box is
+    // where that ROI actually landed on the card we captured. Falls back to the
+    // fixed fractions when the detector couldn't find it (full-art frames).
+    final image = card.image;
+    final roi = card.artBox ?? ArtMatchTuning.artBoxRoi;
+    final crop = _cropFromRoi(roi, image.width, image.height);
+    final hash = phashFromLuma(image.luma, image.width, image.height, crop: crop);
 
     final matches = _index.rank(
       hash,
@@ -109,15 +159,27 @@ class PHashArtMatcher implements ArtMatcher {
     );
     // The unthresholded nearest, for the overlay only, so a "detected but far"
     // frame still shows how far the real card sits (past the match gate).
-    final nearest =
-        includeNearest ? _index.rank(hash, n: 3, maxDistance: 64) : const <HashMatch>[];
-    return ArtFrameResult(ArtFrameStatus.detected, matches, nearest: nearest);
+    final nearest = includeNearest
+        ? _index.rank(hash, n: 3, maxDistance: 64)
+        : const <HashMatch>[];
+    return ArtFrameResult(
+      ArtFrameStatus.detected,
+      matches,
+      nearest: nearest,
+      quad: card.quad,
+      artBox: card.artBox,
+    );
   }
 
   @override
-  Future<List<ArtCandidate>> match() async {
+  Future<List<ArtCandidate>> match({Size? viewportSize}) async {
+    // Resolve the frame that was just ranked. Re-ranking here would hash a
+    // *newer* frame than the one the agreement gate accepted, so the card the
+    // user is shown could differ from the one the outline locked onto.
+    final result =
+        _lastResult ?? rankFrame(viewportSize: viewportSize);
     final candidates = <ArtCandidate>[];
-    for (final match in rankFrame().matches) {
+    for (final match in result.matches) {
       final card = await _repository.getByPasscode(match.passcode);
       if (card != null) candidates.add(ArtCandidate(card, match.distance));
     }

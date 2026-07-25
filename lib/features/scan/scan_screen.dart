@@ -11,6 +11,7 @@ import '../../models/card_edition.dart';
 import '../../models/card_language.dart';
 import '../../shared/widgets/card_art_thumbnail.dart';
 import '../../shared/widgets/labeled_choice_chip.dart';
+import '../collection/collection_providers.dart';
 import '../settings/settings_providers.dart';
 import 'art_matcher.dart';
 import 'art_providers.dart';
@@ -93,15 +94,28 @@ class _ScanScreenState extends ConsumerState<ScanScreen>
                   !ref.read(scanDiagnosticsEnabledProvider),
                 ),
           ),
-          // Fallback entry point: read the printed 8-digit code when the
-          // artwork won't resolve (glare, two near-identical arts, etc.).
+          // The other recognition tool: read the printed 8-digit code when the
+          // artwork won't resolve (glare, two near-identical arts, etc.). A
+          // toggle, not a one-shot — it stays on until switched off here (or on
+          // the reading panel), so a whole stack can be logged by code.
           if (scan.status == ScanStatus.detecting ||
-              scan.status == ScanStatus.reading)
+              scan.status == ScanStatus.reading ||
+              scan.status == ScanStatus.readingCode)
             IconButton(
-              tooltip: AppStrings.scanReadCodeTooltip,
-              icon: const Icon(Icons.pin),
-              onPressed:
-                  ref.read(scanControllerProvider.notifier).requestPasscodeRead,
+              tooltip: scan.mode == ScanMode.passcode
+                  ? AppStrings.scanExitCodeTooltip
+                  : AppStrings.scanReadCodeTooltip,
+              icon: Icon(
+                scan.mode == ScanMode.passcode ? Icons.pin : Icons.pin_outlined,
+                color: scan.mode == ScanMode.passcode
+                    ? AppPalette.dark.accent
+                    : null,
+              ),
+              onPressed: scan.mode == ScanMode.passcode
+                  ? ref.read(scanControllerProvider.notifier).exitPasscodeMode
+                  : ref
+                        .read(scanControllerProvider.notifier)
+                        .requestPasscodeRead,
             ),
           IconButton(
             tooltip: AppStrings.scanManualTooltip,
@@ -130,10 +144,12 @@ class _ScanScreenState extends ConsumerState<ScanScreen>
             const _UnknownPanel()
           else if (scan.status == ScanStatus.error)
             const _CameraErrorPanel()
-          // The bottom is free while scanning — show the how-to there. It never
-          // coexists with the panels above (all other statuses render one).
-          else if (scan.status == ScanStatus.detecting ||
-              scan.status == ScanStatus.reading)
+          // The bottom is free while scanning — show the how-to there, unless
+          // the user has switched it off. It never coexists with the panels
+          // above (all other statuses render one).
+          else if ((scan.status == ScanStatus.detecting ||
+                  scan.status == ScanStatus.reading) &&
+              ref.watch(scanHelpEnabledProvider))
             const _HelpPanel(),
           const _DiagnosticsOverlay(),
         ],
@@ -287,8 +303,12 @@ class _PasscodeReticle extends StatelessWidget {
 }
 
 /// A compact how-to card at the bottom of the scan screen, shown only while
-/// scanning (`detecting`/`reading`). Explains the three ways to log a card,
-/// keyed to the AppBar actions. Fixed to the dark palette — it sits on camera.
+/// scanning (`detecting`/`reading`) and only while the Settings toggle is on.
+/// Explains the three ways to log a card, keyed to the AppBar actions. Fixed to
+/// the dark palette — it sits on camera.
+///
+/// Deliberately tight: type one step below body size ([ScanHelpTokens]) and
+/// smaller insets, so it takes as little of the viewfinder as it can.
 class _HelpPanel extends StatelessWidget {
   const _HelpPanel();
 
@@ -303,15 +323,15 @@ class _HelpPanel extends StatelessWidget {
           // reticle above it.
           padding: const EdgeInsets.fromLTRB(
             AppSpacing.md,
-            AppSpacing.md,
+            AppSpacing.sm,
             AppSpacing.md,
             AppSpacing.sm,
           ),
           child: Container(
-            padding: const EdgeInsets.all(AppSpacing.md),
+            padding: const EdgeInsets.all(AppSpacing.sm),
             decoration: BoxDecoration(
               color: _cameraScrim.withValues(alpha: 0.82),
-              borderRadius: BorderRadius.circular(AppRadius.lg),
+              borderRadius: BorderRadius.circular(AppRadius.md),
             ),
             child: Column(
               mainAxisSize: MainAxisSize.min,
@@ -322,14 +342,13 @@ class _HelpPanel extends StatelessWidget {
                   style: TextStyle(
                     color: AppPalette.dark.onSurface,
                     fontWeight: FontWeight.bold,
+                    fontSize: ScanHelpTokens.titleFontSize,
                   ),
                 ),
-                const SizedBox(height: AppSpacing.sm),
+                const SizedBox(height: AppSpacing.xs),
                 const _HelpLine(
                     Icons.center_focus_strong, AppStrings.scanHelpArtwork),
-                const SizedBox(height: AppSpacing.xs),
                 const _HelpLine(Icons.pin, AppStrings.scanHelpCode),
-                const SizedBox(height: AppSpacing.xs),
                 const _HelpLine(Icons.keyboard, AppStrings.scanHelpManual),
               ],
             ),
@@ -349,18 +368,24 @@ class _HelpLine extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = AppPalette.dark;
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Icon(icon, size: 18, color: palette.accent),
-        const SizedBox(width: AppSpacing.sm),
-        Expanded(
-          child: Text(
-            text,
-            style: TextStyle(color: palette.onSurfaceMuted, fontSize: 13),
+    return Padding(
+      padding: const EdgeInsets.only(top: AppSpacing.xs),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, size: ScanHelpTokens.iconSize, color: palette.accent),
+          const SizedBox(width: AppSpacing.sm),
+          Expanded(
+            child: Text(
+              text,
+              style: TextStyle(
+                color: palette.onSurfaceMuted,
+                fontSize: ScanHelpTokens.lineFontSize,
+              ),
+            ),
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 }
@@ -602,6 +627,10 @@ class _MatchedPanel extends ConsumerWidget {
                       ),
                   ],
                 ),
+                _SetPicker(
+                  passcode: card.passcode,
+                  printingId: state.printingId,
+                ),
                 const SizedBox(height: AppSpacing.md),
                 Row(
                   children: [
@@ -663,6 +692,64 @@ class _MatchedPanel extends ConsumerWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+/// The set/expansion picker inside the review gate. The camera can't tell which
+/// reprint is in hand — passcodes are rarity- and set-independent — so it is
+/// chosen here, from the card's known printings, exactly like the manual add
+/// flow's printing step. Defaults to "no specific set", which is what a scan
+/// used to log unconditionally.
+///
+/// Hidden when the card has no known printings: the only option would then be
+/// "no specific set", and a dead control on the fast path is worse than none.
+class _SetPicker extends ConsumerWidget {
+  const _SetPicker({required this.passcode, required this.printingId});
+
+  final String passcode;
+  final int? printingId;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    // `.value`, not `when`: a spinner would make the review panel jump on every
+    // match, and this is optional detail — it can appear a frame later.
+    final printings = ref.watch(cardPrintingsProvider(passcode)).value;
+    if (printings == null || printings.isEmpty) return const SizedBox.shrink();
+
+    final palette = AppPalette.of(context);
+    // Guard the selection: the dropdown asserts its value is among its items.
+    final ids = printings.map((printing) => printing.id).toSet();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const SizedBox(height: AppSpacing.sm),
+        Text(
+          AppStrings.scanSetLabel,
+          style: TextStyle(color: palette.onSurfaceMuted),
+        ),
+        DropdownButton<int?>(
+          value: ids.contains(printingId) ? printingId : null,
+          isExpanded: true,
+          dropdownColor: palette.surfaceRaised,
+          style: TextStyle(color: palette.onSurface),
+          items: [
+            const DropdownMenuItem<int?>(
+              value: null,
+              child: Text(AppStrings.scanNoSetOption),
+            ),
+            for (final printing in printings)
+              DropdownMenuItem<int?>(
+                value: printing.id,
+                child: Text(
+                  printing.displayLabel,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+          ],
+          onChanged: ref.read(scanControllerProvider.notifier).setPrinting,
+        ),
+      ],
     );
   }
 }
@@ -862,7 +949,7 @@ class _ReadingCodePanel extends ConsumerWidget {
                 SizedBox(
                   width: double.infinity,
                   child: OutlinedButton(
-                    onPressed: controller.cancelPasscodeRead,
+                    onPressed: controller.exitPasscodeMode,
                     child: const Text(AppStrings.scanReadCodeCancelButton),
                   ),
                 ),

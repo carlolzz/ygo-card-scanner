@@ -38,6 +38,9 @@ class SettingsController extends _$SettingsController {
   Future<void> setShowScanDiagnostics(bool value) =>
       _update((s) => s.copyWith(showScanDiagnostics: value));
 
+  Future<void> setShowScanHelp(bool value) =>
+      _update((s) => s.copyWith(showScanHelp: value));
+
   Future<void> setConfirmBeforeDelete(bool value) =>
       _update((s) => s.copyWith(confirmBeforeDelete: value));
 

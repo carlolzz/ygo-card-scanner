@@ -57,6 +57,15 @@ class ScanCameraActive extends _$ScanCameraActive {
 bool scanDiagnosticsEnabled(Ref ref) =>
     ref.watch(settingsControllerProvider).value?.showScanDiagnostics ?? false;
 
+/// Whether the "three ways to log a card" help box is shown while scanning.
+/// Derived from the persisted [AppSettings.showScanHelp] the same way
+/// [scanDiagnosticsEnabled] is, so the Settings switch is the single control.
+/// Defaults to true so a fresh install (settings not yet resolved) still
+/// explains itself.
+@riverpod
+bool scanHelpEnabled(Ref ref) =>
+    ref.watch(settingsControllerProvider).value?.showScanHelp ?? true;
+
 /// Whether the user has asked for the on-demand 8-digit passcode fallback.
 /// Artwork recognition is the automatic primary path; ML Kit OCR only runs
 /// while this is true, so the camera doesn't burn battery reading text unless

@@ -572,6 +572,60 @@ order):
     (guarded) on every fresh camera start — targets autofocus/exposure settling
     on a stale value under `startImageStream`. Not guaranteed; the diagnostics
     overlay is the tool for gathering data if it recurs.
+12. Second on-device feedback pass — set picker while scanning, sticky scan
+    mode, optional help box, list-tile layout ← done (verified: `flutter
+    analyze` clean + full `flutter test` green, 218 tests). **No DB migration,
+    no schema change, no new dependency.**
+    **Set/expansion in the scan review gate** (a scan used to be hardwired to
+    `printingId: null`): new `ScanState.printingId` + `ScanController.setPrinting`,
+    written by `confirm()`. The UI is `_SetPicker` in `scan_screen.dart`, a
+    dropdown over the *existing* `cardPrintingsProvider` — the collection edit
+    sheet's provider, so no new SQL and no new repository method — **hidden when
+    the card has no known printings**, where the only option would be "no
+    specific set". It reads `.value` rather than `when`, so an unresolved load
+    leaves the review panel's height alone instead of flashing a spinner. Every
+    path that resolves a card clears it (`clearPrintingId` in
+    `_resolveArtMatch`/`selectCandidate`/`_lookup`, and in `confirm`/`dismiss`),
+    so a set can never leak onto the next card. `Printing.displayLabel`
+    ("SET-CODE · Set Name · Rarity") was added to the model and now backs the
+    picker, the collection detail's Set row and the edit sheet's dropdown,
+    replacing two copies of the same formatter.
+    **Passcode OCR is now a sticky mode, not a one-shot read** — the reported
+    bug was that saving a card dropped the user back into artwork recognition,
+    costing an extra tap per card when logging a stack by code. New
+    `ScanMode { artwork, passcode }` on `ScanState`: `requestPasscodeRead()`
+    enters it, `_beginPasscodeRead()` re-arms after every `confirm()`/`dismiss()`
+    while it is on, and only `exitPasscodeMode()` (the app-bar toggle or the
+    reading panel's button) or leaving the screen clears it — `ScanController`
+    is autoDispose, so **re-opening Log Cards always starts in artwork mode**.
+    `_onArtReading` ignores artwork outright in passcode mode, and `artReadings`
+    now `continue`s (no detect+hash at all) while `passcodeOcrRequested` is true,
+    so the two pipelines never run against the same frames. Consequences: the
+    app-bar pin icon became a mode toggle (filled + accent when on,
+    `pin_outlined` when off) and is shown in `readingCode` too;
+    `ScanTuning.ocrTimeoutFrames` and `ScanState.ocrFramesSeen` are **gone** — a
+    12s frame timeout that silently exited the mode is precisely the behaviour
+    this step was asked to remove, and the mode is now user-owned. In exchange
+    `_onReading` gained the `lastConfirmedPasscode` + M-empty-frames debounce
+    that only `_onArtReading` had (and which is idle in this mode), so a card
+    left under the lens after a confirm no longer re-opens the review panel —
+    that moves *toward* the spec's non-optional debounce rule, not away from it.
+    **The help box is optional and smaller**: `AppSettings.showScanHelp`
+    (default true; `settings.show_scan_help` in `meta`, guarded `_parseBool`
+    like step 11's booleans) with a "Show the how-to box" switch in Settings →
+    Scanning, read by a derived `scanHelpEnabled` provider that mirrors
+    `scanDiagnosticsEnabled`. Type dropped one step into `ScanHelpTokens`
+    (title 14→13, lines 13→12, icons 18→16), with tighter insets and a smaller
+    corner radius.
+    **Collection list tile**: the condition chip now leads the row with the
+    artwork after it (swapped — the chip is what the eye scans for), and the
+    card name + set/edition line are centred (`CrossAxisAlignment.center` +
+    `textAlign: TextAlign.center`) above the quantity/delete controls.
+    **Test gotcha**: `dragUntilVisible` on the Settings `ListView` stops as soon
+    as the target tile is *built*, which can still be below the fold (the new
+    switch landed at y=608 in the 600px test viewport, so the tap missed) — the
+    scanning switches reuse the existing `scrollToDatabaseSection` helper
+    instead, since they sit just above that section.
 
 ## Standing rules
 

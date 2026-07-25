@@ -105,13 +105,20 @@ class AppStrings {
   static const String scanDiagnosticsDetected = 'card detected';
   static const String scanDiagnosticsNoCandidates = 'detected, nothing close';
 
-  // Passcode OCR — the on-demand fallback.
+  // Passcode OCR — the on-demand fallback, and a mode that stays on until the
+  // user turns it off or leaves the screen.
   static const String scanReadCodeTooltip = 'Read the 8-digit code';
+  static const String scanExitCodeTooltip = 'Back to artwork recognition';
   static const String scanReadCodeButton = 'Read the 8-digit code instead';
   static const String scanReadingCodeTitle = 'Reading the code…';
   static const String scanReadingCodeMessage =
-      'Center the 8-digit code in the box, about 10 cm away, and hold steady.';
-  static const String scanReadCodeCancelButton = 'Cancel';
+      'Center the 8-digit code in the box, about 10 cm away, and hold steady. '
+      'Code reading stays on for the next card too.';
+  static const String scanReadCodeCancelButton = 'Back to artwork recognition';
+
+  // The set/expansion picker in the scan review gate.
+  static const String scanSetLabel = 'Set';
+  static const String scanNoSetOption = 'No specific set';
 
   static const String addCardTitle = 'Log Cards';
   static const String addCardSearchHint = 'Search by name';
@@ -143,6 +150,10 @@ class AppStrings {
   static const String settingsDiagnosticsDescription =
       'Overlay recognition detail (detection status and match distances) on '
       'the scan screen, for tuning. Also toggled by the bug icon while scanning.';
+  static const String settingsScanHelpLabel = 'Show the how-to box';
+  static const String settingsScanHelpDescription =
+      'Show the "three ways to log a card" box at the bottom of the scan '
+      'screen.';
   static const String settingsDatabaseSection = 'Card database';
   static const String settingsLastSyncedLabel = 'Last synced';
   static const String settingsNeverSynced = 'Never';

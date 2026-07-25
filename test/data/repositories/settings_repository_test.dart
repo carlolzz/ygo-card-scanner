@@ -32,6 +32,7 @@ void main() {
     expect(settings.language, 'EN');
     expect(settings.themeMode, AppThemeMode.dark);
     expect(settings.showScanDiagnostics, isFalse);
+    expect(settings.showScanHelp, isTrue);
     expect(settings.confirmBeforeDelete, isTrue);
   });
 
@@ -43,6 +44,7 @@ void main() {
         language: 'DE',
         themeMode: AppThemeMode.light,
         showScanDiagnostics: true,
+        showScanHelp: false,
         confirmBeforeDelete: false,
       ),
     );
@@ -54,16 +56,19 @@ void main() {
     expect(settings.language, 'DE');
     expect(settings.themeMode, AppThemeMode.light);
     expect(settings.showScanDiagnostics, isTrue);
+    expect(settings.showScanHelp, isFalse);
     expect(settings.confirmBeforeDelete, isFalse);
   });
 
   test('a malformed boolean falls back to its default', () async {
     await metaDao.set('settings.show_scan_diagnostics', 'yes');
+    await metaDao.set('settings.show_scan_help', '1');
     await metaDao.set('settings.confirm_before_delete', '');
 
     final settings = await repository.load();
 
     expect(settings.showScanDiagnostics, isFalse);
+    expect(settings.showScanHelp, isTrue);
     expect(settings.confirmBeforeDelete, isTrue);
   });
 

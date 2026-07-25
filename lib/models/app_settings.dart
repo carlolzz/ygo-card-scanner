@@ -20,6 +20,7 @@ class AppSettings {
     // Dark-first, per the project's design direction.
     this.themeMode = AppThemeMode.dark,
     this.showScanDiagnostics = false,
+    this.showScanHelp = true,
     this.confirmBeforeDelete = true,
   });
 
@@ -39,6 +40,11 @@ class AppSettings {
   /// screen. Off by default — it's a tuning aid, not a normal-use feature.
   final bool showScanDiagnostics;
 
+  /// Whether the "three ways to log a card" help box is shown on the scan
+  /// screen. On by default — it teaches the three entry points — but it covers
+  /// camera real estate a returning user no longer needs.
+  final bool showScanHelp;
+
   /// Whether removing a card from the collection (deleting, or decrementing the
   /// last copy) asks for confirmation first. On by default — a deletion can't
   /// be undone.
@@ -50,6 +56,7 @@ class AppSettings {
     String? language,
     AppThemeMode? themeMode,
     bool? showScanDiagnostics,
+    bool? showScanHelp,
     bool? confirmBeforeDelete,
   }) {
     return AppSettings(
@@ -58,6 +65,7 @@ class AppSettings {
       language: language ?? this.language,
       themeMode: themeMode ?? this.themeMode,
       showScanDiagnostics: showScanDiagnostics ?? this.showScanDiagnostics,
+      showScanHelp: showScanHelp ?? this.showScanHelp,
       confirmBeforeDelete: confirmBeforeDelete ?? this.confirmBeforeDelete,
     );
   }

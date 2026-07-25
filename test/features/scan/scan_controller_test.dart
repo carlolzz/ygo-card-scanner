@@ -6,6 +6,7 @@ import 'package:sqflite/sqflite.dart';
 import 'package:ygo_scanner/core/theme/tokens.dart';
 import 'package:ygo_scanner/data/db/dao/collection_dao.dart';
 import 'package:ygo_scanner/data/db/dao/meta_dao.dart';
+import 'package:ygo_scanner/data/db/dao/printing_dao.dart';
 import 'package:ygo_scanner/data/db/database.dart';
 import 'package:ygo_scanner/data/repositories/settings_repository.dart';
 import 'package:ygo_scanner/data/seed/fake_collection_seed.dart';
@@ -260,21 +261,6 @@ void main() {
       expect(state().unknownPasscode, unknownPasscode);
     });
 
-    test('cancel returns to detecting', () async {
-      controller().requestPasscodeRead();
-      expect(state().status, ScanStatus.readingCode);
-      controller().cancelPasscodeRead();
-      expect(state().status, ScanStatus.detecting);
-    });
-
-    test('times out back to detecting after too many empty frames', () async {
-      controller().requestPasscodeRead();
-      for (var i = 0; i < ScanTuning.ocrTimeoutFrames + 2; i++) {
-        await feedOcr(null);
-      }
-      expect(state().status, ScanStatus.detecting);
-    });
-
     test('requesting a read while a match awaits is ignored', () async {
       fakeCandidates = [const ArtCandidate(dmCard, 2)];
       await agreeArt(darkMagician);
@@ -282,6 +268,99 @@ void main() {
       controller().requestPasscodeRead();
       expect(state().status, ScanStatus.matched);
     });
+  });
+
+  group('passcode mode is sticky', () {
+    Future<void> readCode(String passcode) async {
+      for (var i = 0; i < ScanTuning.agreementFrames; i++) {
+        await feedOcr(passcode);
+      }
+      await settle();
+    }
+
+    test('a confirm resumes reading codes instead of artwork', () async {
+      controller().requestPasscodeRead();
+      await readCode(darkMagician);
+      expect(state().status, ScanStatus.matched);
+
+      await controller().confirm();
+      await settle();
+
+      // The whole point: logging a card must not drop the user back into
+      // artwork recognition, or every card in a stack costs an extra tap.
+      expect(state().mode, ScanMode.passcode);
+      expect(state().status, ScanStatus.readingCode);
+    });
+
+    test('a dismiss also stays in the mode', () async {
+      controller().requestPasscodeRead();
+      await readCode(darkMagician);
+      controller().dismiss();
+
+      expect(state().mode, ScanMode.passcode);
+      expect(state().status, ScanStatus.readingCode);
+    });
+
+    test('artwork readings are ignored while the mode is on', () async {
+      fakeCandidates = [const ArtCandidate(dmCard, 2)];
+      controller().requestPasscodeRead();
+      await agreeArt(darkMagician);
+
+      expect(state().status, ScanStatus.readingCode);
+      expect(state().matchedCard, isNull);
+    });
+
+    test('a confirmed card is not re-read until it leaves the frame', () async {
+      controller().requestPasscodeRead();
+      await readCode(darkMagician);
+      await controller().confirm();
+      await settle();
+
+      // Still under the lens: reads of the same code must not re-open review.
+      await readCode(darkMagician);
+      expect(state().status, ScanStatus.readingCode);
+
+      // Empty frames advance the debounce; then the same card is fair game.
+      for (var i = 0; i < ScanTuning.debounceEmptyFrames; i++) {
+        await feedOcr(null);
+      }
+      await readCode(darkMagician);
+      expect(state().status, ScanStatus.matched);
+    });
+
+    test('exiting the mode returns to artwork recognition', () async {
+      controller().requestPasscodeRead();
+      expect(state().status, ScanStatus.readingCode);
+
+      controller().exitPasscodeMode();
+      expect(state().mode, ScanMode.artwork);
+      expect(state().status, ScanStatus.detecting);
+
+      // And artwork is live again.
+      fakeCandidates = [const ArtCandidate(dmCard, 2)];
+      await agreeArt(darkMagician);
+      expect(state().status, ScanStatus.matched);
+    });
+  });
+
+  test('the set picked in the review gate is written to the entry', () async {
+    final printing = (await PrintingDao(db).getForPasscode(blueEyes)).first;
+    fakeCandidates = [const ArtCandidate(beCard, 2)];
+    await agreeArt(blueEyes);
+    expect(state().status, ScanStatus.matched);
+    // A scan starts on "no specific set" — the camera can't read the set code.
+    expect(state().printingId, isNull);
+
+    controller().setPrinting(printing.id);
+    await controller().confirm();
+    await settle();
+
+    final scanned = (await CollectionDao(db).getEntriesForPasscode(blueEyes))
+        .where((e) => e.edition == CardEdition.unlimited);
+    expect(scanned, hasLength(1));
+    expect(scanned.first.printingId, printing.id);
+    // And the next card starts from "no specific set" again.
+    expect(state().printingId, isNull);
   });
 
   test('setLanguage before confirm overrides the settings default', () async {

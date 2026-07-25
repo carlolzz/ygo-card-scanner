@@ -90,6 +90,10 @@ Stream<ArtReading> artReadings(Ref ref) async* {
 
   var sequence = 0;
   await for (final _ in camera.frames) {
+    // Skip the detect+hash work entirely while the user is in passcode-reading
+    // mode: the controller ignores artwork readings there, so hashing every
+    // frame would only stack onto the ML Kit OCR pass that mode runs.
+    if (ref.read(passcodeOcrRequestedProvider)) continue;
     // `read`, not `watch`: reflect the current diagnostics toggle each frame
     // without making this stream depend on it (a dependency would tear down and
     // restart the whole camera subscription on every toggle).

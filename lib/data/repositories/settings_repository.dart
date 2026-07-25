@@ -16,6 +16,7 @@ const _editionKey = 'settings.default_edition';
 const _languageKey = 'settings.language';
 const _themeModeKey = 'settings.theme_mode';
 const _showScanDiagnosticsKey = 'settings.show_scan_diagnostics';
+const _showScanHelpKey = 'settings.show_scan_help';
 const _confirmBeforeDeleteKey = 'settings.confirm_before_delete';
 
 /// Reads and writes [AppSettings] as key/value pairs in the existing `meta`
@@ -49,6 +50,10 @@ class SettingsRepository {
         await _metaDao.get(_showScanDiagnosticsKey),
         defaults.showScanDiagnostics,
       ),
+      showScanHelp: _parseBool(
+        await _metaDao.get(_showScanHelpKey),
+        defaults.showScanHelp,
+      ),
       confirmBeforeDelete: _parseBool(
         await _metaDao.get(_confirmBeforeDeleteKey),
         defaults.confirmBeforeDelete,
@@ -65,6 +70,7 @@ class SettingsRepository {
       _showScanDiagnosticsKey,
       settings.showScanDiagnostics.toString(),
     );
+    await _metaDao.set(_showScanHelpKey, settings.showScanHelp.toString());
     await _metaDao.set(
       _confirmBeforeDeleteKey,
       settings.confirmBeforeDelete.toString(),

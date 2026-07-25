@@ -48,19 +48,13 @@ class CollectionListTile extends StatelessWidget {
           child: Padding(
             padding: const EdgeInsets.all(AppSpacing.md),
             child: Row(
-              // Centre the leading art + condition chip against the (taller)
+              // Centre the leading condition chip + art against the (taller)
               // name/quantity column, so they sit in the middle of the row
               // rather than hugging the top.
               crossAxisAlignment: CrossAxisAlignment.center,
               children: [
-                // The whole card, uncropped (a portrait card box + contain),
-                // rather than the default square centre-crop.
-                CardThumbnail(
-                  localImagePath: card.localImagePath,
-                  aspectRatio: ScanReticleTokens.cardAspectRatio,
-                  fit: BoxFit.contain,
-                ),
-                const SizedBox(width: AppSpacing.md),
+                // Grade first, then the art: the chip is what the eye scans a
+                // list of duplicates for, so it leads the row.
                 Container(
                   padding: const EdgeInsets.symmetric(
                     horizontal: AppSpacing.sm,
@@ -79,17 +73,26 @@ class CollectionListTile extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(width: AppSpacing.md),
-                // Name (up to 2 lines) + edition (1 line) stacked over the
-                // quantity/delete controls, so the name gets the row's full
-                // width instead of being squeezed against the trailing buttons.
+                // The whole card, uncropped (a portrait card box + contain),
+                // rather than the default square centre-crop.
+                CardThumbnail(
+                  localImagePath: card.localImagePath,
+                  aspectRatio: ScanReticleTokens.cardAspectRatio,
+                  fit: BoxFit.contain,
+                ),
+                const SizedBox(width: AppSpacing.md),
+                // Name (up to 2 lines) + edition (1 line), centred over the
+                // quantity/delete controls; the name gets the row's full
+                // remaining width instead of being squeezed against the buttons.
                 Expanded(
                   child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+                    crossAxisAlignment: CrossAxisAlignment.center,
                     children: [
                       Text(
                         card.name,
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
+                        textAlign: TextAlign.center,
                         style: TextStyle(color: palette.onSurface),
                       ),
                       const SizedBox(height: AppSpacing.xs),
@@ -97,6 +100,7 @@ class CollectionListTile extends StatelessWidget {
                         _subtitle(entryWithCard),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
+                        textAlign: TextAlign.center,
                         style: TextStyle(color: palette.onSurfaceMuted),
                       ),
                       const SizedBox(height: AppSpacing.xs),

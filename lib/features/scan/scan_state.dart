@@ -41,12 +41,20 @@ enum ScanStatus {
   error,
 }
 
+/// Which recognition tool the user has selected. Artwork is the primary path
+/// and the state every fresh visit to the scan screen starts in; picking
+/// [passcode] switches the screen into 8-digit-code reading and **stays** there
+/// across confirms, until the user switches back or leaves the screen (the
+/// controller is autoDispose, so leaving resets it).
+enum ScanMode { artwork, passcode }
+
 /// Immutable snapshot of the scan pipeline. Hand-written (like
 /// `AddCardSelection` and `InitialSyncState`) rather than freezed, matching the
 /// project's controller-state convention.
 class ScanState {
   const ScanState({
     required this.status,
+    this.mode = ScanMode.artwork,
     this.agreementBuffer = const [],
     this.artAgreementBuffer = const [],
     this.matchedCard,
@@ -55,14 +63,17 @@ class ScanState {
     this.condition = CardCondition.nearMint,
     this.edition = CardEdition.unlimited,
     this.language = kDefaultCardLanguage,
+    this.printingId,
     this.quantity = 1,
     this.emptyFrameCount = 0,
     this.lastConfirmedPasscode,
-    this.ocrFramesSeen = 0,
     this.error,
   });
 
   final ScanStatus status;
+
+  /// The recognition tool in use. Sticky across confirms — see [ScanMode].
+  final ScanMode mode;
 
   /// Consecutive equal 8-digit OCR reads seen so far (fallback path). Cleared on
   /// disagreement or once a match resolves.
@@ -92,6 +103,11 @@ class ScanState {
   /// camera can't read a card's language, so this is picked by hand.
   final String language;
 
+  /// The printing (set/expansion) chosen for the pending match, or null for
+  /// "no specific set". Like language, the camera can't tell which reprint is in
+  /// hand, so it is picked in the review gate from the card's known printings.
+  final int? printingId;
+
   final int quantity;
 
   /// Empty frames (no card / no confident match) observed since the last card
@@ -102,15 +118,12 @@ class ScanState {
   /// until the frame goes empty for [ScanTuning.debounceEmptyFrames].
   final String? lastConfirmedPasscode;
 
-  /// Frames processed since the on-demand OCR pass began — bounds it so a
-  /// glare-blocked code doesn't spin forever (see [ScanTuning.ocrTimeoutFrames]).
-  final int ocrFramesSeen;
-
   /// The camera error behind [ScanStatus.error].
   final Object? error;
 
   ScanState copyWith({
     ScanStatus? status,
+    ScanMode? mode,
     List<String>? agreementBuffer,
     List<String>? artAgreementBuffer,
     YgoCard? matchedCard,
@@ -122,15 +135,17 @@ class ScanState {
     CardCondition? condition,
     CardEdition? edition,
     String? language,
+    int? printingId,
+    bool clearPrintingId = false,
     int? quantity,
     int? emptyFrameCount,
     String? lastConfirmedPasscode,
     bool clearLastConfirmedPasscode = false,
-    int? ocrFramesSeen,
     Object? error,
   }) {
     return ScanState(
       status: status ?? this.status,
+      mode: mode ?? this.mode,
       agreementBuffer: agreementBuffer ?? this.agreementBuffer,
       artAgreementBuffer: artAgreementBuffer ?? this.artAgreementBuffer,
       matchedCard: clearMatchedCard ? null : (matchedCard ?? this.matchedCard),
@@ -142,12 +157,12 @@ class ScanState {
       condition: condition ?? this.condition,
       edition: edition ?? this.edition,
       language: language ?? this.language,
+      printingId: clearPrintingId ? null : (printingId ?? this.printingId),
       quantity: quantity ?? this.quantity,
       emptyFrameCount: emptyFrameCount ?? this.emptyFrameCount,
       lastConfirmedPasscode: clearLastConfirmedPasscode
           ? null
           : (lastConfirmedPasscode ?? this.lastConfirmedPasscode),
-      ocrFramesSeen: ocrFramesSeen ?? this.ocrFramesSeen,
       error: error ?? this.error,
     );
   }

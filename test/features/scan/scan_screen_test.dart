@@ -18,6 +18,8 @@ import 'package:ygo_scanner/features/scan/art_providers.dart';
 import 'package:ygo_scanner/features/scan/camera_service.dart';
 import 'package:ygo_scanner/features/scan/hash_index.dart';
 import 'package:ygo_scanner/features/scan/scan_providers.dart';
+import 'package:ygo_scanner/features/scan/scan_screen.dart';
+import 'package:ygo_scanner/features/settings/settings_providers.dart';
 import 'package:ygo_scanner/models/card_condition.dart';
 import 'package:ygo_scanner/models/ygo_card.dart';
 
@@ -108,6 +110,41 @@ void main() {
         (e) => e.condition == CardCondition.excellent && e.printingId == null,
       );
       expect(scanned, hasLength(1));
+    });
+  });
+
+  testWidgets('the how-to box follows its Settings toggle', (tester) async {
+    await tester.runAsync(() async {
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            appDatabaseProvider.overrideWith((ref) async => testDb),
+            // Both streams inert: this test is about chrome, not recognition.
+            artReadingsProvider
+                .overrideWith((ref) => const Stream<ArtReading>.empty()),
+            passcodeReadingsProvider
+                .overrideWith((ref) => const Stream<PasscodeReading>.empty()),
+          ],
+          child: MaterialApp.router(routerConfig: buildAppRouter()),
+        ),
+      );
+
+      await tester.tap(find.text(AppStrings.homeTileLogCards));
+      await pumpUntilSettled(tester);
+
+      expect(find.text(AppStrings.scanHelpTitle), findsOneWidget);
+
+      final container = ProviderScope.containerOf(
+        tester.element(find.byType(ScanScreen)),
+      );
+      // Settings must be resolved before a setter can write through them.
+      await container.read(settingsControllerProvider.future);
+      await container
+          .read(settingsControllerProvider.notifier)
+          .setShowScanHelp(false);
+      await pumpUntilSettled(tester);
+
+      expect(find.text(AppStrings.scanHelpTitle), findsNothing);
     });
   });
 

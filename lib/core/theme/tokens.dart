@@ -190,12 +190,6 @@ class ScanTuning {
   /// card logs dozens of times in a couple of seconds. Shared by both paths.
   static const int debounceEmptyFrames = 5;
 
-  /// Once the user triggers the on-demand passcode fallback, give up and return
-  /// to artwork scanning if no 8-digit read agrees within this many processed
-  /// frames (~12s at [frameInterval]), so a glare-blocked code doesn't spin
-  /// forever.
-  static const int ocrTimeoutFrames = 40;
-
   /// Minimum wall-clock gap between OCR passes. The bottleneck is the human
   /// flipping cards, so we optimize for stability over raw throughput
   /// (~1 card/second) and avoid burning battery on every camera frame.
@@ -241,6 +235,18 @@ class ScanPasscodeReticleTokens {
 
   static const double borderWidth = 3;
   static const double cornerRadius = AppRadius.sm;
+}
+
+/// Type sizes for the scan screen's "three ways to log a card" help box. Held
+/// one step below the app's body text (and its icons shrunk to match) so the box
+/// stays compact over the viewfinder — it is guidance, not primary content, and
+/// it can be switched off entirely in Settings.
+class ScanHelpTokens {
+  const ScanHelpTokens._();
+
+  static const double titleFontSize = 13;
+  static const double lineFontSize = 12;
+  static const double iconSize = 16;
 }
 
 /// Tuning for the pHash artwork-match fallback (step 8). A runtime pHash of a

@@ -74,6 +74,9 @@ class ScanController extends _$ScanController {
 
   void _onArtReading(HashMatch? top) {
     final s = state;
+    // Artwork is ignored outright in passcode mode: the user picked the other
+    // tool, and it stays picked until they switch back (see [ScanMode]).
+    if (s.mode == ScanMode.passcode) return;
     // Frozen while a result awaits the user, an OCR read is running, or after a
     // camera error. Stays active through the transient `confirmed` state so the
     // post-confirm empty-frame debounce actually advances back to detecting.
@@ -154,6 +157,7 @@ class ScanController extends _$ScanController {
       condition: _settings.defaultCondition,
       edition: _settings.defaultEdition,
       language: _settings.language,
+      clearPrintingId: true,
       quantity: 1,
     );
   }
@@ -179,26 +183,35 @@ class ScanController extends _$ScanController {
       condition: _settings.defaultCondition,
       edition: _settings.defaultEdition,
       language: _settings.language,
+      // A different card has different printings, so any earlier pick is void.
+      clearPrintingId: true,
       quantity: 1,
     );
   }
 
   // ---------------------------------------------------------------------------
-  // Fallback path: on-demand passcode OCR.
+  // The other tool: 8-digit passcode OCR — a mode, not a one-shot read.
   // ---------------------------------------------------------------------------
 
-  /// Starts the on-demand passcode read: freezes the artwork path and turns on
+  /// Switches into passcode-reading mode: freezes the artwork path and turns on
   /// the ML-Kit OCR stream. Only reachable while actively scanning.
   void requestPasscodeRead() {
     if (state.status != ScanStatus.detecting &&
         state.status != ScanStatus.reading) {
       return;
     }
+    _beginPasscodeRead();
+  }
+
+  /// Arms (or re-arms) an OCR pass. Called when the user switches into the mode
+  /// and again after every confirm/dismiss while it is still on: the mode is
+  /// sticky, so one tap covers a whole stack of cards (see [ScanMode]).
+  void _beginPasscodeRead() {
     state = state.copyWith(
       status: ScanStatus.readingCode,
+      mode: ScanMode.passcode,
       agreementBuffer: const [],
       artAgreementBuffer: const [],
-      ocrFramesSeen: 0,
     );
     ref.read(passcodeOcrRequestedProvider.notifier).set(requested: true);
   }
@@ -207,30 +220,33 @@ class ScanController extends _$ScanController {
     if (state.status != ScanStatus.readingCode) return;
 
     final s = state;
-    final seen = s.ocrFramesSeen + 1;
-    // Bounded so a glare-blocked code can't spin forever.
-    if (seen > ScanTuning.ocrTimeoutFrames) {
-      _stopOcr();
-      state = state.copyWith(
-        status: ScanStatus.detecting,
+    if (read == null) {
+      // A gap breaks the run. It also advances the post-confirm debounce, so a
+      // card just logged becomes readable again once it has left the frame —
+      // this path replaces the artwork stream's counting, which is idle here.
+      final empties = s.emptyFrameCount + 1;
+      state = s.copyWith(
         agreementBuffer: const [],
+        emptyFrameCount: empties,
+        clearLastConfirmedPasscode: empties >= ScanTuning.debounceEmptyFrames,
       );
       return;
     }
 
-    if (read == null) {
-      // A gap breaks the run, but keep reading until the timeout.
-      state = s.copyWith(agreementBuffer: const [], ocrFramesSeen: seen);
+    // The card just logged is still in view: ignore it until it leaves, so
+    // lingering on it doesn't immediately re-open the review panel.
+    if (read == s.lastConfirmedPasscode) {
+      state = s.copyWith(agreementBuffer: const [], emptyFrameCount: 0);
       return;
     }
 
     if (s.agreementBuffer.isNotEmpty && s.agreementBuffer.last != read) {
-      state = s.copyWith(agreementBuffer: const [], ocrFramesSeen: seen);
+      state = s.copyWith(agreementBuffer: const [], emptyFrameCount: 0);
       return;
     }
 
     final buffer = [...s.agreementBuffer, read];
-    state = s.copyWith(agreementBuffer: buffer, ocrFramesSeen: seen);
+    state = s.copyWith(agreementBuffer: buffer, emptyFrameCount: 0);
     if (buffer.length == ScanTuning.agreementFrames) {
       _lookup(read);
     }
@@ -258,18 +274,24 @@ class ScanController extends _$ScanController {
         condition: _settings.defaultCondition,
         edition: _settings.defaultEdition,
         language: _settings.language,
+        clearPrintingId: true,
         quantity: 1,
       );
     }
   }
 
-  /// Cancels an in-progress on-demand OCR read and returns to artwork scanning.
-  void cancelPasscodeRead() {
-    if (state.status != ScanStatus.readingCode) return;
+  /// Leaves passcode mode for artwork recognition. Together with leaving the
+  /// screen (this controller is autoDispose), the user's only way out of the
+  /// sticky mode — which is the point: a confirm must not drop them out of it.
+  void exitPasscodeMode() {
+    if (state.mode != ScanMode.passcode) return;
     _stopOcr();
     state = state.copyWith(
       status: ScanStatus.detecting,
+      mode: ScanMode.artwork,
       agreementBuffer: const [],
+      artAgreementBuffer: const [],
+      emptyFrameCount: 0,
     );
   }
 
@@ -289,14 +311,22 @@ class ScanController extends _$ScanController {
   void setLanguage(String language) =>
       state = state.copyWith(language: language);
 
+  /// Picks the printing (set/expansion) for the pending match, or null for
+  /// "no specific set".
+  void setPrinting(int? printingId) => state = state.copyWith(
+    printingId: printingId,
+    clearPrintingId: printingId == null,
+  );
+
   void setQuantity(int quantity) {
     if (quantity < 1) return;
     state = state.copyWith(quantity: quantity);
   }
 
   /// Writes the reviewed match to the collection, then resumes scanning with
-  /// this card debounced. A scanned quick-log carries no printing
-  /// (`printingId` null), consistent with the manual add's skip path.
+  /// this card debounced. `printingId` is whatever the user picked in the review
+  /// gate — null (no specific set) when they left it alone, like the manual
+  /// add's skip path.
   Future<void> confirm() async {
     final card = state.matchedCard;
     if (card == null || state.status != ScanStatus.matched) return;
@@ -306,6 +336,7 @@ class ScanController extends _$ScanController {
     await repository.addOrIncrement(
       CollectionEntry(
         passcode: card.passcode,
+        printingId: state.printingId,
         condition: state.condition,
         edition: state.edition,
         // Picked in the review gate (seeded from the settings default). The
@@ -322,31 +353,43 @@ class ScanController extends _$ScanController {
       status: ScanStatus.confirmed,
       clearMatchedCard: true,
       clearCandidates: true,
+      clearPrintingId: true,
       lastConfirmedPasscode: card.passcode,
       agreementBuffer: const [],
       artAgreementBuffer: const [],
       emptyFrameCount: 0,
     );
+    // The chosen tool survives a save: in passcode mode go straight back to
+    // reading codes for the next card instead of dropping into artwork
+    // recognition, which would mean re-arming the mode for every card.
+    if (state.mode == ScanMode.passcode) _beginPasscodeRead();
   }
 
   /// Discards the current match/unknown/candidates result without writing, and
-  /// debounces any resolved card so it isn't immediately re-detected.
+  /// debounces any resolved card so it isn't immediately re-detected. Resumes in
+  /// whichever mode the user is in.
   void dismiss() {
     final passcode = state.matchedCard?.passcode ?? state.unknownPasscode;
-    _stopOcr();
     state = state.copyWith(
       status: ScanStatus.detecting,
       clearMatchedCard: true,
       clearUnknownPasscode: true,
       clearCandidates: true,
+      clearPrintingId: true,
       lastConfirmedPasscode: passcode,
       agreementBuffer: const [],
       artAgreementBuffer: const [],
       emptyFrameCount: 0,
     );
+    if (state.mode == ScanMode.passcode) {
+      _beginPasscodeRead();
+    } else {
+      _stopOcr();
+    }
   }
 
-  /// Retries after a camera error by rebuilding the camera pipeline.
+  /// Retries after a camera error by rebuilding the camera pipeline. Starts over
+  /// in artwork mode — the error tore down whatever the user was doing anyway.
   void retry() {
     _stopOcr();
     state = _initialState();

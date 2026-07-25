@@ -171,6 +171,21 @@ void main() {
     });
   });
 
+  testWidgets('switching off the scan how-to box persists it', (tester) async {
+    await tester.runAsync(() async {
+      await openSettings(tester);
+
+      // The scanning switches sit just above the card-database section, so the
+      // same scroll brings them on-screen (dragUntilVisible alone stops as soon
+      // as the tile is *built*, which can still be below the fold).
+      await scrollToDatabaseSection(tester);
+      await tester.tap(find.text(AppStrings.settingsScanHelpLabel));
+      await pumpUntilSettled(tester);
+
+      expect(await MetaDao(testDb).get('settings.show_scan_help'), 'false');
+    });
+  });
+
   testWidgets('re-sync asks for confirmation and does nothing when cancelled', (
     tester,
   ) async {

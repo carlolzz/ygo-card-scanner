@@ -131,7 +131,7 @@ class _CollectionDetailScreenState
             if (widget.entryWithCard.printing != null)
               _DetailRow(
                 label: AppStrings.collectionSetLabel,
-                value: _setValue(widget.entryWithCard.printing!),
+                value: widget.entryWithCard.printing!.displayLabel,
               ),
             _DetailRow(
               label: AppStrings.collectionEditionLabel,
@@ -191,15 +191,6 @@ class _CollectionDetailScreenState
         ),
       ),
     );
-  }
-
-  String _setValue(Printing printing) {
-    final parts = [
-      if (printing.setCode != null) printing.setCode!,
-      if (printing.setName != null) printing.setName!,
-      if (printing.rarity != null) printing.rarity!,
-    ];
-    return parts.join(' · ');
   }
 
   Future<void> _increment(int id) async {
@@ -526,21 +517,14 @@ class _EditEntrySheetState extends ConsumerState<_EditEntrySheet> {
           DropdownMenuItem<int?>(
             value: printing.id,
             child: Text(
-              _printingLabel(printing),
+              printing.displayLabel.isEmpty
+                  ? AppStrings.collectionEditNoPrinting
+                  : printing.displayLabel,
               overflow: TextOverflow.ellipsis,
             ),
           ),
       ],
       onChanged: (id) => setState(() => _printingId = id),
     );
-  }
-
-  String _printingLabel(Printing printing) {
-    final parts = [
-      if (printing.setCode != null) printing.setCode!,
-      if (printing.setName != null) printing.setName!,
-      if (printing.rarity != null) printing.rarity!,
-    ];
-    return parts.isEmpty ? AppStrings.collectionEditNoPrinting : parts.join(' · ');
   }
 }

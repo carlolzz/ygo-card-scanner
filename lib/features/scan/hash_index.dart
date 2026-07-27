@@ -9,10 +9,10 @@ class HashMatch {
   final int distance;
 }
 
-/// The in-memory perceptual-hash index: `passcode -> 64-bit pHash`, parsed from
-/// the bundled `assets/card_hashes.json`. Pure and hardware-free, so tests build
-/// one from a small in-memory map instead of the real asset (which `rootBundle`
-/// makes awkward to load in unit tests).
+/// The in-memory perceptual-hash index: `passcode -> 256-bit pHash`, parsed
+/// from the bundled `assets/card_hashes.json`. Pure and hardware-free, so tests
+/// build one from a small in-memory map instead of the real asset (which
+/// `rootBundle` makes awkward to load in unit tests).
 class HashIndex {
   HashIndex({
     required this.version,
@@ -23,8 +23,9 @@ class HashIndex {
 
   /// Parses and validates the decoded `card_hashes.json` wrapper object. Throws
   /// [FormatException] if the header does not match what `phashFromLuma`
-  /// produces (algorithm `phash`, hash size 8) — a mismatched index would make
-  /// every distance meaningless, so we fail loud rather than rank garbage.
+  /// produces (algorithm `phash`, hash size [kExpectedHashSize]) — a mismatched
+  /// index would make every distance meaningless, so we fail loud rather than
+  /// rank garbage.
   factory HashIndex.fromJson(Map<String, dynamic> json) {
     final algorithm = json['algorithm'];
     final hashSize = json['hash_size'];
@@ -71,8 +72,9 @@ class HashIndex {
     );
   }
 
-  /// The hash size (8) this runtime pHash is built for; the index must match.
-  static const int kExpectedHashSize = 8;
+  /// The hash size this runtime pHash is built for; the index must match.
+  /// 16 -> a 16x16 DCT block -> [PerceptualHash.bitCount] bits.
+  static const int kExpectedHashSize = 16;
 
   /// Slop when comparing the index's recorded ROI to this build's — the header
   /// stores rounded decimals, so an exact comparison would be brittle.
@@ -87,20 +89,50 @@ class HashIndex {
 
   /// The [n] closest passcodes to [query] within [maxDistance], nearest first.
   /// Ties break by passcode for a stable order.
+  ///
+  /// A bounded partial selection rather than collect-then-sort. The output is
+  /// identical — same `(distance, passcode)` total order — but allocation is
+  /// capped at [n] instead of the number of hits, which matters because the
+  /// diagnostics path deliberately ranks with no distance limit: over 14.6k
+  /// entries that was 14.6k `HashMatch` allocations plus a full sort (~200k
+  /// comparisons through a closure) to take three, on the UI isolate, every
+  /// frame — incurred exactly when someone has turned the overlay on to find out
+  /// why scanning feels slow. [bound] tightening as the list fills also means an
+  /// unlimited rank costs the same as a thresholded one after the first [n].
   List<HashMatch> rank(
     PerceptualHash query, {
     int n = 5,
-    int maxDistance = 64,
+    int maxDistance = PerceptualHash.bitCount,
   }) {
-    final hits = <HashMatch>[];
+    if (n <= 0) return const [];
+    final best = <HashMatch>[];
+    var bound = maxDistance;
     hashes.forEach((passcode, hash) {
       final d = query.distanceTo(hash);
-      if (d <= maxDistance) hits.add(HashMatch(passcode, d));
+      if (d > bound) return;
+      if (best.length == n) {
+        final worst = best[n - 1];
+        if (d > worst.distance ||
+            (d == worst.distance && passcode.compareTo(worst.passcode) >= 0)) {
+          return;
+        }
+      }
+      var i = best.length;
+      while (i > 0 && _precedes(d, passcode, best[i - 1])) {
+        i--;
+      }
+      best.insert(i, HashMatch(passcode, d));
+      if (best.length > n) {
+        best.removeLast();
+        // Never admit anything worse than the current n-th.
+        bound = best[n - 1].distance;
+      }
     });
-    hits.sort((a, b) {
-      final byDistance = a.distance.compareTo(b.distance);
-      return byDistance != 0 ? byDistance : a.passcode.compareTo(b.passcode);
-    });
-    return hits.length <= n ? hits : hits.sublist(0, n);
+    return best;
   }
+
+  /// Whether `(distance, passcode)` sorts strictly before [other].
+  static bool _precedes(int distance, String passcode, HashMatch other) =>
+      other.distance > distance ||
+      (other.distance == distance && other.passcode.compareTo(passcode) > 0);
 }

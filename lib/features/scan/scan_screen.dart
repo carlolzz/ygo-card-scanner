@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:camera/camera.dart';
 import 'package:flutter/foundation.dart' show listEquals;
 import 'package:flutter/material.dart';
@@ -17,6 +19,9 @@ import '../collection/collection_providers.dart';
 import '../settings/settings_providers.dart';
 import 'art_matcher.dart';
 import 'art_providers.dart';
+import 'camera_service.dart';
+import 'card_detector.dart';
+import 'detector_isolate.dart';
 import 'scan_controller.dart';
 import 'scan_geometry.dart';
 import 'scan_providers.dart';
@@ -135,6 +140,7 @@ class _ScanScreenState extends ConsumerState<ScanScreen>
           if (scan.status == ScanStatus.detecting ||
               scan.status == ScanStatus.reading) ...[
             const _ReticleOverlay(),
+            const _SearchRoiOverlay(),
             const _DetectionOutline(),
           ] else if (scan.status == ScanStatus.readingCode)
             const _PasscodeReticle(),
@@ -282,39 +288,95 @@ class _ViewportProbeState extends ConsumerState<_ViewportProbe> {
 }
 
 /// A card-shaped guide the user fills with the *whole* card so its artwork
-/// fills the frame. Its geometry comes from [reticleRectInViewport], the same
-/// function the detector's search region is derived from — so the box the user
-/// is asked to fill and the box actually searched cannot drift apart.
-class _ReticleOverlay extends StatelessWidget {
+/// fills the frame, with a note above it about the surface to lay cards on.
+///
+/// The box's geometry comes from [reticleRectInViewport], the same function the
+/// detector's search region is derived from — so the box the user is asked to
+/// fill and the box actually searched cannot drift apart.
+///
+/// **That is why the hint is `Positioned` against the box rather than stacked
+/// above it in a `Column`.** [reticleRectInViewport] is a `Rect.fromCenter` on
+/// the viewport's centre; a centred column of "text + box" would push the drawn
+/// box up by half the text's height while the searched region stayed exactly
+/// where it was, silently breaking that correspondence. Anchoring by the hint's
+/// *bottom* also means a two-line wrap grows upwards, away from the box.
+class _ReticleOverlay extends ConsumerWidget {
   const _ReticleOverlay();
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    // Part of the on-screen help, so it follows the same Settings switch as the
+    // bottom how-to box. Suppressed while diagnostics is on regardless: that
+    // overlay pushes the status banner down into this exact strip, and an
+    // overlap here is the bug step 13 already fixed once.
+    final showHint =
+        ref.watch(scanHelpEnabledProvider) &&
+        !ref.watch(scanDiagnosticsEnabledProvider);
     return LayoutBuilder(
       builder: (context, constraints) {
         final reticle = reticleRectInViewport(constraints.biggest);
-        return Center(
-          child: Container(
-            width: reticle.width,
-            height: reticle.height,
-            alignment: Alignment.bottomCenter,
-            padding: const EdgeInsets.all(AppSpacing.sm),
-            decoration: BoxDecoration(
-              border: Border.all(
-                color: AppPalette.dark.accent,
-                width: ScanReticleTokens.borderWidth,
+        return Stack(
+          children: [
+            if (showHint)
+              Positioned(
+                left: AppSpacing.md,
+                right: AppSpacing.md,
+                bottom: constraints.maxHeight - reticle.top + AppSpacing.sm,
+                child: const _SurfaceHint(),
               ),
-              borderRadius:
-                  BorderRadius.circular(ScanReticleTokens.cornerRadius),
+            Center(
+              child: Container(
+                width: reticle.width,
+                height: reticle.height,
+                alignment: Alignment.bottomCenter,
+                padding: const EdgeInsets.all(AppSpacing.sm),
+                decoration: BoxDecoration(
+                  border: Border.all(
+                    color: AppPalette.dark.accent,
+                    width: ScanReticleTokens.borderWidth,
+                  ),
+                  borderRadius:
+                      BorderRadius.circular(ScanReticleTokens.cornerRadius),
+                ),
+                child: Text(
+                  AppStrings.scanHint,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: AppPalette.dark.onSurface),
+                ),
+              ),
             ),
-            child: Text(
-              AppStrings.scanHint,
-              textAlign: TextAlign.center,
-              style: TextStyle(color: AppPalette.dark.onSurface),
-            ),
-          ),
+          ],
         );
       },
+    );
+  }
+}
+
+/// The "lay the cards on a plain dark surface" note. Scrimmed like
+/// [_HelpPanel], since it sits on live camera imagery and has to stay legible
+/// over bright artwork; fixed to the dark palette for the same reason.
+class _SurfaceHint extends StatelessWidget {
+  const _SurfaceHint();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppSpacing.sm,
+        vertical: AppSpacing.xs,
+      ),
+      decoration: BoxDecoration(
+        color: _cameraScrim.withValues(alpha: 0.82),
+        borderRadius: BorderRadius.circular(AppRadius.md),
+      ),
+      child: Text(
+        AppStrings.scanSurfaceHint,
+        textAlign: TextAlign.center,
+        style: TextStyle(
+          color: AppPalette.dark.onSurfaceMuted,
+          fontSize: ScanHelpTokens.lineFontSize,
+        ),
+      ),
     );
   }
 }
@@ -411,9 +473,10 @@ class _DetectionOutlineState extends ConsumerState<_DetectionOutline>
       _onQuad(reading.quad, reading.artBox);
     });
 
-    // The preview's own aspect ratio, flipped for portrait exactly as
-    // `_FullBleedPreview` does — the outline has to repeat the preview's
-    // `BoxFit.cover` transform to land on the card.
+    // The outline has to repeat the preview's `BoxFit.cover` transform to land
+    // on the card, but the quad's *own* space is the analysis stream — see
+    // [_streamFrameAspect]. Fall back to the preview's aspect (flipped for
+    // portrait exactly as `_FullBleedPreview` does) until a frame has arrived.
     return ValueListenableBuilder<CameraController?>(
       valueListenable: ref.watch(cameraServiceProvider).preview,
       builder: (context, controller, _) {
@@ -421,9 +484,10 @@ class _DetectionOutlineState extends ConsumerState<_DetectionOutline>
           return const SizedBox.shrink();
         }
         final ratio =
-            MediaQuery.orientationOf(context) == Orientation.landscape
-            ? controller.value.aspectRatio
-            : 1 / controller.value.aspectRatio;
+            _streamFrameAspect(ref) ??
+            (MediaQuery.orientationOf(context) == Orientation.landscape
+                ? controller.value.aspectRatio
+                : 1 / controller.value.aspectRatio);
         return IgnorePointer(
           child: AnimatedBuilder(
             animation: _controller,
@@ -452,6 +516,30 @@ class _DetectionOutlineState extends ConsumerState<_DetectionOutline>
       },
     );
   }
+}
+
+/// Aspect (width/height) of the **upright image-stream frame** — the space
+/// `DetectedCard.quad` and [detectionRoiInFrame] both live in.
+///
+/// Not the preview's. CameraX chooses Preview and ImageAnalysis resolutions
+/// independently, so the two can differ (`ResolutionPreset.high` has been
+/// reported resolving to a 720x540 preview against a 16:9 analysis stream). The
+/// ROI mapping is self-correcting under that mismatch — cover-mapping through
+/// either aspect composes to the same thing — but a *painter* is not: feeding it
+/// the preview aspect mis-scales the drawn outline about the centre by the ratio
+/// of the two, while the region actually searched stays correct. Since a
+/// correctly hugging outline is the on-device acceptance test for the ROI
+/// mapping, that would send the next debugging pass after a bug that isn't there.
+///
+/// Null before the first frame; callers fall back to the preview's aspect, which
+/// is the best available guess and no worse than the old behaviour.
+double? _streamFrameAspect(WidgetRef ref) {
+  final frame = ref.read(cameraServiceProvider).latestArtFrame;
+  if (frame == null) return null;
+  final swap = frame.rotationDegrees == 90 || frame.rotationDegrees == 270;
+  final width = swap ? frame.height : frame.width;
+  final height = swap ? frame.width : frame.height;
+  return height == 0 ? null : width / height;
 }
 
 class _DetectionPainter extends CustomPainter {
@@ -542,6 +630,83 @@ class _DetectionPainter extends CustomPainter {
       old.color != color ||
       old.artBox != artBox ||
       !listEquals(old.quad, quad);
+}
+
+/// Outlines the region the detector actually searches, shown only while
+/// diagnostics is on.
+///
+/// The reticle-to-frame mapping ([detectionRoiInFrame]) is the one part of this
+/// pipeline that can be wrong with no visible symptom: the preview is a
+/// `BoxFit.cover` crop, so the guide box's on-screen fractions are *not* its
+/// frame fractions, and getting that conversion wrong just makes recognition
+/// quietly unreliable.
+///
+/// **What this can and cannot show.** The round trip drawn here — reticle →
+/// frame fractions → back to the viewport — is a pair of exact inverses, so the
+/// rectangle is the reticle inflated by the ROI margin *for any frame aspect*,
+/// including a wrong one. It confirms the margin and that the clamp to [0,1]
+/// didn't bite; it cannot confirm the aspect. What settles that is the
+/// `frame:` line in the diagnostics box, which prints the stream's own aspect
+/// beside the preview's. Feeding this painter the stream aspect (rather than the
+/// preview's) at least makes the two agree about which space they are in.
+class _SearchRoiOverlay extends ConsumerWidget {
+  const _SearchRoiOverlay();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    if (!ref.watch(scanDiagnosticsEnabledProvider)) {
+      return const SizedBox.shrink();
+    }
+    return ValueListenableBuilder<CameraController?>(
+      valueListenable: ref.watch(cameraServiceProvider).preview,
+      builder: (context, controller, _) {
+        if (controller == null || !controller.value.isInitialized) {
+          return const SizedBox.shrink();
+        }
+        final ratio =
+            _streamFrameAspect(ref) ??
+            (MediaQuery.orientationOf(context) == Orientation.landscape
+                ? controller.value.aspectRatio
+                : 1 / controller.value.aspectRatio);
+        return IgnorePointer(
+          child: CustomPaint(
+            painter: _SearchRoiPainter(
+              frameAspect: ratio,
+              color: AppPalette.dark.onSurfaceMuted,
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _SearchRoiPainter extends CustomPainter {
+  const _SearchRoiPainter({required this.frameAspect, required this.color});
+
+  /// Upright frame width / height, for the cover transform.
+  final double frameAspect;
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    // Any size with the right aspect works — only the shape feeds the scale.
+    final frame = Size(frameAspect * size.height, size.height);
+    final roi = detectionRoiInFrame(viewport: size, frame: frame);
+    final topLeft = frameFractionToViewport(roi.topLeft, frame, size);
+    final bottomRight = frameFractionToViewport(roi.bottomRight, frame, size);
+    canvas.drawRect(
+      Rect.fromPoints(topLeft, bottomRight),
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = ScanDiagnosticsTokens.searchRoiStrokeWidth
+        ..color = color,
+    );
+  }
+
+  @override
+  bool shouldRepaint(_SearchRoiPainter old) =>
+      old.frameAspect != frameAspect || old.color != color;
 }
 
 /// A small centered box for the on-demand passcode read: the user aims just the
@@ -697,19 +862,85 @@ class _TopOverlays extends ConsumerWidget {
   }
 }
 
-/// Developer readout of each frame's detection status and nearest candidate
-/// distances, so a recognition failure can be diagnosed as detection (no card
-/// found) vs matching (found, but distances large).
-class _DiagnosticsBox extends ConsumerWidget {
+/// Developer readout of the camera's state and each frame's detection status and
+/// nearest candidate distances, so a recognition failure can be diagnosed as
+/// camera (no frames at all), detection (frames, no card found) or matching
+/// (card found, but distances large).
+///
+/// Stateful for a ticker, and that is load-bearing: the camera line is the whole
+/// reason this exists, and a stalled camera stops [artReadings] emitting — so a
+/// box that only rebuilt on a reading would freeze on its last value precisely
+/// when the camera state is what you need to see.
+class _DiagnosticsBox extends ConsumerStatefulWidget {
   const _DiagnosticsBox();
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<_DiagnosticsBox> createState() => _DiagnosticsBoxState();
+}
+
+class _DiagnosticsBoxState extends ConsumerState<_DiagnosticsBox> {
+  /// Created in [initState] rather than as a lazy `late final`, so it can never
+  /// be constructed inside [dispose] (the trap that bit `_DetectionOutline` and
+  /// `_ViewportProbe`).
+  late final Timer _ticker;
+
+  @override
+  void initState() {
+    super.initState();
+    _ticker = Timer.periodic(
+      ScanDiagnosticsTokens.refreshInterval,
+      (_) => setState(() {}),
+    );
+  }
+
+  @override
+  void dispose() {
+    _ticker.cancel();
+    super.dispose();
+  }
+
+  /// `frame: 720x1280 (0.563) / preview 0.750` — the analysis stream's upright
+  /// dimensions and aspect, beside the preview's. They *should* match; when they
+  /// don't, the detection outline is the thing that suffers, not the search ROI
+  /// (whose cover mapping is self-correcting either way).
+  String _describeFrame(CameraService camera, Orientation orientation) {
+    final frame = camera.latestArtFrame;
+    final controller = camera.preview.value;
+    final preview = controller == null || !controller.value.isInitialized
+        ? null
+        : (orientation == Orientation.landscape
+              ? controller.value.aspectRatio
+              : 1 / controller.value.aspectRatio);
+    if (frame == null) {
+      return preview == null
+          ? 'frame: -'
+          : 'frame: -  / preview ${preview.toStringAsFixed(3)}';
+    }
+    final swap = frame.rotationDegrees == 90 || frame.rotationDegrees == 270;
+    final width = swap ? frame.height : frame.width;
+    final height = swap ? frame.width : frame.height;
+    final aspect = height == 0 ? 0.0 : width / height;
+    return 'frame: ${width}x$height (${aspect.toStringAsFixed(3)})'
+        '${preview == null ? '' : ' / preview ${preview.toStringAsFixed(3)}'}';
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final reading = ref.watch(artReadingsProvider).value;
     final palette = AppPalette.dark;
 
+    final camera = ref.read(cameraServiceProvider);
+    final detector = ref.read(cardDetectorProvider);
     final status = reading?.status ?? ArtFrameStatus.noFrame;
     final lines = <String>[
+      describeCameraHealth(camera.health),
+      // The two aspects side by side. This is the one thing on screen that can
+      // actually settle whether the analysis stream and the preview agree —
+      // CameraX picks their resolutions independently, and the overlays are the
+      // only thing that mismatch breaks. A single glance beats any host test.
+      _describeFrame(camera, MediaQuery.orientationOf(context)),
+      if (detector is IsolateCardDetector)
+        'det: ${describeDetectorHealth(detector.health)}',
       switch (status) {
         ArtFrameStatus.noFrame => AppStrings.scanDiagnosticsNoFrame,
         ArtFrameStatus.notDetected => AppStrings.scanDiagnosticsNotDetected,
@@ -1232,15 +1463,29 @@ class _ReadingCodePanel extends ConsumerWidget {
   }
 }
 
+/// The failure panel for the artwork pipeline.
+///
+/// Both the camera and the bundled index reach the controller down the same
+/// stream, so this discriminates rather than blaming the camera for everything:
+/// a bad `assets/card_hashes.json` (the ROI/descriptor header guard) used to
+/// read as *"the camera could not be started"*, with a Retry that could not
+/// possibly fix it.
 class _CameraErrorPanel extends ConsumerWidget {
   const _CameraErrorPanel();
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final controller = ref.read(scanControllerProvider.notifier);
+    final isIndex = ScanController.isIndexError(
+      ref.watch(scanControllerProvider).error,
+    );
     return _BottomMessage(
-      title: AppStrings.scanPermissionTitle,
-      message: AppStrings.scanPermissionMessage,
+      title: isIndex
+          ? AppStrings.scanIndexErrorTitle
+          : AppStrings.scanPermissionTitle,
+      message: isIndex
+          ? AppStrings.scanIndexErrorMessage
+          : AppStrings.scanPermissionMessage,
       primaryLabel: AppStrings.scanRetryButton,
       onPrimary: controller.retry,
       secondaryLabel: AppStrings.scanUnknownSearchButton,

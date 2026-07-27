@@ -3,6 +3,7 @@ import 'package:flutter/painting.dart' show Offset, Rect, Size;
 import '../../core/theme/tokens.dart';
 import '../../data/repositories/card_repository.dart';
 import '../../models/ygo_card.dart';
+import 'art_frame.dart';
 import 'camera_service.dart';
 import 'card_detector.dart';
 import 'hash_index.dart';
@@ -12,9 +13,22 @@ import 'scan_geometry.dart';
 /// A card proposed by the artwork-match fallback, with its Hamming distance to
 /// the captured frame (smaller = closer). Presented to the user to pick from.
 class ArtCandidate {
-  const ArtCandidate(this.card, this.distance);
+  const ArtCandidate(this.card, this.distance, {this.rankedPasscode});
+
   final YgoCard card;
   final int distance;
+
+  /// The index key this candidate was ranked under, when it differs from the
+  /// card's own. Null when the caller didn't record one (fakes in tests).
+  final String? rankedPasscode;
+
+  /// The index key this candidate was ranked under. Usually equal to
+  /// `card.passcode`, but *not* for an alt-art: the index keys every
+  /// `card_images[i].id` while the `cards` table stores only `card_images[0]`,
+  /// so a match on an alt-art hash resolves to a card with a *different*
+  /// passcode. The scan controller debounces on this, since it is what the next
+  /// frame's reading will carry. See `ScanState.matchedIndexPasscode`.
+  String get indexPasscode => rankedPasscode ?? card.passcode;
 }
 
 /// What happened when a frame was ranked — surfaced to the diagnostics overlay
@@ -85,7 +99,10 @@ abstract class ArtMatcher {
   /// box into frame coordinates so only that region is searched. Null (no
   /// screen laid out, e.g. every host test) searches the whole frame, which is
   /// the behaviour this had before the guide box was honoured.
-  ArtFrameResult rankFrame({bool includeNearest = false, Size? viewportSize});
+  Future<ArtFrameResult> rankFrame({
+    bool includeNearest = false,
+    Size? viewportSize,
+  });
 
   /// The last [rankFrame]'s in-threshold matches resolved to cards (a DB read
   /// per hit, skipping passcodes absent from the local `cards` table — e.g.
@@ -116,13 +133,22 @@ class PHashArtMatcher implements ArtMatcher {
   ArtFrameResult? _lastResult;
 
   @override
-  ArtFrameResult rankFrame({bool includeNearest = false, Size? viewportSize}) {
-    final result = _rank(includeNearest: includeNearest, viewportSize: viewportSize);
+  Future<ArtFrameResult> rankFrame({
+    bool includeNearest = false,
+    Size? viewportSize,
+  }) async {
+    final result = await _rank(
+      includeNearest: includeNearest,
+      viewportSize: viewportSize,
+    );
     _lastResult = result;
     return result;
   }
 
-  ArtFrameResult _rank({required bool includeNearest, Size? viewportSize}) {
+  Future<ArtFrameResult> _rank({
+    required bool includeNearest,
+    Size? viewportSize,
+  }) async {
     final raw = _camera.latestArtFrame;
     if (raw == null) return ArtFrameResult.noFrame;
 
@@ -140,7 +166,20 @@ class PHashArtMatcher implements ArtMatcher {
     // Detect and flatten the card first, so the art box is hashed from a clean,
     // aligned crop. No card in frame -> no candidate (better a miss than a
     // garbage match on background pixels).
-    final card = _detector.detectCard(raw, searchRoi: searchRoi);
+    var card = await _detector.detectCard(raw, searchRoi: searchRoi);
+    // Nothing in the guide box: try the whole frame once before giving up.
+    //
+    // The reticle-to-frame mapping is the one thing in this pipeline that can be
+    // wrong with no visible symptom, and if it is wrong on some device then
+    // detection would never work there at all. This retry turns that cliff into
+    // a slower path, and it costs nothing on frames that already succeed —
+    // a failing frame is exactly when there is budget to spare.
+    if (card == null && searchRoi != ArtMatchTuning.cardSearchRoi) {
+      card = await _detector.detectCard(
+        raw,
+        searchRoi: ArtMatchTuning.cardSearchRoi,
+      );
+    }
     if (card == null) return ArtFrameResult.notDetected;
 
     // The artwork window the detector located, when it found one: the index
@@ -150,17 +189,40 @@ class PHashArtMatcher implements ArtMatcher {
     final image = card.image;
     final roi = card.artBox ?? ArtMatchTuning.artBoxRoi;
     final crop = _cropFromRoi(roi, image.width, image.height);
-    final hash = phashFromLuma(image.luma, image.width, image.height, crop: crop);
+    var hash = phashFromLuma(image.luma, image.width, image.height, crop: crop);
 
-    final matches = _index.rank(
+    var matches = _index.rank(
       hash,
       n: ArtMatchTuning.candidateCount,
       maxDistance: ArtMatchTuning.maxHammingDistance,
     );
+    // Nothing in range: the card may simply be upside-down. `quadTiltDegrees`
+    // folds tilt into [0, 90), so a card held at 180° reads as tilt 0 and passes
+    // every shape gate — it is warped inverted and hashes to noise, with no
+    // symptom beyond "it won't recognise this one". Re-hash the rotated crop
+    // and keep whichever ranks. Gated on the first pass having failed, so the
+    // common case pays nothing.
+    if (matches.isEmpty) {
+      final flipped = phashFromLuma(
+        rotate180(image.luma, image.width, image.height),
+        image.width,
+        image.height,
+        crop: crop,
+      );
+      final flippedMatches = _index.rank(
+        flipped,
+        n: ArtMatchTuning.candidateCount,
+        maxDistance: ArtMatchTuning.maxHammingDistance,
+      );
+      if (flippedMatches.isNotEmpty) {
+        hash = flipped;
+        matches = flippedMatches;
+      }
+    }
     // The unthresholded nearest, for the overlay only, so a "detected but far"
     // frame still shows how far the real card sits (past the match gate).
     final nearest = includeNearest
-        ? _index.rank(hash, n: 3, maxDistance: 64)
+        ? _index.rank(hash, n: ArtMatchTuning.diagnosticsNearestCount)
         : const <HashMatch>[];
     return ArtFrameResult(
       ArtFrameStatus.detected,
@@ -177,11 +239,17 @@ class PHashArtMatcher implements ArtMatcher {
     // *newer* frame than the one the agreement gate accepted, so the card the
     // user is shown could differ from the one the outline locked onto.
     final result =
-        _lastResult ?? rankFrame(viewportSize: viewportSize);
+        _lastResult ?? await rankFrame(viewportSize: viewportSize);
     final candidates = <ArtCandidate>[];
     for (final match in result.matches) {
       final card = await _repository.getByPasscode(match.passcode);
-      if (card != null) candidates.add(ArtCandidate(card, match.distance));
+      if (card != null) {
+        candidates.add(
+          // Carry the index key alongside the card: they differ for alt-arts,
+          // and the controller's debounce is keyed on the index side.
+          ArtCandidate(card, match.distance, rankedPasscode: match.passcode),
+        );
+      }
     }
     return candidates;
   }

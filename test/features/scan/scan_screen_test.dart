@@ -40,8 +40,10 @@ class _FakeArtMatcher implements ArtMatcher {
   @override
   Future<List<ArtCandidate>> match({Size? viewportSize}) async => result;
   @override
-  ArtFrameResult rankFrame({bool includeNearest = false, Size? viewportSize}) =>
-      const ArtFrameResult(ArtFrameStatus.notDetected, []);
+  Future<ArtFrameResult> rankFrame({
+    bool includeNearest = false,
+    Size? viewportSize,
+  }) async => const ArtFrameResult(ArtFrameStatus.notDetected, []);
 }
 
 void main() {
@@ -148,6 +150,63 @@ void main() {
     });
   });
 
+  // The surface a card is lying on decides whether its own edges survive the
+  // detector's Otsu/Canny pass, so this note is the highest-value thing on the
+  // viewfinder — but it is still help text, and follows the same one switch.
+  testWidgets('the surface hint sits above the guide box and follows the '
+      'same Settings toggle', (tester) async {
+    await tester.runAsync(() async {
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            appDatabaseProvider.overrideWith((ref) async => testDb),
+            artReadingsProvider
+                .overrideWith((ref) => const Stream<ArtReading>.empty()),
+            passcodeReadingsProvider
+                .overrideWith((ref) => const Stream<PasscodeReading>.empty()),
+          ],
+          child: MaterialApp.router(routerConfig: buildAppRouter()),
+        ),
+      );
+
+      await tester.tap(find.text(AppStrings.homeTileLogCards));
+      await pumpUntilSettled(tester);
+
+      final hint = find.text(AppStrings.scanSurfaceHint);
+      expect(hint, findsOneWidget);
+
+      // Above the box, clear of it. Asserting the geometry rather than mere
+      // presence is the point: the hint is positioned off the reticle's own
+      // rect, because stacking the two in a `Column` would have moved the box
+      // itself — and the detector's search region is derived from where that
+      // box is. The reticle is the innermost `Container` around its own label.
+      final reticle = find
+          .ancestor(
+            of: find.text(AppStrings.scanHint),
+            matching: find.byType(Container),
+          )
+          .first;
+      expect(tester.getBottomLeft(hint).dy, lessThan(tester.getTopLeft(reticle).dy));
+
+      // …and the box is still exactly centred, which is the invariant that
+      // would have broken silently.
+      final box = tester.getRect(reticle);
+      final viewport = tester.getSize(find.byType(ScanScreen));
+      expect(box.center.dy, moreOrLessEquals(viewport.height / 2, epsilon: 0.5));
+
+      final container = ProviderScope.containerOf(
+        tester.element(find.byType(ScanScreen)),
+      );
+      await container.read(settingsControllerProvider.future);
+      await container
+          .read(settingsControllerProvider.notifier)
+          .setShowScanHelp(false);
+      await pumpUntilSettled(tester);
+
+      expect(hint, findsNothing);
+    });
+  });
+
   // Regression: the preview layer used to read `previewController` as a plain
   // getter. It is a const widget under a provider that never republishes, so it
   // built exactly once — while the camera was still opening — and held the
@@ -210,6 +269,24 @@ class _InertCamera implements CameraService {
 
   @override
   ArtFrame? get latestArtFrame => null;
+
+  @override
+  InputImage? get latestInputImage => null;
+
+  @override
+  int get frameSequence => 0;
+
+  @override
+  set artCaptureEnabled(bool enabled) {}
+
+  @override
+  CameraHealth get health => const CameraHealth(
+    initialized: false,
+    streaming: false,
+    framesSeen: 0,
+    sinceLastFrame: null,
+    restarts: 0,
+  );
 
   @override
   Future<void> start() async {}

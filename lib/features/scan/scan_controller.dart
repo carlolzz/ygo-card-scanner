@@ -65,8 +65,47 @@ class ScanController extends _$ScanController {
     return _initialState();
   }
 
-  void _onCameraError(Object error) =>
-      state = state.copyWith(status: ScanStatus.error, error: error);
+  void _onCameraError(Object error) {
+    _setPaused(paused: true);
+    state = state.copyWith(status: ScanStatus.error, error: error);
+  }
+
+  /// Whether [ScanState.error] is the bundled index failing to load rather than
+  /// the camera failing to start.
+  ///
+  /// Both arrive down the same stream, so without this a [FormatException] from
+  /// `HashIndex.fromJson`'s header check — the guard that fires when the
+  /// committed `assets/card_hashes.json` and [ArtMatchTuning.artBoxRoi] disagree
+  /// — was reported to the user as *"the camera could not be started"*. Worse,
+  /// `hashIndexProvider` is `keepAlive` and caches its failure for the process
+  /// lifetime while [retry] rebuilds only the camera, so the wrong message came
+  /// with a button that could never fix it. The screen shows a distinct panel
+  /// for this, and [retry] now invalidates the index too.
+  static bool isIndexError(Object? error) => error is FormatException;
+
+  /// Tells the artwork pipeline to stop detecting/hashing while a result is
+  /// waiting on the user — the readings would be discarded anyway (see the
+  /// freeze guard in [_onArtReading]), and the work is not free.
+  void _setPaused({required bool paused}) =>
+      ref.read(scanPausedProvider.notifier).set(paused: paused);
+
+  /// Advances the suppression on the just-handled card by one reading that
+  /// matched it, returning the cooldown left and whether the card is now free.
+  ///
+  /// Shared by both reading paths, because the trap it fixes was in both. A
+  /// **dismissed** card (`cooldown > 0`) counts down here and is released when
+  /// the count runs out — the card is sitting in the reticle, so it goes on
+  /// matching every frame, and the empty-frame debounce a dismiss used to share
+  /// with a confirm could therefore never advance: holding the card still, the
+  /// natural thing to do, suppressed it forever. A **confirmed** card
+  /// (`cooldown == 0`) is untouched here and stays suppressed until the frame
+  /// actually goes empty for [ScanTuning.debounceEmptyFrames], which is the
+  /// spec's non-optional guard against one card logging thirty times.
+  static ({int cooldown, bool release}) _tickSuppression(int cooldown) {
+    if (cooldown <= 0) return (cooldown: 0, release: false);
+    final left = cooldown - 1;
+    return (cooldown: left, release: left <= 0);
+  }
 
   // ---------------------------------------------------------------------------
   // Primary path: artwork.
@@ -100,12 +139,21 @@ class ScanController extends _$ScanController {
       return;
     }
 
+    // The *index* passcode, which is the namespace `lastConfirmedPasscode` is
+    // kept in — see [ScanState.matchedIndexPasscode].
     final passcode = top.passcode;
 
-    // The just-handled card is still in view: keep it rejected until the frame
-    // goes empty for the debounce window.
+    // The just-handled card is still in view: keep it rejected for its debounce
+    // window. A dismissed card's window runs down right here, so it can be
+    // picked up again without being taken out of the reticle first.
     if (passcode == s.lastConfirmedPasscode) {
-      state = s.copyWith(status: ScanStatus.detecting, emptyFrameCount: 0);
+      final tick = _tickSuppression(s.dismissCooldown);
+      state = s.copyWith(
+        status: ScanStatus.detecting,
+        emptyFrameCount: 0,
+        dismissCooldown: tick.cooldown,
+        clearLastConfirmedPasscode: tick.release,
+      );
       return;
     }
 
@@ -137,6 +185,14 @@ class ScanController extends _$ScanController {
   /// hits are all alt-art passcodes the app DB doesn't store), quietly resume
   /// scanning rather than showing a dead end.
   Future<void> _resolveArtMatch() async {
+    // Freeze the pipeline *before* the awaits, not after. `match` is 1-5 serial
+    // DB round trips, and while they ran the artwork stream stayed live with the
+    // status still `reading` — so a single frame with no confident top (a glare
+    // blink, the card shifting) took the empty-frame branch to `detecting`, and
+    // the guard below then silently discarded a match the agreement gate had
+    // already accepted. At two agreeing frames on a 300ms cadence that is a
+    // plausible share of the "hard to lock on" reports.
+    _setPaused(paused: true);
     final matcher = await ref.read(artMatcherProvider.future);
     final candidates = await matcher.match(
       viewportSize: ref.read(scanViewportSizeProvider),
@@ -145,15 +201,24 @@ class ScanController extends _$ScanController {
     if (state.status != ScanStatus.reading) return;
 
     if (candidates.isEmpty) {
+      // Nothing resolvable — resume, but debounce the hash that got us here, or
+      // the same unresolvable run re-agrees and re-resolves every two frames.
+      _setPaused(paused: false);
       state = state.copyWith(
         status: ScanStatus.detecting,
         artAgreementBuffer: const [],
+        lastConfirmedPasscode: state.artAgreementBuffer.isEmpty
+            ? null
+            : state.artAgreementBuffer.last,
+        dismissCooldown: ScanTuning.dismissCooldownFrames,
       );
       return;
     }
+    final top = candidates.first;
     state = state.copyWith(
       status: ScanStatus.matched,
-      matchedCard: candidates.first.card,
+      matchedCard: top.card,
+      matchedIndexPasscode: top.indexPasscode,
       candidates: candidates,
       artAgreementBuffer: const [],
       condition: _settings.defaultCondition,
@@ -178,9 +243,16 @@ class ScanController extends _$ScanController {
   /// candidate list so a second wrong pick is still recoverable.
   void selectCandidate(YgoCard card) {
     if (state.status != ScanStatus.candidates) return;
+    // Re-key the debounce onto whichever candidate this is — the list is ranked
+    // by index passcode, and picking the third entry must suppress *that* hash,
+    // not the top one's.
+    final picked = state.candidates
+        .where((c) => c.card.passcode == card.passcode)
+        .firstOrNull;
     state = state.copyWith(
       status: ScanStatus.matched,
       matchedCard: card,
+      matchedIndexPasscode: picked?.indexPasscode ?? card.passcode,
       clearUnknownPasscode: true,
       condition: _settings.defaultCondition,
       edition: _settings.defaultEdition,
@@ -216,7 +288,17 @@ class ScanController extends _$ScanController {
       artAgreementBuffer: const [],
     );
     ref.read(passcodeOcrRequestedProvider.notifier).set(requested: true);
+    _setArtCapture(enabled: false);
   }
+
+  /// Stops the camera building a luma copy of every frame while nothing reads
+  /// it. `artReadings` skips its whole pass in passcode mode, so the copy was
+  /// pure allocation — around a megabyte a second at this cadence.
+  ///
+  /// Set directly on the service rather than derived from a watched provider:
+  /// `cameraServiceProvider` rebuilding would tear down and restart the camera.
+  void _setArtCapture({required bool enabled}) =>
+      ref.read(cameraServiceProvider).artCaptureEnabled = enabled;
 
   void _onReading(String? read) {
     if (state.status != ScanStatus.readingCode) return;
@@ -235,10 +317,19 @@ class ScanController extends _$ScanController {
       return;
     }
 
-    // The card just logged is still in view: ignore it until it leaves, so
-    // lingering on it doesn't immediately re-open the review panel.
+    // The card just handled is still in view: ignore it for its debounce
+    // window, so lingering on it doesn't immediately re-open the review panel.
+    // As on the artwork path, a *dismissed* card's window runs down here rather
+    // than waiting for the card to leave — nothing was written, so there is
+    // nothing to protect and the user is trying to read it again.
     if (read == s.lastConfirmedPasscode) {
-      state = s.copyWith(agreementBuffer: const [], emptyFrameCount: 0);
+      final tick = _tickSuppression(s.dismissCooldown);
+      state = s.copyWith(
+        agreementBuffer: const [],
+        emptyFrameCount: 0,
+        dismissCooldown: tick.cooldown,
+        clearLastConfirmedPasscode: tick.release,
+      );
       return;
     }
 
@@ -261,6 +352,7 @@ class ScanController extends _$ScanController {
     final card = await repository.getByPasscode(passcode);
     if (state.status != ScanStatus.readingCode) return;
 
+    _setPaused(paused: true);
     if (card == null) {
       state = state.copyWith(
         status: ScanStatus.unknown,
@@ -288,6 +380,7 @@ class ScanController extends _$ScanController {
   void exitPasscodeMode() {
     if (state.mode != ScanMode.passcode) return;
     _stopOcr();
+    _setPaused(paused: false);
     state = state.copyWith(
       status: ScanStatus.detecting,
       mode: ScanMode.artwork,
@@ -297,8 +390,10 @@ class ScanController extends _$ScanController {
     );
   }
 
-  void _stopOcr() =>
-      ref.read(passcodeOcrRequestedProvider.notifier).set(requested: false);
+  void _stopOcr() {
+    ref.read(passcodeOcrRequestedProvider.notifier).set(requested: false);
+    _setArtCapture(enabled: true);
+  }
 
   // ---------------------------------------------------------------------------
   // Shared: review, confirm, dismiss.
@@ -350,13 +445,26 @@ class ScanController extends _$ScanController {
       ),
     );
     ref.invalidate(collectionEntriesProvider);
+    // A scan logged against a set can introduce a rarity the collection did not
+    // hold before, which the collection filter row offers as a chip.
+    ref.invalidate(collectionRarityOptionsProvider);
 
+    _setPaused(paused: false);
     state = state.copyWith(
       status: ScanStatus.confirmed,
       clearMatchedCard: true,
       clearCandidates: true,
       clearPrintingId: true,
-      lastConfirmedPasscode: card.passcode,
+      // The *index* passcode, not the card's: on an alt-art match the two
+      // differ, and the next frame's reading carries the index one. Comparing
+      // the wrong side meant the suppression branch never fired and the review
+      // panel re-opened on the card just logged.
+      lastConfirmedPasscode: state.matchedIndexPasscode ?? card.passcode,
+      // Zero: a confirm wrote a row, so this card stays suppressed until it has
+      // actually left the lens (the empty-frame debounce). It must not be freed
+      // by the dismiss cooldown, or one card left under the camera would log
+      // repeatedly — the exact thing the debounce exists to prevent.
+      dismissCooldown: 0,
       agreementBuffer: const [],
       artAgreementBuffer: const [],
       emptyFrameCount: 0,
@@ -368,10 +476,25 @@ class ScanController extends _$ScanController {
   }
 
   /// Discards the current match/unknown/candidates result without writing, and
-  /// debounces any resolved card so it isn't immediately re-detected. Resumes in
-  /// whichever mode the user is in.
+  /// briefly debounces any resolved card so the panel doesn't re-open under the
+  /// user's thumb. Resumes in whichever mode the user is in.
+  ///
+  /// The debounce is a short **countdown**, not the post-confirm empty-frame
+  /// rule: nothing was written, so the card the user just declined has to become
+  /// scannable again without being taken out of the reticle first. See
+  /// [_tickSuppression].
   void dismiss() {
-    final passcode = state.matchedCard?.passcode ?? state.unknownPasscode;
+    // Whatever card the user was actually looking at. The candidate list is the
+    // third case: [showCandidates] clears `matchedCard`, so without it a
+    // "none of these" would suppress nothing and the same top guess would be
+    // re-presented on the very next frame.
+    // Index passcodes throughout, matching what a reading carries.
+    final passcode =
+        state.matchedIndexPasscode ??
+        state.matchedCard?.passcode ??
+        state.unknownPasscode ??
+        (state.candidates.isEmpty ? null : state.candidates.first.indexPasscode);
+    _setPaused(paused: false);
     state = state.copyWith(
       status: ScanStatus.detecting,
       clearMatchedCard: true,
@@ -379,6 +502,7 @@ class ScanController extends _$ScanController {
       clearCandidates: true,
       clearPrintingId: true,
       lastConfirmedPasscode: passcode,
+      dismissCooldown: ScanTuning.dismissCooldownFrames,
       agreementBuffer: const [],
       artAgreementBuffer: const [],
       emptyFrameCount: 0,
@@ -394,9 +518,16 @@ class ScanController extends _$ScanController {
   /// in artwork mode — the error tore down whatever the user was doing anyway.
   void retry() {
     _stopOcr();
+    _setPaused(paused: false);
     state = _initialState();
     ref.invalidate(cameraServiceProvider);
     ref.invalidate(scanCameraProvider);
+    // The index too: it is `keepAlive` and deliberately caches its parse, so a
+    // load failure would otherwise survive every retry for the process
+    // lifetime. Re-reading a 1MB asset is cheap next to being unrecoverable,
+    // and on the overwhelmingly common camera-error path this provider is
+    // already resolved, so the invalidation just re-parses once.
+    ref.invalidate(hashIndexProvider);
     ref.invalidate(passcodeReadingsProvider);
     ref.invalidate(artReadingsProvider);
   }

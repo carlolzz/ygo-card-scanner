@@ -30,6 +30,33 @@ void main() {
       expect(extractPasscode([span('ATK/2500')]), isNull);
     });
 
+    group('the join fallback only applies to digits and spaces', () {
+      // The fallback exists for ML Kit splitting one printed passcode across
+      // elements, where whitespace is the *only* thing between the runs.
+      test('joins a split passcode', () {
+        expect(extractPasscode([span('4698 6414')]), '46986414');
+        expect(extractPasscode([span('469 864 14')]), '46986414');
+      });
+
+      test('does not join a monster stat line into a fake passcode', () {
+        // The regression this guards: `ATK/2500  DEF/2100` has two 4-digit runs
+        // and no 8-run, so it used to join to "25002100". That is a *second*
+        // distinct value alongside the real passcode, which makes the frame
+        // ambiguous and discards it — so passcode mode silently read nothing on
+        // exactly the monsters most worth logging, whenever ML Kit grouped ATK
+        // and DEF onto one line.
+        expect(extractPasscode([span('ATK/2500  DEF/2100')]), isNull);
+        expect(
+          extractPasscode([span('46986414'), span('ATK/2500  DEF/2100')]),
+          '46986414',
+        );
+      });
+
+      test('does not join a set code and a year', () {
+        expect(extractPasscode([span('LOB-EN005 ©1996')]), isNull);
+      });
+    });
+
     test('returns the value when multiple spans agree', () {
       expect(
         extractPasscode([span('46986414'), span('46986414')]),

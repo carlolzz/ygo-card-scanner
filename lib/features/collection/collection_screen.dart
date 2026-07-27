@@ -95,6 +95,8 @@ class CollectionScreen extends ConsumerWidget {
     final repository = await ref.read(collectionRepositoryProvider.future);
     await repository.decrement(entryWithCard.entry.id!);
     ref.invalidate(collectionEntriesProvider);
+    // The last copy takes the row with it, so a rarity may no longer be held.
+    ref.invalidate(collectionRarityOptionsProvider);
   }
 
   Future<void> _deleteEntry(
@@ -106,6 +108,7 @@ class CollectionScreen extends ConsumerWidget {
     final repository = await ref.read(collectionRepositoryProvider.future);
     await repository.delete(entryWithCard.entry.id!);
     ref.invalidate(collectionEntriesProvider);
+    ref.invalidate(collectionRarityOptionsProvider);
   }
 
   void _openDetail(BuildContext context, CollectionEntryWithCard entryWithCard) {

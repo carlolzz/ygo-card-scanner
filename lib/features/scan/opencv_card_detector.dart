@@ -23,8 +23,17 @@ import 'card_quad.dart';
 class OpenCvCardDetector implements CardDetector {
   const OpenCvCardDetector();
 
+  /// Runs the pipeline in-process, on the calling isolate.
+  ///
+  /// Production goes through `IsolateCardDetector`, which calls
+  /// [detectCardSync] on a worker isolate instead; this class stays as the
+  /// direct, synchronous entry point (and its fallback if spawning fails).
+  @override
+  Future<DetectedCard?> detectCard(ArtFrame frame, {Rect? searchRoi}) async =>
+      detectCardSync(frame, searchRoi: searchRoi);
+
   /// The canonical warped card size (59:86, scaled). Only the ratio matters —
-  /// the art box is resized to 32x32 for hashing afterwards.
+  /// the art box is resized to a small square for hashing afterwards.
   static const int _cardW = 421;
   static const int _cardH = 614;
 
@@ -50,8 +59,13 @@ class OpenCvCardDetector implements CardDetector {
   /// in the right place is rejected here.
   static const double _artBoxAspectTolerance = 1.12;
 
-  @override
-  DetectedCard? detectCard(ArtFrame frame, {Rect? searchRoi}) {
+  /// The pipeline itself, synchronous and isolate-safe.
+  ///
+  /// Static (and re-exported as the top-level [detectCardSync]) so a worker
+  /// isolate can call it without shipping an instance across the port: dartcv4's
+  /// native bindings are lazily-initialised top-level `final`s, so the worker
+  /// opens the already-loaded `libdartcv` itself on first use.
+  static DetectedCard? _detect(ArtFrame frame, {Rect? searchRoi}) {
     if (frame.luma.length != frame.width * frame.height) return null;
     final scratch = <cv.Mat>[];
     cv.VecVecPoint? contours;
@@ -327,3 +341,10 @@ class OpenCvCardDetector implements CardDetector {
     _ => null,
   };
 }
+
+/// The OpenCV detection pipeline, synchronously, on the calling isolate.
+///
+/// The seam `IsolateCardDetector`'s worker entry point calls: a plain top-level
+/// function, because that is all an isolate can be handed.
+DetectedCard? detectCardSync(ArtFrame frame, {Rect? searchRoi}) =>
+    OpenCvCardDetector._detect(frame, searchRoi: searchRoi);

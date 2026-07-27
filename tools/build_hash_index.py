@@ -17,6 +17,9 @@ upright card* — the ROI crop of the full card — so a clean photo of a card i
 close to its index entry instead of landing far away (the earlier index hashed
 YGOPRODeck's differently-shaped cropped-art image, a systematic mismatch).
 
+`ART_BOX_ROI` is now *measured* rather than estimated, and hashes are 256-bit;
+both constants carry the evidence in their own comments below.
+
 Every entry in a card's `card_images` array is indexed by its OWN `id` (its
 own passcode), so alternate artworks are matchable and resolve to the correct
 printing.
@@ -59,15 +62,31 @@ from typing import Iterable
 CARDINFO_URL = "https://db.ygoprodeck.com/api/v7/cardinfo.php"
 # A descriptive User-Agent so YGOPRODeck can identify this traffic.
 USER_AGENT = "ygo_scanner-build_hash_index/1.0 (+https://github.com; card art pHash indexer)"
-# v2: hashes the ART_BOX_ROI crop of the FULL card image (was v1: YGOPRODeck's
-# cropped-art image). Bumped so the provenance is unambiguous.
-OUTPUT_VERSION = 2
+# v3: 256-bit hashes (hash_size=16) of the *measured* art box. v2 was 64-bit
+# over a hand-estimated ROI that was not where the artwork actually is; see
+# ART_BOX_ROI and DEFAULT_HASH_SIZE below. Bumped so provenance is unambiguous.
+OUTPUT_VERSION = 3
 ALGORITHM = "phash"
 
 # Art-box ROI as (left, top, right, bottom) fractions of the upright card.
 # MUST stay in sync with `ArtMatchTuning.artBoxRoi` in
-# `lib/core/theme/tokens.dart` — index and runtime crop the same region.
-ART_BOX_ROI = (0.09, 0.19, 0.91, 0.68)
+# `lib/core/theme/tokens.dart` — index and runtime crop the same region, and
+# `HashIndex.fromJson` enforces that at startup by comparing this against the
+# `roi` header this file writes. Changing one without re-running this tool is a
+# hard startup failure, by design.
+#
+# MEASURED, not estimated. YGOPRODeck publishes its own art crop
+# (`image_url_cropped`, 624x624) alongside the full render (`image_url`,
+# 813x1185); aligning the former inside the latter by normalized
+# cross-correlation locates the artwork window directly. Across a random sample
+# it converges at NCC 0.996-0.999 on box (96, 214..216) size 622 — i.e. 96px of
+# left margin and 95px of right, horizontally centred as a real card's art
+# window must be, and *square* (622x622, aspect 1.0016).
+#
+# The previous value (0.09, 0.19, 0.91, 0.68) has aspect 1.147, and the runtime's
+# art-box correction rejects candidates whose aspect errs by more than 1.12 — so
+# it could never fire on a standard card. See docs/scan_pipeline_review.md #1.
+ART_BOX_ROI = (0.1181, 0.1814, 0.8831, 0.7063)
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_OUTPUT = _REPO_ROOT / "assets" / "card_hashes.json"
@@ -77,7 +96,17 @@ DEFAULT_CACHE_DIR = _REPO_ROOT / "tools" / ".image_cache"
 # not be mistaken for a full one on a cache hit.
 FULL_IMAGE_SUBDIR = "full"
 
-DEFAULT_HASH_SIZE = 8
+# 16 -> a 16x16 DCT block -> 256-bit hashes (64 hex chars). Was 8 (64-bit).
+#
+# 64 bits is not enough descriptor for 14.6k near-relatives: measured over the
+# shipped v2 index, *every* card had another card within Hamming 18 (mean 26.3),
+# so the runtime's `maxHammingDistance` was not a threshold at all, and 41 hash
+# values were shared outright by 82 different cards. At 256 bits over the
+# measured ROI the same radius as a *fraction* of the width (28.1%, i.e. 72/256)
+# admits a spurious neighbour for only ~1.4% of cards, and the curve is flat
+# from 24 to 80 — so the error budget can absorb glare and a sleeve without
+# reaching into another card. See docs/scan_pipeline_review.md.
+DEFAULT_HASH_SIZE = 16
 DEFAULT_WORKERS = 4
 # Per-request pause (seconds) applied inside each worker after a real network
 # fetch, to stay well under the "very high volume of images per second" line.

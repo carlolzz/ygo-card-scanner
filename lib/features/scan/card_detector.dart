@@ -50,5 +50,51 @@ abstract class CardDetector {
   /// as fractions (0..1) — candidates outside it are ignored, so the clutter of
   /// a busy desk around the card can't win. Defaults to
   /// `ArtMatchTuning.cardSearchRoi`.
-  DetectedCard? detectCard(ArtFrame frame, {Rect? searchRoi});
+  ///
+  /// Asynchronous because the production implementation runs the OpenCV work on
+  /// a background isolate (see `detector_isolate.dart`): edge map, contours,
+  /// perspective warp and the art-box pass together cost tens of milliseconds,
+  /// and on the UI isolate — every 300 ms, forever — that is enough to stop
+  /// Flutter painting the camera preview, which looks to the user exactly like
+  /// the camera having died.
+  Future<DetectedCard?> detectCard(ArtFrame frame, {Rect? searchRoi});
+}
+
+/// A snapshot of the detector's liveness, for the scan screen's diagnostics box.
+///
+/// Its own readout because detection is the one stage of the pipeline that could
+/// stop dead while every other on-screen signal stayed green: the camera keeps
+/// delivering frames and the preview keeps painting, so a wedged detector was
+/// indistinguishable from "nothing is being pointed at a card".
+class DetectorHealth {
+  const DetectorHealth({
+    required this.inIsolate,
+    required this.lastLatency,
+    required this.timeouts,
+  });
+
+  /// Running on the worker isolate, rather than the in-process fallback.
+  final bool inIsolate;
+
+  /// How long the most recent detection took, or null before the first.
+  final Duration? lastLatency;
+
+  /// Detections written off after exceeding the request timeout.
+  final int timeouts;
+}
+
+/// One dense line describing [health], for the diagnostics box. Pure and here
+/// rather than in the widget so it can be host-tested, matching
+/// `describeCameraHealth`.
+///
+/// Reads as `det: isolate  87ms` — where it runs and how long the last pass
+/// took. `t=` is omitted while zero (the normal case) so a non-zero value stands
+/// out, which is the whole reason the line exists.
+String describeDetectorHealth(DetectorHealth health) {
+  final latency = health.lastLatency;
+  return [
+    health.inIsolate ? 'isolate' : 'in-process',
+    if (latency != null) '${latency.inMilliseconds}ms',
+    if (health.timeouts > 0) 't=${health.timeouts}',
+  ].join('  ');
 }

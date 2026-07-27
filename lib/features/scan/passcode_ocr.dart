@@ -33,7 +33,8 @@ class RecognizedSpan {
 /// A run of exactly eight digits is the passcode; the "1" of "1st" is a
 /// separate one-digit run and is ignored. When a span has *no* eight-digit run
 /// we fall back to the joined runs — this preserves ML Kit's habit of splitting
-/// a passcode across elements ("4698 6414" → two four-digit runs → "46986414").
+/// a passcode across elements ("4698 6414" → two four-digit runs → "46986414")
+/// — but only for a span that is digits and whitespace alone (see [_joinable]).
 ///
 /// [roi], when supplied together with [frameSize], restricts matching to spans
 /// whose centre falls inside a normalized (0..1) rectangle of the frame. It is
@@ -48,7 +49,10 @@ String? extractPasscode(
 }) {
   final found = <String>{};
   for (final span in spans) {
-    if (roi != null && frameSize != null && frameSize.width > 0) {
+    if (roi != null &&
+        frameSize != null &&
+        frameSize.width > 0 &&
+        frameSize.height > 0) {
       final centre = Offset(
         (span.boundingBox.left + span.boundingBox.width / 2) / frameSize.width,
         (span.boundingBox.top + span.boundingBox.height / 2) / frameSize.height,
@@ -61,7 +65,7 @@ String? extractPasscode(
     final eights = runs.where((run) => run.length == 8).toSet();
     if (eights.isNotEmpty) {
       found.addAll(eights);
-    } else {
+    } else if (_joinable(span.text)) {
       // No isolated 8-run: try joining space-split digit groups.
       final joined = runs.join();
       if (joined.length == 8) found.add(joined);
@@ -71,6 +75,19 @@ String? extractPasscode(
   // than one is an ambiguous frame — both resolve to null.
   return found.length == 1 ? found.first : null;
 }
+
+/// Whether a span's digit runs may be joined into a candidate passcode.
+///
+/// Only when the span is digits and separating whitespace and nothing else.
+/// The fallback exists for ML Kit splitting one printed passcode across
+/// elements ("4698 6414"), where the gap is the *only* thing between the runs —
+/// but without this guard it also joined a monster's stat line,
+/// `ATK/2500  DEF/2100` → `"25002100"`. That is a plausible-looking second
+/// distinct value alongside the real passcode, so `found.length == 2` and the
+/// whole frame is discarded: passcode mode silently read *nothing* on exactly
+/// the monsters most worth logging, whenever ML Kit grouped ATK and DEF onto
+/// one line.
+bool _joinable(String text) => RegExp(r'^[\d\s]+$').hasMatch(text);
 
 /// Reads a card passcode from a single camera frame. An abstraction so tests
 /// can drive the scan state machine with a fake reader and no ML Kit plugin.

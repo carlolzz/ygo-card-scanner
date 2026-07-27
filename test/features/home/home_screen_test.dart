@@ -5,12 +5,28 @@ import 'package:ygo_scanner/core/constants.dart';
 import 'package:ygo_scanner/core/router.dart';
 import 'package:ygo_scanner/core/theme/tokens.dart';
 import 'package:ygo_scanner/features/home/home_menu_tile.dart';
+import 'package:ygo_scanner/features/scan/art_providers.dart';
+import 'package:ygo_scanner/features/scan/hash_index.dart';
 import 'package:ygo_scanner/features/statistics/statistics_providers.dart';
 import 'package:ygo_scanner/features/statistics/statistics_screen.dart';
 
 void main() {
+  /// Home pre-warms the scan pipeline's pHash index (see `_ScanPrewarm`), so
+  /// these tests need a scope. Stubbed with an empty in-memory index rather than
+  /// letting it read the real 540 KB asset: the warm-up is fire-and-forget and
+  /// nothing here asserts on it, so the real parse would be pure test latency.
+  final indexOverride = hashIndexProvider.overrideWith(
+    (ref) async =>
+        HashIndex(version: 1, algorithm: 'phash', hashSize: 8, hashes: const {}),
+  );
+
   Future<void> pumpApp(WidgetTester tester) async {
-    await tester.pumpWidget(MaterialApp.router(routerConfig: buildAppRouter()));
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [indexOverride],
+        child: MaterialApp.router(routerConfig: buildAppRouter()),
+      ),
+    );
   }
 
   testWidgets('renders all four home tile labels', (tester) async {
@@ -34,6 +50,7 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
+          indexOverride,
           collectionStatsProvider.overrideWith(
             (ref) async => const CollectionStats(
               totalCopies: 1,

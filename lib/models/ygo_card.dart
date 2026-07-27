@@ -62,9 +62,18 @@ abstract class YgoCard with _$YgoCard {
   /// which carry flavour text rather than an effect.
   bool get isNormalMonster => type?.contains('Normal Monster') ?? false;
 
+  /// Whether this is a Spell card. Its `race` is the spell's kind (Normal /
+  /// Continuous / Quick-Play / Field / Equip / Ritual), which players call the
+  /// Spell Type — see [isSpellOrTrap].
+  bool get isSpell => frameType == 'spell';
+
+  /// Whether this is a Trap card. Its `race` is the trap's kind (Normal /
+  /// Continuous / Counter), i.e. the Trap Type.
+  bool get isTrap => frameType == 'trap';
+
   /// Whether this is a Spell or Trap card. For these, YGOPRODeck's `race` field
-  /// holds the card's *property* (Normal/Continuous/Quick-Play/…), not a monster
-  /// type, and `attribute` is just "SPELL"/"TRAP" — so the collection detail
-  /// screen labels and hides those rows differently.
-  bool get isSpellOrTrap => frameType == 'spell' || frameType == 'trap';
+  /// holds the card's kind rather than a monster type, and `attribute` is just
+  /// "SPELL"/"TRAP" — so the collection detail screen labels [race] as the
+  /// Spell/Trap Type and hides the redundant `attribute` row.
+  bool get isSpellOrTrap => isSpell || isTrap;
 }

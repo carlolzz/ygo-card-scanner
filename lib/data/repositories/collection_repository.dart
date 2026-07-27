@@ -52,6 +52,10 @@ class CollectionRepository {
     CollectionFilter filter = const CollectionFilter(),
   }) => _dao.getAll(filter: filter);
 
+  /// The rarity values present in the collection (a null element = "no
+  /// rarity"), for the collection filter row's chips.
+  Future<List<String?>> rarityFilterOptions() => _dao.rarityFilterOptions();
+
   Future<int> totalCardCount() => _dao.totalCardCount();
 
   Future<int> distinctCardCount() => _dao.distinctCardCount();

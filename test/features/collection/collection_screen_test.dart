@@ -71,6 +71,69 @@ void main() {
     });
   });
 
+  testWidgets('rarity chip narrows the list', (tester) async {
+    await tester.runAsync(() async {
+      await openCollection(tester);
+
+      // Only the Metal Raiders printing of Mirror Force is Super Rare; the
+      // Dark Saviors one is Ultra Rare, so one of the two rows survives.
+      await tester.tap(find.widgetWithText(ChoiceChip, 'Super Rare'));
+      await pumpUntilSettled(tester);
+
+      expect(find.text('Mirror Force'), findsOneWidget);
+      expect(find.text('Blue-Eyes White Dragon'), findsNothing);
+    });
+  });
+
+  testWidgets('the "No rarity" chip finds cards logged without a printing', (
+    tester,
+  ) async {
+    await tester.runAsync(() async {
+      await openCollection(tester);
+
+      await tester.tap(
+        find.widgetWithText(ChoiceChip, AppStrings.collectionFilterNoRarity),
+      );
+      await pumpUntilSettled(tester);
+
+      // The seeded Dark Magician and Pot of Greed carry no printing.
+      expect(find.text('Dark Magician'), findsOneWidget);
+      expect(find.text('Pot of Greed'), findsOneWidget);
+      expect(find.text('Blue-Eyes White Dragon'), findsNothing);
+    });
+  });
+
+  testWidgets('a tile shows the set and the rarity, not the edition', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(800, 2400);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.runAsync(() async {
+      await openCollection(tester);
+
+      final tile = find.ancestor(
+        of: find.text('Blue-Eyes White Dragon'),
+        matching: find.byType(CollectionListTile),
+      );
+      expect(
+        find.descendant(of: tile, matching: find.text('LOB-EN001')),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(of: tile, matching: find.text('Ultra Rare')),
+        findsOneWidget,
+      );
+      // The edition moved to the detail screen.
+      expect(
+        find.descendant(of: tile, matching: find.text('1st Edition')),
+        findsNothing,
+      );
+    });
+  });
+
   testWidgets('incrementing quantity updates the displayed count', (
     tester,
   ) async {

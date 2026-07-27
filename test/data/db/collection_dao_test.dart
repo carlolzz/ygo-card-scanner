@@ -259,12 +259,13 @@ void main() {
       expect(results.single.entry.quantity, 3);
     });
 
-    test('filter by edition isolates matching rows', () async {
+    test('filter by "no rarity" keeps rows with no printing', () async {
       final results = await collectionDao.getAll(
-        filter: const CollectionFilter(edition: CardEdition.first),
+        filter: const CollectionFilter(rarity: RarityFilter.noRarity()),
       );
-      expect(results, hasLength(1));
-      expect(results.single.card.name, 'Red-Eyes Black Dragon');
+      // None of these three entries has a printing, so none carries a rarity —
+      // and they must still be reachable by a filter, not only under "All".
+      expect(results, hasLength(3));
     });
 
     test('filter by name substring isolates matching rows', () async {
@@ -289,6 +290,92 @@ void main() {
     test('totalCardCount sums quantity and distinctCardCount counts unique passcodes', () async {
       expect(await collectionDao.totalCardCount(), 9);
       expect(await collectionDao.distinctCardCount(), 2);
+    });
+  });
+
+  group('rarity filter', () {
+    setUp(() async {
+      await printingDao.insertAll([
+        const Printing(
+          passcode: '89631139',
+          setCode: 'LOB-EN001',
+          setName: 'Legend of Blue Eyes White Dragon',
+          rarity: 'Ultra Rare',
+        ),
+        const Printing(
+          passcode: '74677422',
+          setCode: 'MRD-EN094',
+          setName: 'Metal Raiders',
+          rarity: 'Super Rare',
+        ),
+      ]);
+      final blueEyesPrinting =
+          (await printingDao.getForPasscode('89631139')).single;
+      final redEyesPrinting =
+          (await printingDao.getForPasscode('74677422')).single;
+
+      await collectionDao.addOrIncrement(
+        _entry(
+          passcode: _blueEyes.passcode,
+          printingId: blueEyesPrinting.id,
+          condition: CardCondition.nearMint,
+        ),
+      );
+      await collectionDao.addOrIncrement(
+        _entry(
+          passcode: _redEyes.passcode,
+          printingId: redEyesPrinting.id,
+          condition: CardCondition.good,
+        ),
+      );
+      // A third entry with no printing at all — the scanned-quick-log shape,
+      // which carries no rarity.
+      await collectionDao.addOrIncrement(
+        _entry(passcode: _redEyes.passcode, condition: CardCondition.poor),
+      );
+    });
+
+    test('filter by a rarity value isolates matching rows', () async {
+      final results = await collectionDao.getAll(
+        filter: const CollectionFilter(
+          rarity: RarityFilter.value('Super Rare'),
+        ),
+      );
+      expect(results, hasLength(1));
+      expect(results.single.printing!.setCode, 'MRD-EN094');
+    });
+
+    test('filter by "no rarity" isolates the entry with no printing', () async {
+      final results = await collectionDao.getAll(
+        filter: const CollectionFilter(rarity: RarityFilter.noRarity()),
+      );
+      expect(results, hasLength(1));
+      expect(results.single.entry.condition, CardCondition.poor);
+      expect(results.single.printing, isNull);
+    });
+
+    test('rarityFilterOptions reports held rarities, null first', () async {
+      // SQLite orders NULL first, so the "no rarity" option leads — and it is
+      // present only because an entry without a printing exists, which is what
+      // keeps the filter row from ever offering a dead chip.
+      expect(await collectionDao.rarityFilterOptions(), [
+        null,
+        'Super Rare',
+        'Ultra Rare',
+      ]);
+    });
+
+    test('rarityFilterOptions omits null when every entry has a rarity',
+        () async {
+      final noRarity = await collectionDao.getAll(
+        filter: const CollectionFilter(rarity: RarityFilter.noRarity()),
+      );
+      await collectionDao.delete(noRarity.single.entry.id!);
+
+      expect(await collectionDao.rarityFilterOptions(), [
+        'Super Rare',
+        'Ultra Rare',
+      ]);
     });
   });
 

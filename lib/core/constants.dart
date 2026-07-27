@@ -18,12 +18,19 @@ class AppStrings {
   static const String collectionEmptyMessage =
       'No cards in your collection yet.';
   static const String collectionFilterAll = 'All';
+  // The rarity filter row's chip for entries whose printing carries no rarity
+  // (including cards logged without a printing at all) — otherwise that group
+  // would only ever be reachable under "All".
+  static const String collectionFilterNoRarity = 'No rarity';
   static const String collectionSortByName = 'Name';
   static const String collectionSortByDateAdded = 'Date added';
   static const String collectionSortByQuantity = 'Quantity';
   static const String collectionSortDirectionTooltip = 'Toggle sort direction';
   static const String collectionQuantityLabel = 'Quantity';
   static const String collectionSetLabel = 'Set';
+  // Its own detail row rather than the tail of the Set row: rarity is what
+  // distinguishes two copies of the same print.
+  static const String collectionRarityLabel = 'Rarity';
   static const String collectionEditionLabel = 'Edition';
   static const String collectionLanguageLabel = 'Language';
   static const String collectionByLanguageLabel = 'Copies by language';
@@ -35,9 +42,11 @@ class AppStrings {
   // `type` field (Normal Monster/Effect Monster/Spell Card/Trap Card/etc).
   static const String collectionCardRaceLabel = 'Monster Type';
   // The same YGOPRODeck `race` field, but for Spell/Trap cards it holds the
-  // card's property (Normal/Continuous/Quick-Play/Field/Equip/Ritual/Counter),
-  // which players call the "Property" — not a Monster Type.
-  static const String collectionCardPropertyLabel = 'Property';
+  // card's kind (Normal/Continuous/Quick-Play/Field/Equip/Ritual/Counter) —
+  // which players call the Spell Type or Trap Type, naming the card's own
+  // frame rather than the generic "Property".
+  static const String collectionCardSpellTypeLabel = 'Spell Type';
+  static const String collectionCardTrapTypeLabel = 'Trap Type';
   static const String collectionCardLevelLabel = 'Level';
   static const String collectionCardAtkDefLabel = 'ATK / DEF';
   static const String collectionCardArchetypeLabel = 'Archetype';
@@ -69,6 +78,14 @@ class AppStrings {
   static const String scanTitle = 'Log Cards';
   static const String scanManualTooltip = 'Search by name instead';
   static const String scanHint = 'Fit the whole card inside the box';
+
+  /// Shown just above the guide box. Detection crops to that box and derives
+  /// Canny's thresholds from an Otsu split of it, so what the card is lying on
+  /// directly decides whether its own edges survive — a patterned desk is the
+  /// single biggest cause of "it won't recognise anything".
+  static const String scanSurfaceHint =
+      'Place the cards ideally on a monochromatic surface, preferably black';
+
   static const String scanDetecting = 'Point at a card';
   static const String scanReading = 'Identifying…';
   static const String scanUnknownTitle = 'Not recognized';
@@ -82,6 +99,14 @@ class AppStrings {
   static const String scanPermissionMessage =
       'Grant camera access to scan cards, or search by name instead.';
   static const String scanRetryButton = 'Retry';
+  // Distinct from the camera failure above: the artwork index failing to load
+  // arrives down the same stream, and calling it a camera problem sent users
+  // (and this project's own debugging) after the wrong thing entirely.
+  static const String scanIndexErrorTitle = 'Artwork index unavailable';
+  static const String scanIndexErrorMessage =
+      'The bundled card artwork index could not be read, so artwork '
+      'recognition is off. Reading a passcode and searching by name both '
+      'still work.';
 
   // Artwork match — the automatic primary path.
   static const String scanNotThisCardButton = 'Not the right card?';
@@ -100,6 +125,15 @@ class AppStrings {
 
   // Scan diagnostics overlay (developer aid for tuning recognition).
   static const String scanDiagnosticsTooltip = 'Toggle recognition diagnostics';
+  // The camera's own state, on its own line. This exists because
+  // `scanDiagnosticsNoFrame` used to be shown for four different situations —
+  // the reading stream still loading, the camera released, passcode mode, and
+  // the literal one — which made "no camera frame yet while pointing at a card"
+  // impossible to act on. `cam:` reports the camera; the lines below report
+  // recognition.
+  static const String scanDiagnosticsCamOpening = 'cam: opening…';
+  static const String scanDiagnosticsCamStreaming = 'cam: streaming';
+  static const String scanDiagnosticsCamStalled = 'cam: STALLED';
   static const String scanDiagnosticsNoFrame = 'no camera frame yet';
   static const String scanDiagnosticsNotDetected = 'no card detected';
   static const String scanDiagnosticsDetected = 'card detected';

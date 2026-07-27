@@ -95,8 +95,10 @@ class ResyncController extends _$ResyncController {
       ref.invalidate(needsInitialSyncProvider);
       ref.invalidate(lastSyncedAtProvider);
       // A sync rewrites `cards`/`printings`, which the collection list joins
-      // against — names, art paths and set data can all have changed.
+      // against — names, art paths and set data can all have changed, and with
+      // them the rarities the collection filter row offers.
       ref.invalidate(collectionEntriesProvider);
+      ref.invalidate(collectionRarityOptionsProvider);
     } catch (e) {
       state = InitialSyncState(status: InitialSyncStatus.failure, error: e);
     }

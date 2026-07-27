@@ -42,6 +42,22 @@ class ArtFrame {
   }
 }
 
+/// Returns a 180°-rotated copy of a row-major luma buffer (same dimensions).
+///
+/// Used to re-hash a card that may be upside-down: the detector's shape gates
+/// fold in-plane tilt into [0, 90), so a card held at 180° passes all of them
+/// and is warped inverted, hashing to noise with no visible symptom. A 180°
+/// rotation is exactly a reversal of the buffer, since the last pixel of the
+/// last row becomes the first pixel of the first.
+Uint8List rotate180(Uint8List luma, int width, int height) {
+  final count = width * height;
+  final out = Uint8List(count);
+  for (var i = 0; i < count; i++) {
+    out[i] = luma[count - 1 - i];
+  }
+  return out;
+}
+
 /// Extracts the Y (luma) plane of an NV21 frame into a tight `width*height`
 /// buffer, dropping any row-stride padding. On NV21 the luma plane is the first
 /// `width` bytes of each `bytesPerRow`-strided row — already grayscale. Always

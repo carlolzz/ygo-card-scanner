@@ -6,8 +6,87 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
 
+import '../../core/constants.dart';
 import '../../core/theme/tokens.dart';
 import 'art_frame.dart';
+
+/// Whether the camera's image stream should be considered dead.
+///
+/// Pure and top-level so the watchdog's one decision is host-testable — the
+/// rest of [CameraScanService] needs hardware. [sinceLastFrame] is measured from
+/// the last frame's *arrival*, or from the moment streaming started when none
+/// has arrived yet.
+///
+/// A camera that isn't initialized is never "stalled": it is either still
+/// opening or already released, and restarting it would fight [start]/[stop].
+bool cameraFrameStalled({
+  required Duration sinceLastFrame,
+  required bool initialized,
+}) => initialized && sinceLastFrame > ScanTuning.cameraFrameTimeout;
+
+/// A snapshot of what the camera is actually doing, for the scan screen's
+/// diagnostics readout.
+///
+/// It exists because "no camera frame yet" used to be shown for four different
+/// situations — stream still loading, camera released, passcode mode, and the
+/// literal one — which made the single most-reported symptom impossible to
+/// diagnose. Each field here answers a different question.
+class CameraHealth {
+  const CameraHealth({
+    required this.initialized,
+    required this.streaming,
+    required this.framesSeen,
+    required this.sinceLastFrame,
+    required this.restarts,
+  });
+
+  /// The controller exists and has finished `initialize()`.
+  final bool initialized;
+
+  /// …and `startImageStream` has been called on it.
+  final bool streaming;
+
+  /// Frames delivered by the plugin since this service was created (counted on
+  /// arrival, before the throttle, so it measures the camera and not us).
+  final int framesSeen;
+
+  /// Since the last frame arrived, or since streaming started if none has.
+  /// Null before streaming starts.
+  final Duration? sinceLastFrame;
+
+  /// How many times the watchdog has restarted a stalled camera.
+  final int restarts;
+}
+
+/// One dense line describing [health], for the scan screen's diagnostics box.
+///
+/// Pure and here rather than in the widget so it can be host-tested: the whole
+/// point of this line is that it can be trusted when a user reports what the
+/// overlay said.
+///
+/// Reads as `cam: streaming  f=124  Δ=180ms  r=1` — state, frames delivered,
+/// gap since the last one, watchdog restarts. `r=` is omitted while zero (the
+/// normal case) so a non-zero value stands out.
+String describeCameraHealth(CameraHealth health) {
+  final since = health.sinceLastFrame;
+  final state = switch (health) {
+    _ when !health.streaming => AppStrings.scanDiagnosticsCamOpening,
+    _
+        when since != null &&
+            cameraFrameStalled(
+              sinceLastFrame: since,
+              initialized: health.initialized,
+            ) =>
+      AppStrings.scanDiagnosticsCamStalled,
+    _ => AppStrings.scanDiagnosticsCamStreaming,
+  };
+  return [
+    state,
+    'f=${health.framesSeen}',
+    if (since != null) 'Δ=${since.inMilliseconds}ms',
+    if (health.restarts > 0) 'r=${health.restarts}',
+  ].join('  ');
+}
 
 /// Owns the camera and turns its frames into ML-Kit [InputImage]s for the scan
 /// pipeline. An abstraction so the state machine can run against a fake source
@@ -16,7 +95,23 @@ import 'art_frame.dart';
 abstract class CameraService {
   /// Throttled stream of frames ready for OCR (roughly one per
   /// [ScanTuning.frameInterval]).
+  ///
+  /// Prefer [latestInputImage] + [frameSequence] for anything that does slow
+  /// work per frame: this is a broadcast stream, and a broadcast controller
+  /// **buffers for a paused subscriber** — which is what an `await for` whose
+  /// body awaits actually is. See [latestInputImage].
   Stream<InputImage> get frames;
+
+  /// The most recent frame as an ML-Kit input, or null before the first frame.
+  /// Replaced in lockstep with [latestArtFrame], so [frameSequence] identifies
+  /// both.
+  ///
+  /// Exists so the OCR pipeline can be self-paced like the artwork one: poll
+  /// [frameSequence], read this, and a read that overruns the frame interval
+  /// simply skips frames instead of growing an unbounded backlog of
+  /// progressively staler ones (which would run the agreement and empty-frame
+  /// counters over frames from seconds ago).
+  InputImage? get latestInputImage;
 
   /// The controller backing the live preview: null until [start] has finished
   /// initializing it, and null again once [stop] has released it.
@@ -31,6 +126,23 @@ abstract class CameraService {
   /// The most recent frame reduced to luma, for the artwork-match fallback, or
   /// null before the first frame. Updated in lockstep with [frames].
   ArtFrame? get latestArtFrame;
+
+  /// Monotonic counter incremented every time [latestArtFrame] is replaced.
+  ///
+  /// The artwork pipeline polls this instead of subscribing to [frames]: it
+  /// always works on the newest frame, and comparing the sequence guarantees it
+  /// never hashes the same physical frame twice (which would double-count the
+  /// controller's frame-agreement run) and never builds a backlog when a
+  /// detection pass runs long.
+  int get frameSequence;
+
+  /// What the camera is doing right now, for the diagnostics readout.
+  CameraHealth get health;
+
+  /// Whether to keep [latestArtFrame] up to date. Turned off in passcode mode,
+  /// where the artwork pipeline never reads it: converting a frame to luma is a
+  /// full-frame copy (~1 MB/s at this cadence) and nothing consumes it.
+  set artCaptureEnabled(bool enabled);
 
   /// Opens the back camera and begins streaming frames. Throws (e.g.
   /// [CameraException] on denied permission / no camera) so the pipeline can
@@ -60,6 +172,20 @@ class CameraScanService implements CameraService {
   bool _disposed = false;
   DateTime _lastEmit = DateTime.fromMillisecondsSinceEpoch(0);
   ArtFrame? _latestArtFrame;
+  InputImage? _latestInputImage;
+  int _frameSequence = 0;
+  bool _artCaptureEnabled = true;
+
+  /// Frame *arrival* bookkeeping, which is what the watchdog judges — distinct
+  /// from [_lastEmit], the throttle's own clock.
+  int _framesSeen = 0;
+  DateTime? _lastFrameAt;
+  DateTime? _streamingSince;
+
+  Timer? _watchdog;
+  int _restarts = 0;
+  Duration _restartBackoff = ScanTuning.cameraWatchdogInterval;
+  DateTime? _lastRestartAt;
 
   /// All start/stop/dispose work is chained onto this queue so the operations
   /// can never interleave. Without it, the OS permission dialog (which pauses
@@ -92,11 +218,47 @@ class CameraScanService implements CameraService {
   ArtFrame? get latestArtFrame => _latestArtFrame;
 
   @override
+  InputImage? get latestInputImage => _latestInputImage;
+
+  @override
+  int get frameSequence => _frameSequence;
+
+  @override
+  set artCaptureEnabled(bool enabled) => _artCaptureEnabled = enabled;
+
+  @override
+  CameraHealth get health {
+    final controller = _controller;
+    final reference = _lastFrameAt ?? _streamingSince;
+    return CameraHealth(
+      initialized: controller?.value.isInitialized ?? false,
+      streaming: _streamingSince != null,
+      framesSeen: _framesSeen,
+      sinceLastFrame:
+          reference == null ? null : DateTime.now().difference(reference),
+      restarts: _restarts,
+    );
+  }
+
+  @override
   Future<void> start() => _enqueue(_start);
+
+  /// The device's camera list, resolved once per process.
+  ///
+  /// `availableCameras()` is a platform round-trip that enumerates and opens
+  /// characteristics for every camera, and the answer cannot change while the
+  /// app runs — but it was being paid on every scan-screen entry, every resume
+  /// from background, and every watchdog restart, in front of the already-slow
+  /// `initialize()`. The **resolved list** is cached rather than the future, so
+  /// a failure (no permission yet, camera service temporarily unavailable)
+  /// leaves this null and the next [start] genuinely retries instead of
+  /// replaying a cached error forever.
+  static List<CameraDescription>? _cachedCameras;
 
   Future<void> _start() async {
     if (_disposed || _controller != null) return;
-    final cameras = await availableCameras();
+    // No race: [_enqueue] serialises every start against every other start.
+    final cameras = _cachedCameras ??= await availableCameras();
     if (cameras.isEmpty) {
       throw CameraException('noCamera', 'No camera available on this device.');
     }
@@ -124,28 +286,53 @@ class CameraScanService implements CameraService {
       return;
     }
     _controller = controller;
+    // Publish immediately — before metering, before streaming. The preview is
+    // useful the moment the controller is initialized, and everything after
+    // this line is either best-effort or only matters once a card is held up to
+    // the lens. Metering used to sit in front of it, putting four awaited
+    // platform round-trips between `initialize()` and the first visible frame
+    // for no benefit: the picture does not depend on them.
+    _preview.value = controller;
     // Re-assert continuous auto focus/exposure on every fresh start. These are
     // the defaults, but some devices let autofocus/exposure settle on a stale
     // value under `startImageStream` and only recover on a full camera restart
-    // — the "recognition gets easier after re-opening Log Cards" symptom. Best
-    // effort: guarded because not every device/mode combination is supported.
+    // — the "recognition gets easier after re-opening Log Cards" symptom.
+    await _meter(controller);
+    await controller.startImageStream(_onFrame);
+    // …and meter again afterwards. Binding CameraX's image-analysis use case
+    // rebinds the camera, which cancels any focus-and-metering action already
+    // running — so a point set before the stream started may never take effect.
+    await _meter(controller);
+    _streamingSince = DateTime.now();
+    _lastFrameAt = null;
+    _startWatchdog();
+  }
+
+  /// Points focus and exposure at the centre of the frame, where the guide box
+  /// (and so the card) is. Left to its own devices the camera weights the whole
+  /// scene, so on a busy or bright desk it focuses and exposes for the surface
+  /// rather than the card — precisely when recognition struggles.
+  ///
+  /// Each call is guarded **individually**: these are four independent
+  /// best-effort settings, and one shared `try` meant a throw from the first
+  /// silently skipped the rest. Not hypothetical —
+  /// `camera_android_camerax` 0.7.4+1's changelog is a fix for `setFocusMode`
+  /// throwing when there are no auto-focus points, which on every affected
+  /// device would have taken the metering points down with it.
+  Future<void> _meter(CameraController controller) async {
+    await _tryCamera(() => controller.setFocusMode(FocusMode.auto));
+    await _tryCamera(() => controller.setExposureMode(ExposureMode.auto));
+    await _tryCamera(() => controller.setFocusPoint(_meteringPoint));
+    await _tryCamera(() => controller.setExposurePoint(_meteringPoint));
+  }
+
+  /// Runs a best-effort camera call, swallowing "unsupported on this device".
+  static Future<void> _tryCamera(Future<void> Function() op) async {
     try {
-      await controller.setFocusMode(FocusMode.auto);
-      await controller.setExposureMode(ExposureMode.auto);
-      // Meter on the centre of the frame, where the guide box (and so the
-      // card) is. Left to its own devices the camera weights the whole scene,
-      // so on a busy or bright desk it focuses and exposes for the surface
-      // rather than the card — which is precisely when recognition struggles.
-      await controller.setFocusPoint(_meteringPoint);
-      await controller.setExposurePoint(_meteringPoint);
+      await op();
     } catch (_) {
       // Unsupported on this device — fall back to the plugin's defaults.
     }
-    // Publish before streaming starts: the preview is useful the moment the
-    // controller is initialized, and frames only arrive once a card is held
-    // up to the lens.
-    _preview.value = controller;
-    await controller.startImageStream(_onFrame);
   }
 
   /// Where focus and exposure are metered, in normalized preview coordinates.
@@ -153,22 +340,109 @@ class CameraScanService implements CameraService {
   static const Offset _meteringPoint = Offset(0.5, 0.5);
 
   void _onFrame(CameraImage image) {
-    // Time-throttle: OCR is far slower than the camera's frame rate, and the
-    // human flipping cards is the real bottleneck (~1 card/sec).
+    // Record *arrival* first, unconditionally: this is what the watchdog judges,
+    // so it must reflect the camera rather than our own throttling or a
+    // conversion that fails below. (It used to sit after the throttle
+    // assignment, so a frame we dropped still consumed the throttle window.)
     final now = DateTime.now();
+    _framesSeen++;
+    _lastFrameAt = now;
+    // A delivered frame proves the camera is alive, so spend any restart backoff.
+    _restartBackoff = ScanTuning.cameraWatchdogInterval;
+
+    // Time-throttle: recognition is far slower than the camera's frame rate,
+    // and the human flipping cards is the real bottleneck (~1 card/sec).
     if (now.difference(_lastEmit) < ScanTuning.frameInterval) return;
-    _lastEmit = now;
 
     final rotation = _rotationDegrees(image);
     if (rotation == null) return;
 
-    // Cache the luma for the artwork-match fallback (defensive copy, so it
-    // survives the plugin recycling this frame's buffer).
-    final art = _toArtFrame(image, rotation);
-    if (art != null) _latestArtFrame = art;
+    // Conversion is the one thing here that can throw on an unexpected buffer
+    // layout (`lumaFromYPlane` indexes by `bytesPerRow`), and a throw inside a
+    // plugin callback takes the *rest* of this method with it — so a surprise in
+    // the art path would silently cost the OCR path its frame too. Convert both
+    // first, commit after.
+    ArtFrame? art;
+    InputImage? input;
+    try {
+      // Luma for the artwork path: a defensive copy, so it survives the plugin
+      // recycling this frame's buffer. Skipped entirely in passcode mode, where
+      // nothing reads it.
+      if (_artCaptureEnabled) art = _toArtFrame(image, rotation);
+      input = _toInputImage(image, rotation);
+    } catch (_) {
+      // A malformed frame is not fatal and not actionable: drop it *without*
+      // spending the throttle window, so the next frame is tried immediately
+      // rather than 300ms later.
+      return;
+    }
+    if (art == null && input == null) return;
 
-    final input = _toInputImage(image, rotation);
-    if (input != null && !_frames.isClosed) _frames.add(input);
+    // Only a frame we actually delivered consumes the throttle window.
+    _lastEmit = now;
+    if (art != null) _latestArtFrame = art;
+    if (input != null) {
+      _latestInputImage = input;
+      if (!_frames.isClosed) _frames.add(input);
+    }
+    // One sequence for both caches, so a poller can tell "new frame" from
+    // "same frame" regardless of which pipeline it drives.
+    _frameSequence++;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Watchdog.
+  // ---------------------------------------------------------------------------
+
+  /// Watches for the image stream dying and restarts the camera when it does.
+  ///
+  /// Purely a mitigation for `camera_android_camerax`, whose analyzer stops
+  /// delivering frames at random (flutter/flutter#152763) and whose preview can
+  /// black out under `startImageStream` (flutter/flutter#27688) — both of which
+  /// reach the user as "the camera is bugged" or a permanent
+  /// "no camera frame yet". Neither is fixable from Dart; noticing is.
+  ///
+  /// The restart goes through [_enqueue], so it can never interleave with a real
+  /// [start]/[stop] (the lifecycle observer's, say).
+  void _startWatchdog() {
+    _watchdog?.cancel();
+    _watchdog = Timer.periodic(ScanTuning.cameraWatchdogInterval, (_) {
+      final snapshot = health;
+      final since = snapshot.sinceLastFrame;
+      if (since == null) return;
+      if (!cameraFrameStalled(
+        sinceLastFrame: since,
+        initialized: snapshot.initialized,
+      )) {
+        return;
+      }
+      // Back off between attempts: a camera that is genuinely dead rather than
+      // merely stalled must not be restarted every two seconds forever, since
+      // each restart blinks the preview.
+      final last = _lastRestartAt;
+      if (last != null && DateTime.now().difference(last) < _restartBackoff) {
+        return;
+      }
+      _restart();
+    });
+  }
+
+  void _stopWatchdog() {
+    _watchdog?.cancel();
+    _watchdog = null;
+  }
+
+  void _restart() {
+    _lastRestartAt = DateTime.now();
+    _restarts++;
+    final doubled = _restartBackoff * 2;
+    _restartBackoff = doubled > ScanTuning.cameraRestartMaxBackoff
+        ? ScanTuning.cameraRestartMaxBackoff
+        : doubled;
+    // Deliberately not awaited: a timer callback must not block, and the queue
+    // serialises these against anything else start/stop.
+    _enqueue(_stop);
+    _enqueue(_start);
   }
 
   ArtFrame? _toArtFrame(CameraImage image, int rotationDegrees) {
@@ -191,6 +465,9 @@ class CameraScanService implements CameraService {
   Future<void> stop() => _enqueue(_stop);
 
   Future<void> _stop() async {
+    _stopWatchdog();
+    _streamingSince = null;
+    _lastFrameAt = null;
     final controller = _controller;
     _controller = null;
     // Retract the preview *before* disposing, so nothing can paint a disposed
@@ -230,16 +507,22 @@ class CameraScanService implements CameraService {
   };
 
   /// The clockwise rotation (degrees) needed to make [image] upright, per the
-  /// ML Kit + camera plugin recipe, or null if it can't be determined. Shared by
-  /// the OCR ([_toInputImage]) and artwork-match ([_toArtFrame]) paths.
+  /// ML Kit + camera plugin recipe. Null only when there is no controller (a
+  /// frame still in flight from a camera we have just released). Shared by the
+  /// OCR ([_toInputImage]) and artwork-match ([_toArtFrame]) paths.
+  ///
+  /// An unmapped `deviceOrientation` falls back to the bare sensor orientation
+  /// rather than dropping the frame: a dropped frame is invisible from the
+  /// outside and presents as a permanent "no card detected" / "no camera frame",
+  /// whereas the portrait compensation is 0 anyway on the orientation this app
+  /// is used in.
   int? _rotationDegrees(CameraImage image) {
     final controller = _controller;
     if (controller == null) return null;
     final camera = controller.description;
     final sensorOrientation = camera.sensorOrientation;
     if (Platform.isIOS) return sensorOrientation % 360;
-    final compensation = _orientations[controller.value.deviceOrientation];
-    if (compensation == null) return null;
+    final compensation = _orientations[controller.value.deviceOrientation] ?? 0;
     return camera.lensDirection == CameraLensDirection.front
         ? (sensorOrientation + compensation) % 360
         : (sensorOrientation - compensation + 360) % 360;

@@ -1,6 +1,7 @@
 import 'package:flutter/painting.dart' show Size;
 import 'package:riverpod_annotation/riverpod_annotation.dart';
 
+import '../../core/theme/tokens.dart';
 import '../settings/settings_providers.dart';
 import 'camera_service.dart';
 import 'passcode_ocr.dart';
@@ -90,6 +91,36 @@ bool scanDiagnosticsEnabled(Ref ref) =>
 bool scanHelpEnabled(Ref ref) =>
     ref.watch(settingsControllerProvider).value?.showScanHelp ?? true;
 
+/// Whether the artwork pipeline should stand still because a result is waiting
+/// on the user (a review, a candidate list, an unknown code, a camera error).
+///
+/// [ScanController] already ignores artwork readings in those states, but the
+/// detection and hashing still ran — tens of milliseconds of work per frame, on
+/// a worker isolate, for a reading that is thrown away. This lets `artReadings`
+/// skip it entirely.
+///
+/// Its own provider rather than a read of `scanControllerProvider`: the
+/// controller *listens* to `artReadings`, so reading the controller from there
+/// would be a dependency cycle. Same shape and same reason as
+/// [PasscodeOcrRequested].
+///
+/// `keepAlive` for exactly the reason [ScanViewportSize] documents, and this
+/// provider was the counter-example: writer ([ScanController]) and reader
+/// (`artReadings`) both use `ref.read`, which closes its subscription
+/// immediately and schedules disposal, and a later `state =` does not undo
+/// that. Measured before the fix — set `true`, read back one `artPollInterval`
+/// later, get `false` — so the pause was inert and every review panel was
+/// backed by a worker isolate still detecting and hashing. [PasscodeOcrRequested]
+/// survives as plain autoDispose only because `passcodeReadings` genuinely
+/// `ref.watch`es it.
+@Riverpod(keepAlive: true)
+class ScanPaused extends _$ScanPaused {
+  @override
+  bool build() => false;
+
+  void set({required bool paused}) => state = paused;
+}
+
 /// Whether the user has asked for the on-demand 8-digit passcode fallback.
 /// Artwork recognition is the automatic primary path; ML Kit OCR only runs
 /// while this is true, so the camera doesn't burn battery reading text unless
@@ -121,6 +152,17 @@ Future<CameraService> scanCamera(Ref ref) async {
 /// The stream of per-frame OCR readings for the fallback. Inert (never touches
 /// ML Kit) unless [passcodeOcrRequested] is true. Tests override this with a
 /// fake stream to drive the OCR branch of [ScanController] without a camera.
+///
+/// **Self-paced**, for the same reason `artReadings` is: this used to
+/// `await for` over `camera.frames` with an awaited ML Kit read in the body. A
+/// broadcast controller buffers for a paused subscriber, and an `await for` is
+/// paused while its body awaits — so any read slower than
+/// [ScanTuning.frameInterval] (likely at 720p on mid-range hardware) grew an
+/// unbounded backlog, and the agreement / empty-frame counters then ran over
+/// frames from seconds ago. Polling the newest cached frame instead means a slow
+/// read skips frames rather than falling behind, and comparing
+/// [CameraService.frameSequence] is what stops one physical frame being read
+/// twice and satisfying the agreement gate on its own.
 @riverpod
 Stream<PasscodeReading> passcodeReadings(Ref ref) async* {
   if (!ref.watch(passcodeOcrRequestedProvider)) return;
@@ -128,9 +170,24 @@ Stream<PasscodeReading> passcodeReadings(Ref ref) async* {
   final camera = await ref.watch(scanCameraProvider.future);
   final ocr = ref.watch(passcodeOcrProvider);
 
+  // An explicit flag, not just a `yield`-point check: an iteration that
+  // `continue`s never reaches the `yield` where cancellation would be observed.
+  var disposed = false;
+  ref.onDispose(() => disposed = true);
+
   var sequence = 0;
-  await for (final image in camera.frames) {
+  var lastFrame = -1;
+  while (!disposed) {
+    await Future<void>.delayed(ScanTuning.artPollInterval);
+    if (disposed) return;
+    final frame = camera.frameSequence;
+    if (frame == lastFrame) continue;
+    final image = camera.latestInputImage;
+    if (image == null) continue;
+    lastFrame = frame;
+
     final passcode = await ocr.read(image);
+    if (disposed) return;
     yield PasscodeReading(sequence++, passcode);
   }
 }

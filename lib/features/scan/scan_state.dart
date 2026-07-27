@@ -58,6 +58,7 @@ class ScanState {
     this.agreementBuffer = const [],
     this.artAgreementBuffer = const [],
     this.matchedCard,
+    this.matchedIndexPasscode,
     this.unknownPasscode,
     this.candidates = const [],
     this.condition = CardCondition.nearMint,
@@ -67,6 +68,7 @@ class ScanState {
     this.quantity = 1,
     this.emptyFrameCount = 0,
     this.lastConfirmedPasscode,
+    this.dismissCooldown = 0,
     this.error,
   });
 
@@ -85,6 +87,21 @@ class ScanState {
 
   /// The card shown for review in [ScanStatus.matched].
   final YgoCard? matchedCard;
+
+  /// The **index** passcode the artwork match resolved through, when it came
+  /// from artwork rather than OCR.
+  ///
+  /// It exists because the two namespaces genuinely differ. `assets/
+  /// card_hashes.json` keys every `card_images[i].id` (14.6k entries, alt-arts
+  /// included), while the app DB stores only `card_images[0]` — and
+  /// `PHashArtMatcher.match` skips index passcodes the `cards` table doesn't
+  /// hold. So whenever the nearest hash is an alt-art id, the resolved card's
+  /// passcode is *not* the passcode arriving on the next frame's reading, and a
+  /// debounce comparing them never fires: the review panel re-opened on the card
+  /// just logged, which is the exact failure the debounce exists to prevent.
+  /// [ScanController] suppresses on this when set, falling back to the card's
+  /// own passcode for the OCR path, where the two are the same value.
+  final String? matchedIndexPasscode;
 
   /// The unmatched passcode shown in [ScanStatus.unknown].
   final String? unknownPasscode;
@@ -114,9 +131,21 @@ class ScanState {
   /// left view — drives the post-confirm debounce.
   final int emptyFrameCount;
 
-  /// The passcode most recently confirmed (or dismissed); rejected on re-read
-  /// until the frame goes empty for [ScanTuning.debounceEmptyFrames].
+  /// The passcode most recently confirmed or dismissed; rejected on re-read
+  /// until whichever of the two debounces [dismissCooldown] selects has expired.
   final String? lastConfirmedPasscode;
+
+  /// Readings still to elapse before a **dismissed** [lastConfirmedPasscode]
+  /// becomes eligible again. Zero means the suppression came from a *confirm*
+  /// instead, which clears only after [ScanTuning.debounceEmptyFrames] empty
+  /// frames — i.e. once the card has actually left the lens.
+  ///
+  /// The two rules differ because the situations do. A confirm wrote a row, so
+  /// the card must leave before it can write another. A dismiss wrote nothing
+  /// and the user is still scanning, so this counts down on *every* reading —
+  /// including ones that match the dismissed card — and the card can be picked
+  /// up again without moving it.
+  final int dismissCooldown;
 
   /// The camera error behind [ScanStatus.error].
   final Object? error;
@@ -128,6 +157,7 @@ class ScanState {
     List<String>? artAgreementBuffer,
     YgoCard? matchedCard,
     bool clearMatchedCard = false,
+    String? matchedIndexPasscode,
     String? unknownPasscode,
     bool clearUnknownPasscode = false,
     List<ArtCandidate>? candidates,
@@ -141,7 +171,9 @@ class ScanState {
     int? emptyFrameCount,
     String? lastConfirmedPasscode,
     bool clearLastConfirmedPasscode = false,
+    int? dismissCooldown,
     Object? error,
+    bool clearError = false,
   }) {
     return ScanState(
       status: status ?? this.status,
@@ -149,6 +181,11 @@ class ScanState {
       agreementBuffer: agreementBuffer ?? this.agreementBuffer,
       artAgreementBuffer: artAgreementBuffer ?? this.artAgreementBuffer,
       matchedCard: clearMatchedCard ? null : (matchedCard ?? this.matchedCard),
+      // Cleared with the card it qualifies: they describe one match, and a
+      // leftover index passcode would debounce the *next* card.
+      matchedIndexPasscode: clearMatchedCard
+          ? null
+          : (matchedIndexPasscode ?? this.matchedIndexPasscode),
       unknownPasscode: clearUnknownPasscode
           ? null
           : (unknownPasscode ?? this.unknownPasscode),
@@ -163,7 +200,14 @@ class ScanState {
       lastConfirmedPasscode: clearLastConfirmedPasscode
           ? null
           : (lastConfirmedPasscode ?? this.lastConfirmedPasscode),
-      error: error ?? this.error,
+      // Cleared alongside the passcode it qualifies, so the two can never
+      // disagree about why (or whether) a card is suppressed.
+      dismissCooldown: clearLastConfirmedPasscode
+          ? 0
+          : (dismissCooldown ?? this.dismissCooldown),
+      // `error ?? this.error` alone makes an error write-once-sticky, so every
+      // later transition drags it along and only a full reset can drop it.
+      error: clearError ? null : (error ?? this.error),
     );
   }
 }

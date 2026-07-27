@@ -28,8 +28,16 @@ abstract class Printing with _$Printing {
   /// The single place a printing is formatted for display, shared by the scan
   /// review gate's set picker and the collection edit sheet. Empty when the row
   /// carries none of the three (callers substitute their own "no set" label).
+  ///
+  /// Includes the rarity because [filterPrintings] searches this string — a
+  /// user narrowing the picker types "raiders super". Where rarity is shown as
+  /// a field of its own, use [setLabel] instead.
   String get displayLabel =>
       [setCode, setName, rarity].whereType<String>().join(' · ');
+
+  /// "SET-CODE · Set Name" — [displayLabel] without the rarity, for screens
+  /// that give rarity a row of its own rather than trailing it onto the set.
+  String get setLabel => [setCode, setName].whereType<String>().join(' · ');
 
   Map<String, Object?> toMap() => {
     'passcode': passcode,

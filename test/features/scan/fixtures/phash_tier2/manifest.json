@@ -1,23 +1,29 @@
 {
-  "hash_size": 8,
+  "hash_size": 16,
+  "roi": [
+    0.1181,
+    0.1814,
+    0.8831,
+    0.7063
+  ],
   "samples": [
     {
       "passcode": "46986414",
-      "width": 624,
-      "height": 624,
-      "expectedHash": "f884065a9fcb6966"
+      "width": 622,
+      "height": 622,
+      "expectedHash": "f81c843c06ec5af39fbbcba169406617998613da650f9b099c3c99bce927669c"
     },
     {
       "passcode": "89631139",
-      "width": 624,
-      "height": 624,
-      "expectedHash": "80d75b0e78616cf9"
+      "width": 622,
+      "height": 622,
+      "expectedHash": "80c7d7be5be00e05781f60fb6c6c39d863e367870ccccd0d86bcc8359987919e"
     },
     {
       "passcode": "5318639",
-      "width": 624,
-      "height": 624,
-      "expectedHash": "8bc6d509ca3dd1b2"
+      "width": 622,
+      "height": 622,
+      "expectedHash": "8bf7c6f8d582095fca703daad14eb2b4c4f17854ed9e301ab7aab1a66480b2d1"
     }
   ]
 }

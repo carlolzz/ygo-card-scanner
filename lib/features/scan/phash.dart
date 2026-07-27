@@ -4,25 +4,34 @@ import 'dart:typed_data';
 import 'hamming.dart';
 
 /// Perceptual-hash computation that reproduces Python
-/// `imagehash.phash(img, hash_size=8, highfreq_factor=4)` — the algorithm
+/// `imagehash.phash(img, hash_size=16, highfreq_factor=4)` — the algorithm
 /// `tools/build_hash_index.py` used to build `assets/card_hashes.json`.
 ///
 /// imagehash does, in order:
-///   1. grayscale (`convert('L')`) and resize to 32x32 (`hash_size*4`) LANCZOS,
+///   1. grayscale (`convert('L')`) and resize to 64x64 (`hash_size*4`) LANCZOS,
 ///   2. 2D DCT-II: `dct(dct(pixels, axis=0), axis=1)`,
-///   3. keep the top-left 8x8 low-frequency block (DC included),
+///   3. keep the top-left 16x16 low-frequency block (DC included),
 ///   4. threshold each cell strictly against the block's median,
-///   5. pack the 64 booleans row-major, first element = most-significant bit,
-///      into a 16-hex-char string.
+///   5. pack the 256 booleans row-major, first element = most-significant bit,
+///      into a 64-hex-char string.
 ///
 /// Steps 2–5 are exact, deterministic arithmetic and are reproduced here bit for
 /// bit (see `phash_test.dart` Tier 1, which asserts distance 0 against the index
-/// on the identical 32x32 pixels). Step 1's LANCZOS resize is *not* reproducible
-/// in pure Dart; [phashFromLuma] uses an area-average resize, whose small
-/// residual gap is measured by `phash_e2e_test.dart` (Tier 2) and absorbed by
-/// the top-N + threshold ranking in `ArtMatcher`.
-const int kPhashHashSize = 8;
-const int kPhashImgSize = kPhashHashSize * 4; // 32
+/// on identical pixels). Step 1's LANCZOS resize is *not* reproducible in pure
+/// Dart; [phashFromLuma] uses an area-average resize, whose small residual gap
+/// is measured by `phash_e2e_test.dart` (Tier 2) and absorbed by the top-N +
+/// threshold ranking in `ArtMatcher`.
+///
+/// **Why 16 and not 8.** At 64 bits the descriptor could not separate 14.6k
+/// cards: measured over the shipped index, *every* card had another within
+/// Hamming 18 (28% of the width, the runtime's own gate), and 41 hash values
+/// were shared outright by 82 cards. At 256 bits over the same ROI the same
+/// fraction of the width leaves only ~1.4% of cards with any neighbour at all.
+/// The cost is 8x the DCT multiply-adds (10k -> 82k, single-digit milliseconds
+/// against a 300ms frame cadence) and a ~1.2MB asset.
+const int kPhashHashSize = 16;
+const int kPhashImgSize = kPhashHashSize * 4; // 64
+const int kPhashBitCount = kPhashHashSize * kPhashHashSize; // 256
 
 /// `_cos[k][n] = cos(pi * k * (2n+1) / (2*imgSize))` for a DCT-II of length
 /// `imgSize`, restricted to the `k in 0..hashSize-1` outputs we keep.
@@ -38,20 +47,20 @@ List<Float64List> _buildCosTable() {
   return table;
 }
 
-/// Computes the pHash of an already-resized 32x32 grayscale block.
+/// Computes the pHash of an already-resized `kPhashImgSize` square grayscale block.
 ///
-/// [pixels] is row-major, length `imgSize*imgSize` (1024), values 0..255. This
+/// [pixels] is row-major, length `imgSize*imgSize` (4096), values 0..255. This
 /// is the exact-arithmetic entry point: given the same pixels PIL produced, the
 /// result equals the `imagehash` hash bit for bit.
-PerceptualHash phashFrom32x32(Uint8List pixels) {
+PerceptualHash phashFromBlock(Uint8List pixels) {
   assert(pixels.length == kPhashImgSize * kPhashImgSize);
 
   // Separable 2D DCT-II, mirroring scipy's `dct(dct(P, axis=0), axis=1)` but
-  // computing only the k,j in 0..7 outputs the 8x8 slice needs. The constant
-  // scipy scale factor (2 per axis) is uniform and irrelevant to a median
-  // comparison, so it is omitted.
+  // computing only the `k,j in 0..hashSize-1` outputs the low-frequency slice
+  // needs. The constant scipy scale factor (2 per axis) is uniform and
+  // irrelevant to a median comparison, so it is omitted.
   //
-  // axis=0 (over rows r), keeping frequencies k in 0..7:
+  // axis=0 (over rows r), keeping frequencies k in 0..hashSize-1:
   //   t[k][c] = sum_r P[r][c] * cos[k][r]
   final t = List.generate(kPhashHashSize, (_) => Float64List(kPhashImgSize));
   for (var k = 0; k < kPhashHashSize; k++) {
@@ -66,9 +75,9 @@ PerceptualHash phashFrom32x32(Uint8List pixels) {
     }
   }
 
-  // axis=1 (over cols c), keeping frequencies j in 0..7:
+  // axis=1 (over cols c), keeping frequencies j in 0..hashSize-1:
   //   b[k][j] = sum_c t[k][c] * cos[j][c]
-  final b = Float64List(kPhashHashSize * kPhashHashSize);
+  final b = Float64List(kPhashBitCount);
   for (var k = 0; k < kPhashHashSize; k++) {
     final tk = t[k];
     for (var j = 0; j < kPhashHashSize; j++) {
@@ -81,33 +90,37 @@ PerceptualHash phashFrom32x32(Uint8List pixels) {
     }
   }
 
-  final med = _median64(b);
+  final med = _medianBlock(b);
 
-  // Pack row-major, first cell = MSB (bit 63). Bits 63..32 -> hi, 31..0 -> lo.
-  var hi = 0;
-  var lo = 0;
-  for (var i = 0; i < 64; i++) {
-    if (b[i] > med) {
-      if (i < 32) {
-        hi |= 1 << (31 - i);
-      } else {
-        lo |= 1 << (63 - i);
-      }
+  // Pack row-major, first cell = the MSB of lane 0 — the same convention as
+  // imagehash's `_binary_array_to_hex` over a row-major flatten.
+  //
+  // Built by shifting *in* (`v * 2 + bit`) rather than or-ing `1 << (31 - i)`:
+  // under dart2js a `1 << 31` and the `|` that follows go through JS's signed
+  // 32-bit bitwise ops, while this form never leaves double-exact range.
+  final lanes = Uint32List(PerceptualHash.laneCount);
+  for (var lane = 0; lane < PerceptualHash.laneCount; lane++) {
+    final base = lane * 32;
+    var value = 0;
+    for (var bit = 0; bit < 32; bit++) {
+      value = value * 2 + (b[base + bit] > med ? 1 : 0);
     }
+    lanes[lane] = value;
   }
-  return PerceptualHash(hi, lo);
+  return PerceptualHash(lanes);
 }
 
-/// Median of 64 values, matching `numpy.median` (mean of the two middle
-/// elements of the sorted values).
-double _median64(Float64List values) {
-  assert(values.length == 64);
+/// Median of the DCT block, matching `numpy.median` (mean of the two middle
+/// elements of the sorted values, the block being even-length).
+double _medianBlock(Float64List values) {
+  assert(values.length == kPhashBitCount);
   final sorted = Float64List.fromList(values)..sort();
-  return (sorted[31] + sorted[32]) / 2.0;
+  final mid = kPhashBitCount ~/ 2;
+  return (sorted[mid - 1] + sorted[mid]) / 2.0;
 }
 
 /// Computes the pHash of a grayscale luma buffer, cropping an optional region
-/// and area-averaging it down to 32x32 first.
+/// and area-averaging it down to a `kPhashImgSize` square first.
 ///
 /// [luma] is row-major, length `width*height`, one byte per pixel (0..255) —
 /// e.g. an Android nv21 Y plane or an iOS BGRA frame converted to luma. [crop]
@@ -121,8 +134,8 @@ PerceptualHash phashFromLuma(
   PixelRect? crop,
 }) {
   final region = crop ?? PixelRect(0, 0, width, height);
-  final resized = _areaResizeTo32(luma, width, height, region);
-  return phashFrom32x32(resized);
+  final resized = _areaResizeToBlock(luma, width, height, region);
+  return phashFromBlock(resized);
 }
 
 /// A rectangle in source-pixel coordinates.
@@ -134,11 +147,11 @@ class PixelRect {
   final int height;
 }
 
-/// Area-average downscale of [region] within [luma] to a 32x32 block. Each
+/// Area-average downscale of [region] within [luma] to a `kPhashImgSize` square. Each
 /// destination cell is the coverage-weighted mean of the source pixels it
 /// overlaps — the standard "box" antialiased downscale, a close-enough stand-in
 /// for PIL's LANCZOS for perceptual hashing (the residual is measured by Tier 2).
-Uint8List _areaResizeTo32(
+Uint8List _areaResizeToBlock(
   Uint8List luma,
   int width,
   int height,

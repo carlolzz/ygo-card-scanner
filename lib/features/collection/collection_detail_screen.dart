@@ -107,11 +107,15 @@ class _CollectionDetailScreenState
               ),
             if (card.race != null)
               _DetailRow(
-                // For Spell/Trap, `race` is the card's property, not a monster
-                // type — labelled accordingly.
-                label: card.isSpellOrTrap
-                    ? AppStrings.collectionCardPropertyLabel
-                    : AppStrings.collectionCardRaceLabel,
+                // For Spell/Trap, `race` is the card's own kind, not a monster
+                // type — and naming the frame ("Spell Type"/"Trap Type") is
+                // what players call it, so it beats a generic "Property".
+                label: switch (card) {
+                  _ when card.isSpell =>
+                    AppStrings.collectionCardSpellTypeLabel,
+                  _ when card.isTrap => AppStrings.collectionCardTrapTypeLabel,
+                  _ => AppStrings.collectionCardRaceLabel,
+                },
                 value: card.race!,
               ),
             if (card.level != null)
@@ -129,10 +133,18 @@ class _CollectionDetailScreenState
                 label: AppStrings.collectionCardArchetypeLabel,
                 value: card.archetype!,
               ),
+            // Set and rarity are separate rows: `displayLabel` trails the
+            // rarity onto the set code for the pickers (which search over it),
+            // but here rarity is a field in its own right.
             if (widget.entryWithCard.printing != null)
               _DetailRow(
                 label: AppStrings.collectionSetLabel,
-                value: widget.entryWithCard.printing!.displayLabel,
+                value: widget.entryWithCard.printing!.setLabel,
+              ),
+            if (widget.entryWithCard.printing?.rarity != null)
+              _DetailRow(
+                label: AppStrings.collectionRarityLabel,
+                value: widget.entryWithCard.printing!.rarity!,
               ),
             _DetailRow(
               label: AppStrings.collectionEditionLabel,
@@ -209,6 +221,8 @@ class _CollectionDetailScreenState
       final repository = await ref.read(collectionRepositoryProvider.future);
       await repository.decrement(id);
       ref.invalidate(collectionEntriesProvider);
+      // The last copy takes the row with it, so a rarity may no longer be held.
+      ref.invalidate(collectionRarityOptionsProvider);
       if (mounted) Navigator.of(context).pop();
       return;
     }
@@ -223,6 +237,7 @@ class _CollectionDetailScreenState
     final repository = await ref.read(collectionRepositoryProvider.future);
     await repository.delete(id);
     ref.invalidate(collectionEntriesProvider);
+    ref.invalidate(collectionRarityOptionsProvider);
     if (mounted) Navigator.of(context).pop();
   }
 
@@ -238,6 +253,9 @@ class _CollectionDetailScreenState
     );
     if (result == null || !mounted) return;
     ref.invalidate(collectionEntriesProvider);
+    // The edit can move the entry to a different printing, i.e. a different
+    // rarity — the one non-delete path that changes the filter row's options.
+    ref.invalidate(collectionRarityOptionsProvider);
     ref.invalidate(entriesForPasscodeProvider(widget.entryWithCard.entry.passcode));
     final messenger = ScaffoldMessenger.of(context);
     Navigator.of(context).pop();

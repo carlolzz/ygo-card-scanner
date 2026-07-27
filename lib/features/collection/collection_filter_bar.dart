@@ -5,11 +5,10 @@ import '../../core/constants.dart';
 import '../../core/theme/tokens.dart';
 import '../../data/db/dao/collection_dao.dart';
 import '../../models/card_condition.dart';
-import '../../models/card_edition.dart';
 import '../../shared/widgets/labeled_choice_chip.dart';
 import 'collection_providers.dart';
 
-/// Search field + condition/edition filter chips + sort control, all backed
+/// Search field + condition/rarity filter chips + sort control, all backed
 /// by [CollectionFilterController]. `cardType` isn't exposed here — there's
 /// no DAO method to enumerate distinct types, and it isn't essential for a
 /// first pass.
@@ -80,18 +79,19 @@ class CollectionFilterBar extends ConsumerWidget {
               children: [
                 LabeledChoiceChip(
                   label: AppStrings.collectionFilterAll,
-                  selected: filter.edition == null,
+                  selected: filter.rarity == null,
                   selectedColor: palette.accent,
-                  onSelected: () => controller.setEdition(null),
+                  onSelected: () => controller.setRarity(null),
                 ),
-                for (final edition in CardEdition.values) ...[
+                // Only the rarities actually held, so no chip is ever dead.
+                // `.value`, not `when`: an unresolved (or refetching) load
+                // leaves the bar's height alone instead of flashing a spinner,
+                // the same reading the scan review gate's set picker uses.
+                for (final rarity
+                    in ref.watch(collectionRarityOptionsProvider).value ??
+                        const <String?>[]) ...[
                   const SizedBox(width: AppSpacing.xs),
-                  LabeledChoiceChip(
-                    label: edition.label,
-                    selected: filter.edition == edition,
-                    selectedColor: palette.accent,
-                    onSelected: () => controller.setEdition(edition),
-                  ),
+                  _RarityChip(rarity: rarity, selected: filter.rarity),
                 ],
                 const SizedBox(width: AppSpacing.md),
                 DropdownButton<CollectionSortBy>(
@@ -122,6 +122,35 @@ class CollectionFilterBar extends ConsumerWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+/// One chip in the rarity filter row. Its own widget so the [RarityFilter] it
+/// stands for is built once and used for both the selected test and the tap —
+/// [rarity] being nullable (null = "no rarity") makes that easy to get subtly
+/// wrong inline.
+class _RarityChip extends ConsumerWidget {
+  const _RarityChip({required this.rarity, required this.selected});
+
+  /// The rarity this chip filters on, or null for "no rarity".
+  final String? rarity;
+
+  /// The filter row's current selection, or null when it is on "All".
+  final RarityFilter? selected;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final value = rarity == null
+        ? const RarityFilter.noRarity()
+        : RarityFilter.value(rarity!);
+    return LabeledChoiceChip(
+      label: rarity ?? AppStrings.collectionFilterNoRarity,
+      selected: selected == value,
+      selectedColor: AppPalette.of(context).accent,
+      onSelected: () => ref
+          .read(collectionFilterControllerProvider.notifier)
+          .setRarity(value),
     );
   }
 }

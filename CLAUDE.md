@@ -252,7 +252,9 @@ order):
    `assets/card_hashes.json` ← done (host-side Python build tool, not shipped
    in the app). Single bulk `cardinfo.php` fetch (same endpoint as
    `lib/data/api/ygoprodeck_client.dart`), then computes
-   `imagehash.phash(hash_size=8)` → 16-hex-char string.
+   `imagehash.phash(hash_size=8)` → 16-hex-char string. (**Step 16 moved this to
+   `hash_size=16` → 64-hex-char, 256-bit hashes, and re-measured `ART_BOX_ROI`;
+   the shipped index is v3.**)
    **The shipped index is v2**: it downloads each artwork's **full** image
    (`image_url`) and hashes the `ART_BOX_ROI` crop of it — the same fractional
    window of a canonical upright card that the runtime crops
@@ -375,7 +377,12 @@ order):
    camera+index+repo; **the single provider controller-transition tests
    override** with a fake). **State machine**: two new `ScanStatus` — `matching`
    (hashing, camera frozen) and `candidates` (awaiting a pick), both added to the
-   freeze guard; `ScanController.matchByArtwork()` (re-checks status after the
+   freeze guard. (**Doc drift, corrected in step 16**: the artwork-first pivot
+   later removed `matching`; the current enum is
+   `detecting/reading/matched/unknown/readingCode/candidates/confirmed/error`, and
+   `scan_controller.dart`'s freeze guard — not this paragraph — is the source of
+   truth for which of them freeze the pipeline.)
+   `ScanController.matchByArtwork()` (re-checks status after the
    await like `_lookup`; empty result → `unknown`/search-by-name),
    `selectCandidate()` (→ `matched` with defaults reset), `dismiss()` clears
    candidates. **Trigger is user-initiated, NOT `ocrFailureStreak`**: that streak
@@ -776,6 +783,374 @@ order):
     loosened to absorb the sleeve drift this step removes, so **being unable to
     tighten them back toward 10/14 on device is evidence the art-box correction
     isn't landing**.
+
+14. Fourth on-device feedback pass — collection tile/detail polish, rarity
+    filter, camera reliability ← done (verified: `flutter analyze` clean + full
+    `flutter test` green, 291 tests). **No DB migration, no schema change, no
+    new dependency.**
+    **Collection list tile, shorter and re-worded** (`collection_list_tile.dart`):
+    the row lost ~19pt off the top and ~19pt off the bottom. Padding alone
+    couldn't do it — the row's height is set by the tallest child, which is the
+    three-button action column — so it took both a new
+    `CollectionTileTokens.verticalPadding` (16 → 6) and `actionButtonSize`
+    30 (was 36, icons 22 → 20): `2*16 + 3*36 = 140` became `2*6 + 3*30 = 102`.
+    The secondary line became **two** lines, set code then rarity, each omitted
+    when absent; the **edition is gone from the list** (it stays on the detail
+    screen) because rarity is what the eye looks for across reprints. Even with
+    a wrapped 2-line name the block is ~88pt, inside the 90pt action column, so
+    the third line costs the row nothing. The artwork is 5% larger via its own
+    `CardThumbnailSizes.collectionTile` (`list * 1.05`) rather than a bump to
+    `list` — the scan review/candidate panels keep the smaller size, and this
+    one was flagged as possibly-revert.
+    **Detail screen**: `YgoCard` gained `isSpell`/`isTrap` (`isSpellOrTrap` is
+    now their disjunction, so existing call sites are untouched) and the `race`
+    row is labelled **"Spell Type"/"Trap Type"/"Monster Type"** — step 11's
+    generic "Property" is gone. Rarity moved out of the Set row into a row of
+    its own, backed by a new `Printing.setLabel` ("SET-CODE · Set Name");
+    `displayLabel` keeps the rarity because `filterPrintings` searches it.
+    **Rarity filter replaces the edition filter** — `CollectionFilter.edition`
+    is **removed** (nothing else read it; the CSV exporter and statistics use
+    `const CollectionFilter()`) and replaced by `RarityFilter?`, a small value
+    type with two constructors: `.value(rarity)` and `.noRarity()`. The second
+    is load-bearing: a card logged without a printing carries no rarity and
+    could otherwise only be reached under "All". Its predicate is
+    `p.rarity IS NULL` over `getAll`'s existing LEFT JOIN, which is *also* what
+    the new `CollectionDao.rarityFilterOptions()` reports as a null element — so
+    the chips and the filter agree by construction and no chip is ever dead.
+    The chip row offers only rarities actually held. **Gotcha, and the one real
+    design constraint here**: `collectionRarityOptions` must **not** watch
+    `collectionEntriesProvider`, even though it is a projection of the same
+    rows — chaining one async provider onto another that is invalidated mid
+    route-transition makes Riverpod schedule a scope refresh from inside a build
+    ("setState() called during build", reproduced by
+    `collection_screen_test`'s detail-increment case). Instead the mutation
+    sites invalidate it explicitly alongside `collectionEntriesProvider`, and
+    only those that can change *which printings are held* (add/edit/delete, plus
+    re-sync) — a plain quantity change cannot.
+    **Camera reliability.** Two reports drove this: the diagnostics overlay
+    reading `no camera frame yet` while pointed at a card, and a preview that
+    sometimes stayed black after installing a new APK.
+    - **The message was lying.** `no camera frame yet` was shown for four
+      different situations, only one literal: the reading stream still
+      `AsyncLoading`, the camera released (backgrounded), passcode mode (where
+      `artReadings` never yields), and an actual missing frame. There is now a
+      `CameraHealth` snapshot on `CameraService` and a pure, host-tested
+      `describeCameraHealth` rendering `cam: streaming  f=124  Δ=180ms  r=1`
+      above the recognition lines. `_DiagnosticsBox` became stateful for a
+      500 ms ticker, which is load-bearing: a stalled camera stops `artReadings`
+      emitting, so a box that only rebuilt on a reading would freeze exactly
+      when the camera state is what you need.
+    - **A frame-stall watchdog.** The Android implementation resolved for
+      `camera: ^0.12.0` is **`camera_android_camerax`** (CameraX, not Camera2 —
+      `camera_android` is not in the lockfile), whose image stream is known to
+      stop delivering frames at random (flutter/flutter#152763, an NPE in
+      `ImageProxyHostApiImpl.close()` halting the analyzer) and whose preview
+      can black out under `startImageStream` (flutter/flutter#27688, "worse as
+      resolution increases"). Neither is fixable from Dart. `CameraScanService`
+      now records frame **arrival** (unconditionally, at the top of `_onFrame`,
+      before the throttle — which also fixes a dropped frame consuming the
+      throttle window) and a `Timer.periodic` restarts the camera through the
+      existing `_enqueue` chain when `cameraFrameStalled` (pure, tested) says
+      so, with a doubling backoff to `cameraRestartMaxBackoff`.
+    - **The metering fix.** `_start()` wrapped four independent best-effort
+      calls in **one** `try`, so a throw from `setFocusMode` silently skipped
+      `setExposureMode`/`setFocusPoint`/`setExposurePoint` — and
+      `camera_android_camerax` 0.7.4+1's changelog is a fix for exactly that
+      throw. Each call is now guarded individually, and the metering points are
+      re-applied **after** `startImageStream`, since binding CameraX's
+      image-analysis use case rebinds the camera and cancels a pending
+      focus-and-metering action. Step 11's centre-metering may never have taken
+      effect on device before this.
+    - `_rotationDegrees` no longer returns null for an unmapped
+      `deviceOrientation`; it falls back to the bare sensor orientation. A
+      dropped frame is invisible from outside and presents as a permanent "no
+      card detected".
+    **Detection runs on a worker isolate** (`detector_isolate.dart`,
+    `IsolateCardDetector`) — the plan's one genuinely risky change, and the
+    biggest lever on the black preview: an edge map, contour pass, warp and
+    art-box pass, three times a second, on the UI isolate is enough to stop
+    Flutter painting, and a preview that stops repainting is indistinguishable
+    from a dead camera. It works because nothing crosses the port but plain
+    data (`ArtFrame`/`DetectedCard` hold no `Mat`, no native handle; luma travels
+    as `TransferableTypedData`), and because dartcv4's bindings are lazily
+    initialised top-level `final`s so the worker `dlopen`s the already-loaded
+    library once — hence **one long-lived worker**, not `Isolate.run` per frame.
+    It degrades rather than fails: a spawn failure or handshake timeout falls
+    back to in-process `OpenCvCardDetector`. `CardDetector.detectCard` and
+    `ArtMatcher.rankFrame` are now `Future`s; the OpenCV body moved to a
+    top-level `detectCardSync`. **Only verifiable on device** — host tests can't
+    load OpenCV.
+    **`artReadings` is now self-paced**, polling `CameraService.frameSequence`
+    every `ScanTuning.artPollInterval` (100 ms) instead of `await for`-ing
+    `camera.frames`. With an awaited rank inside the loop that subscription was
+    a hazard: a broadcast `StreamController` **buffers for a paused subscriber**,
+    so a detection pass outrunning `frameInterval` would grow an unbounded
+    backlog and the outline would drift further behind reality the longer
+    scanning went. Polling always works on the newest cached frame, and
+    comparing the sequence is what stops one physical frame being ranked twice
+    (which would let it satisfy `artAgreementFrames` on its own). The loop needs
+    an explicit `disposed` flag from `ref.onDispose`, because an iteration that
+    `continue`s never reaches the `yield` where cancellation would be observed.
+    A new `scanPaused` provider (written by `ScanController` where it already
+    writes `passcodeOcrRequested`) skips the work entirely while a result awaits
+    the user — a separate provider, not a read of `scanControllerProvider`,
+    since the controller *listens* to `artReadings` and that would be a cycle.
+    **The 14 636-entry index parse moved off the UI isolate** via `compute`
+    (`rootBundle.load` → bytes → `utf8.decode`+`jsonDecode`+`HashIndex.fromJson`
+    in the isolate). It used to land at exactly the wrong moment — the scan
+    screen opening, while the camera initialises.
+    **ROI**: `ScanDetectionTokens.reticleRoiMargin` 0.15 → **0.08**, for two
+    reasons that point the same way. The margin inflates area by `(1 + 2m)^2`,
+    so 0.15 made the search region **1.69x** the reticle: it re-admitted the
+    desk into the Otsu split that sets Canny's thresholds (the very thing
+    cropping to the guide box exists to prevent), and left a card perfectly
+    filling the reticle at 0.59 of the region — below
+    `CardDetectionTuning.targetRoiAreaFraction` (0.75), so a well-framed card
+    could never earn a full fill score. At 0.08 the region is 1.35x and a filled
+    reticle is 0.74 of it, making that existing target correct as written.
+    `PHashArtMatcher._rank` also **retries once over the whole frame** when the
+    guide-box pass finds nothing: the reticle-to-frame mapping is the one thing
+    here that can be wrong with no visible symptom, and this turns "detection
+    never works on this device" into a slower path, at zero cost on frames that
+    already succeed. And a diagnostics-only `_SearchRoiOverlay` draws the round
+    trip (reticle → frame fractions → back to the viewport), so the mapping is
+    checkable on a real device, which no host test can do.
+    **Still open**: `autoMatchMaxDistance`/`maxHammingDistance` are still 13/18
+    and `ScanTuning.frameInterval` is still 300 ms. The new `cam:` and
+    `art box:` lines are the evidence needed to decide whether the step-13
+    art-box correction is landing and whether those can be tightened toward
+    10/14 — next pass's question. Also still open: step 13's follow-up of
+    measuring the true art-box rect across `tools/.image_cache/full/`.
+
+15. Fifth on-device feedback pass — dismissed cards re-detectable, surface hint,
+    scan-open latency ← done (verified: `flutter analyze` clean + full
+    `flutter test` green, 299 tests). **No DB migration, no schema change, no
+    new dependency.** Nothing here touches the detection algorithm, the tuning
+    thresholds or `assets/card_hashes.json`.
+    **A dismissed card could never be re-detected while it stayed in frame** —
+    the report was "if the camera identifies a card and I decide not to log it,
+    it's much harder to identify again", and it was literally unbounded.
+    `dismiss()` reused the **post-confirm** debounce (`lastConfirmedPasscode` +
+    `ScanTuning.debounceEmptyFrames`), which only advances on frames with *no*
+    confident match — but the dismissed card sitting in the reticle matched
+    every frame and took the suppression branch, which resets `emptyFrameCount`
+    to **0**. Pinned at zero: holding the card still, the natural reaction,
+    suppressed it forever; the only escape was pulling it out of frame for ~2 s.
+    The same trap was on the OCR path. The fix separates the two rules rather
+    than loosening either: new `ScanState.dismissCooldown` +
+    `ScanTuning.dismissCooldownFrames` (3), a countdown ticked by the shared
+    `ScanController._tickSuppression` on **every** reading including matching
+    ones, so a dismissed card frees itself in about a second without moving.
+    `confirm()` explicitly sets it to 0 and keeps the empty-frame rule verbatim
+    — that one is the spec's non-optional guard against one card logging thirty
+    times, and a test now asserts the cooldown can't free a *confirmed* card.
+    `copyWith` zeroes the cooldown whenever `clearLastConfirmedPasscode` is set,
+    so the two fields can't disagree about why a card is suppressed. `dismiss()`
+    also gained a third fallback for the passcode it suppresses —
+    `candidates.first` — because `showCandidates()` clears `matchedCard`, so
+    "none of these" used to suppress *nothing* and the same top guess came
+    straight back. Both new behaviours were verified to fail with
+    `dismissCooldownFrames = 0` (which reproduces the old code exactly) before
+    being kept.
+    **Surface hint above the guide box** (`AppStrings.scanSurfaceHint`): the
+    detector crops to the reticle and derives Canny's thresholds from an Otsu
+    split of *that region*, so what the card lies on decides whether its own
+    edges survive — the single biggest cause of "it won't recognise anything",
+    and nothing on screen said so. `_ReticleOverlay` became a `ConsumerWidget`
+    rendering a `Stack` of the unchanged centred box plus a `Positioned` hint.
+    **It is anchored to the box, not stacked above it in a `Column`, and that is
+    load-bearing**: `reticleRectInViewport` is a `Rect.fromCenter` on the
+    viewport centre and is the shared source of truth for the drawn box *and*
+    `detectionRoiInFrame`'s search region — a centred column of "text + box"
+    would have shifted the drawn box up by half the text height while the
+    searched region stayed put, silently breaking the correspondence step 13 was
+    built around. Anchoring by the hint's **bottom** also means a two-line wrap
+    grows upward, away from the box. It follows the existing `scanHelpEnabled`
+    switch (decided with the user — one control for all on-screen help) and is
+    additionally suppressed while diagnostics is on, since that overlay pushes
+    the status banner down into this exact strip. The screen test asserts the
+    *geometry* (hint bottom above the box top, box still centred), not just
+    presence.
+    **Scan-open and app-resume latency.** `CameraController.initialize()` is
+    slow on CameraX and not fixable from Dart; everything *around* it was being
+    re-paid on every entry **and every resume**, because it was all autoDispose:
+    - `hashIndexProvider` and `cardDetectorProvider` are now
+      `@Riverpod(keepAlive: true)`. Step 14 moved the index parse to a `compute`
+      isolate, but that was only half the fix while the provider was
+      autoDispose: leaving the screen dropped the parsed index, and so did
+      merely backgrounding (`artReadings` returns early when `scanCameraActive`
+      flips, releasing its watch on `artMatcher` → these). Every re-entry and
+      resume re-read the asset, spawned an isolate, re-decoded ~14 600
+      entries and copied the map back — and the **receiving** half of that copy
+      runs on the UI isolate, concurrently with `initialize()`. Parsed once per
+      app run costs ~2 MB resident. Consequence worth knowing: a ROI-mismatch
+      `FormatException` is now cached for the app's lifetime, which is fine —
+      it's a property of the build, identical on every retry.
+      `test/features/scan/art_providers_test.dart` guards both against a tidy-up
+      back to `@riverpod` (the assertion was itself validated against a scratch
+      autoDispose provider, so it isn't a false guard).
+    - `availableCameras()` is memoized in a `static List<CameraDescription>?` on
+      `CameraScanService` — the answer can't change while the app runs, but it
+      was a platform round-trip in front of `initialize()` on every entry,
+      resume and watchdog restart. The **resolved list** is cached, not the
+      future, so a failure leaves it null and the next `start()` really retries.
+    - `_preview.value = controller` moved **above** the first `_meter()`, taking
+      four awaited platform round-trips out from between `initialize()` and the
+      first visible frame. Pure reordering; both `_meter` calls and step 14's
+      after-`startImageStream` rationale are untouched.
+    - `HomeScreen` gained a zero-size `_ScanPrewarm` that `ref.read`s both
+      providers in `initState` (decided with the user), so even the *first* Log
+      Cards tap of an app run is fast — otherwise the parse and the isolate
+      spawn land while the camera is initialising, which is exactly when there
+      is no budget. It deliberately does **not** `watch`: a warm-up must not
+      gate or rebuild the menu, and an index failure must surface on the scan
+      screen where it can be acted on.
+    **Test gotcha**: `home_screen_test`'s `pumpApp` pumped `MaterialApp.router`
+    with **no `ProviderScope` at all** — fine until Home touched a provider, then
+    `Bad state: No ProviderScope found`. It now wraps in a scope and stubs
+    `hashIndexProvider` with an empty in-memory index, since the warm-up is
+    fire-and-forget and the real index parse would be pure test latency.
+    (`app_gate_test` reaches Home with the real asset and is unaffected.)
+    **Still open, unchanged by this pass**: `autoMatchMaxDistance` /
+    `maxHammingDistance` at 13/18, `ScanTuning.frameInterval` at 300 ms, and
+    step 13's follow-up of measuring the true art-box rect across
+    `tools/.image_cache/full/`.
+    **An adversarial review of both recognition pipelines ran after this step —
+    see `docs/scan_pipeline_review.md`.** It answers two of the standing open
+    questions with measurements, and the answers are "no": the true art box *was*
+    measured (it is a **square**, `0.1181, 0.1814, 0.8831, 0.7063`, not the
+    shipped 1.147-aspect rect), and because `_findArtBox` gates at
+    `_artBoxAspectTolerance = 1.12` the step-13 correction **can never fire** —
+    which is exactly the evidence step 14 said it was waiting for. Sixteen ranked
+    findings, each tagged verified-vs-reported; four were re-verified in the main
+    session, including that **`scanPausedProvider` is autoDispose and so step
+    14's pause optimisation is inert**, and that the debounce compares an *index*
+    passcode to a *DB* passcode (which undermines this step's `dismissCooldown`).
+    **Implemented in step 16.**
+
+16. Acting on the adversarial review — 256-bit pHash, measured art-box ROI,
+    scan-pipeline defect fixes, collection tile polish ← done (verified:
+    `flutter analyze` clean, full `flutter test` green at **321 tests**,
+    `pytest tools/` green). **No DB migration, no schema change, no new
+    dependency.** Fifteen of the review's sixteen findings are fixed; each
+    carries a resolution note in `docs/scan_pipeline_review.md`, which is now the
+    *evidence* for the constants rather than a backlog.
+    **The art box was wrong, and it is now measured.** Re-derived independently
+    before acting on it, by normalized cross-correlation of YGOPRODeck's own
+    `image_url_cropped` against the full render: every sample converged at
+    **NCC 0.996-0.999** on (96, 214-216) size **622x622** in the 813x1185 render
+    — 96 px of left margin against 95 px of right, i.e. horizontally centred, and
+    **square**. `ArtMatchTuning.artBoxRoi` is now
+    `(0.1181, 0.1814, 0.8831, 0.7063)`. The old `(0.09, 0.19, 0.91, 0.68)` has
+    aspect 1.147 and `_findArtBox` rejects past `_artBoxAspectTolerance = 1.12`,
+    so **the step-13 art-box correction had never once fired on any device** —
+    which is precisely the evidence step 14 said it was waiting for, resolved
+    from the desk rather than the phone.
+    **The descriptor is 256-bit (`hash_size = 16`).** The measured case: over the
+    old 64-bit index, *every one* of 14 636 cards had another card within Hamming
+    18 (mean 26.3) — `maxHammingDistance` was not a threshold, it was the whole
+    neighbourhood — and 41 hash values were shared outright by 82 cards. Over the
+    rebuilt index the same *fraction* of the width (72/256 = 28.1 %) admits a
+    spurious neighbour for **1.37 %** of cards; the curve is flat from r=4 to
+    r=84 and only cliffs at 88. Exact duplicates fell to 26 groups / 52 entries.
+    So `maxHammingDistance = 72` / `autoMatchMaxDistance = 48` — the same
+    fractions as before, now with two orders of magnitude more headroom, and
+    **written even on purpose**: a median-thresholded hash has exactly half its
+    bits set (verified: popcount histogram is `{128: 14641}`), so all distances
+    are even and the old `13` was bit-for-bit `12`.
+    Preserving the fraction was *measured*, not assumed — the Tier-2 fixture gap
+    is `[2, 2, 4]` of 256, the same handful of bits as at 64, so
+    `phash_e2e_test`'s gate stays at **12** rather than scaling to 48 (scaled, it
+    could no longer detect a regression). `PerceptualHash` is now eight 32-bit
+    lanes in a `Uint32List` — lanes-of-32 *preserves* the web-safety invariant the
+    two-lane split existed for (every `int.parse` chunk stays under 2^32), and
+    stores truncate so `~x` needs no mask. Bit-packing switched to `v * 2 + bit`;
+    the old `1 << (31 - i)` goes through JS's *signed* 32-bit ops under dart2js.
+    `assets/card_hashes.json` is v3, 14 641 entries, 540 KB → **1.24 MB**.
+    **The rebuild was 100 % offline** — `tools/.image_cache/full/` already held
+    every render, so zero CDN hits, exactly as the API policy requires.
+    **Two guards were added because the failure mode here is a silent green.** No
+    test had ever opened the real asset (every consumer overrides
+    `hashIndexProvider`), so changing `artBoxRoi` without rebuilding would have
+    left `flutter test` entirely green and broken only the running app — where it
+    surfaced as *"the camera could not be started"*.
+    `test/features/scan/hash_index_asset_test.dart` now ties the committed asset
+    to this build's ROI and descriptor, and `tools/test_build_hash_index.py`
+    asserts the 622x622 square. Relatedly, **`tools/dump_phash_fixtures.py` was
+    already broken** independent of any of this: it read the *v1 cropped-art*
+    cache and hashed whole files with no ROI crop, so its own cross-check against
+    the index failed and the fixture tests only ever compared Dart against each
+    fixture's self-recorded hash. It now imports `ART_BOX_ROI`/`roi_pixel_box`
+    from the builder, so there is one definition and the cross-check is real.
+    **Scan-pipeline defect fixes**, in rough order of how badly they bit:
+    - **`ScanPaused` is `@Riverpod(keepAlive: true)`.** Nothing watches it —
+      writer and reader both use `ref.read`, which closes its subscription in a
+      `finally` and schedules disposal — so step 14's "don't detect and hash
+      behind a review panel" optimisation was **inert**, exactly the trap
+      `ScanViewportSize`'s own doc comment warns about.
+    - **The debounce compares index passcodes now.** The index keys every
+      `card_images[i].id` while `cards` stores only `card_images[0]`, so an
+      alt-art match resolved to a card whose passcode was *not* what the next
+      frame carried — the suppression never fired and the review panel re-opened
+      on the card just logged. `ArtCandidate.rankedPasscode` +
+      `ScanState.matchedIndexPasscode` fix it; the regression test was **verified
+      to fail** against the old code before being kept.
+    - **`_resolveArtMatch` paused before its awaits**, not after: during 1-5 DB
+      round trips one glare-blink frame could move the status on and silently
+      discard a match the agreement gate had already accepted.
+    - **A dead detector isolate no longer wedges scanning.** `detectCard` had no
+      timeout and the spawn registered no `onExit`/`onError`, so a dead worker
+      blocked `artReadings` before any `yield` — recognition dead, every on-screen
+      signal green. Now: 2 s request timeout, both ports registered, three
+      timeouts retire the worker to the in-process fallback, and a new `det:`
+      diagnostics line (`DetectorHealth`/`describeDetectorHealth`, host-tested).
+    - **`passcodeReadings` is self-paced**, like `artReadings` since step 14: a
+      broadcast controller buffers for a paused subscriber, and an `await for`
+      whose body awaits *is* paused — so a slow ML Kit read grew an unbounded
+      backlog and the counters ran over frames from seconds ago. `CameraService`
+      gained `latestInputImage`, replaced in lockstep with `latestArtFrame` under
+      one `frameSequence`.
+    - **An index-load failure says so.** A `FormatException` from the ROI header
+      guard reached the user as a camera error with a Retry that could not fix it;
+      now it gets its own panel, and `retry()` invalidates `hashIndexProvider`.
+    - **`extractPasscode`'s join fallback is gated on digits-and-spaces.**
+      `ATK/2500  DEF/2100` used to join to `"25002100"` — a second distinct value
+      alongside the real passcode, so the frame was discarded as ambiguous and
+      passcode mode read *nothing* on the monsters most worth logging.
+    - **`HashIndex.rank` is a bounded partial selection.** The diagnostics path
+      ranks unthresholded, which allocated 14 641 `HashMatch`es and fully sorted
+      them to take three, per frame, on the UI isolate — while someone was
+      watching the overlay to find out why scanning felt slow. A test compares it
+      against a full sort at every `n`, since being indistinguishable is the
+      point.
+    - **Both overlay painters derive their aspect from `latestArtFrame`**, not
+      the preview: CameraX picks Preview and ImageAnalysis resolutions
+      independently, and while the *ROI* mapping is self-correcting under a
+      mismatch, a painter is not. `_SearchRoiOverlay` also documents what it
+      cannot show (it is a round trip through exact inverses, so it verifies the
+      margin, never the aspect) — the new `frame: 720x1280 (0.563) / preview
+      0.750` diagnostics line is what actually settles that on a device.
+    - Smaller: a 180° re-hash when the first pass finds nothing in range (tilt
+      folds to [0, 90), so an upside-down card passes every shape gate and hashes
+      to noise); the luma copy skipped in passcode mode via
+      `CameraService.artCaptureEnabled`; `_onFrame` no longer spending the
+      throttle window on a frame it drops, with both conversions wrapped so a
+      malformed buffer can't take the OCR path down with the artwork path.
+    **Collection tile**: the grade chip shrank (new `ConditionChipTokens` — it had
+    no size tokens at all, only generic `AppSpacing` and inherited body size) and
+    the artwork grew to `list * 1.2`. **The row height is unchanged**, and the
+    reason is worth keeping: height is set by the tallest child, the 3×30 action
+    column, so artwork below ~61.7 wide is free and anything above it grows every
+    row in the list.
+    **Still open**, all three deliberately and all needing hardware rather than
+    more analysis: `CardDetectionTuning.innerQuadMinAreaRatio` (review finding 7)
+    stays 0.78 until the now-live `_findArtBox` shows whether the nested descent
+    still earns its keep; the passcode ROI filter stays off (its coordinate space
+    is genuinely wrong — the *unrotated* sensor size is passed for boxes reported
+    in rotated space); and `ScanTuning.frameInterval` stays 300 ms. On-device, the
+    things to look at first are the `art box:` diagnostics line — it should now
+    read **locked** rather than `fixed roi` on standard cards, for the first time
+    ever — and the new `frame:`/`det:` lines.
 
 ## Standing rules
 

@@ -86,4 +86,36 @@ void main() {
       expect(r.luma, [6, 5, 4, 3, 2, 1]);
     });
   });
+
+  group('rotate180', () {
+    // Used to re-hash a card that may be held upside-down: the detector's shape
+    // gates fold tilt into [0, 90), so 180 degrees passes all of them and the
+    // card is warped inverted, hashing to noise with no visible symptom.
+    test('reverses the buffer, keeping the dimensions', () {
+      final out = rotate180(Uint8List.fromList([1, 2, 3, 4, 5, 6]), 3, 2);
+      expect(out, [6, 5, 4, 3, 2, 1]);
+    });
+
+    test('is its own inverse', () {
+      final original = Uint8List.fromList([9, 8, 7, 6, 5, 4, 3, 2, 1]);
+      expect(rotate180(rotate180(original, 3, 3), 3, 3), original);
+    });
+
+    test('agrees with ArtFrame.oriented at 180 degrees', () {
+      final luma = Uint8List.fromList([1, 2, 3, 4, 5, 6]);
+      final oriented = ArtFrame(
+        luma: luma,
+        width: 3,
+        height: 2,
+        rotationDegrees: 180,
+      ).oriented();
+      expect(rotate180(luma, 3, 2), oriented.luma);
+    });
+
+    test('does not modify its input', () {
+      final original = Uint8List.fromList([1, 2, 3, 4]);
+      rotate180(original, 2, 2);
+      expect(original, [1, 2, 3, 4]);
+    });
+  });
 }

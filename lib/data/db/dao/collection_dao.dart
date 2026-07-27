@@ -7,12 +7,41 @@ import '../../../models/collection_entry_with_card.dart';
 
 enum CollectionSortBy { name, dateAdded, quantity }
 
+/// A rarity selection for the collection list: either a specific
+/// `printings.rarity` value, or "no rarity at all".
+///
+/// The second case exists because a card logged without a printing (every
+/// scanned quick-log that skipped the set picker) carries no rarity, so it can
+/// never match a rarity value and would otherwise be reachable only under
+/// "All". Its predicate is `p.rarity IS NULL` over the existing LEFT JOIN,
+/// which is also exactly what [CollectionDao.rarityFilterOptions] reports as a
+/// null option — so the chips and the filter agree by construction.
+class RarityFilter {
+  const RarityFilter.value(String this.rarity);
+  const RarityFilter.noRarity() : rarity = null;
+
+  /// The rarity to match, or null for "no rarity".
+  final String? rarity;
+
+  bool get isNoRarity => rarity == null;
+
+  @override
+  bool operator ==(Object other) =>
+      other is RarityFilter && other.rarity == rarity;
+
+  @override
+  int get hashCode => rarity.hashCode;
+
+  @override
+  String toString() => 'RarityFilter(${rarity ?? 'none'})';
+}
+
 class CollectionFilter {
   const CollectionFilter({
     this.nameQuery,
     this.cardType,
     this.condition,
-    this.edition,
+    this.rarity,
     this.sortBy = CollectionSortBy.name,
     this.sortDescending = false,
   });
@@ -20,7 +49,10 @@ class CollectionFilter {
   final String? nameQuery;
   final String? cardType;
   final CardCondition? condition;
-  final CardEdition? edition;
+
+  /// Null means no rarity filter at all — see [RarityFilter].
+  final RarityFilter? rarity;
+
   final CollectionSortBy sortBy;
   final bool sortDescending;
 }
@@ -244,9 +276,16 @@ class CollectionDao {
       conditions.add('ce.condition = ?');
       args.add(filter.condition!.toDb());
     }
-    if (filter.edition != null) {
-      conditions.add('ce.edition = ?');
-      args.add(filter.edition!.toDb());
+    // Rarity comes off the LEFT JOIN below, so "no rarity" naturally covers
+    // both an entry with no printing and a printing with no recorded rarity.
+    final rarity = filter.rarity;
+    if (rarity != null) {
+      if (rarity.isNoRarity) {
+        conditions.add('p.rarity IS NULL');
+      } else {
+        conditions.add('p.rarity = ?');
+        args.add(rarity.rarity);
+      }
     }
 
     final where = conditions.isEmpty
@@ -285,6 +324,24 @@ class CollectionDao {
     ''', args);
 
     return rows.map(CollectionEntryWithCard.fromRow).toList();
+  }
+
+  /// The rarity values present in the collection, for the filter row's chips.
+  ///
+  /// A **null element** means "some entry has no rarity" — either it has no
+  /// printing, or its printing records none. It appears only when such an entry
+  /// exists, so the chip row never offers a dead option, and it is produced by
+  /// the same `p.rarity IS NULL` shape [getAll] filters on.
+  ///
+  /// SQLite orders NULL first, so the no-rarity option leads the list.
+  Future<List<String?>> rarityFilterOptions() async {
+    final rows = await _db.rawQuery('''
+      SELECT DISTINCT p.rarity AS rarity
+      FROM collection_entries ce
+      LEFT JOIN printings p ON p.id = ce.printing_id
+      ORDER BY p.rarity
+    ''');
+    return [for (final row in rows) row['rarity'] as String?];
   }
 
   Future<int> totalCardCount() async {

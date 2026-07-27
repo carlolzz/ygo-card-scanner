@@ -38,8 +38,12 @@ void main() {
       final actual = phashFromLuma(luma, width, height);
       final d = actual.distanceTo(expected);
       distances.add(d);
-      // Per-sample guard: even the worst source-art gap must stay well within
-      // a threshold that still discriminates among 14k cards.
+      // Per-sample guard, deliberately *not* rescaled with the descriptor.
+      // Measured gaps at 256 bits are [2, 2, 4] — the same handful of bits as at
+      // 64, because the resize difference is a fixed perturbation rather than a
+      // fixed fraction. Scaling this 4x alongside `maxHammingDistance` would
+      // leave a threshold nothing could ever trip, so it stays at ~3x the
+      // observed worst case and remains a real regression guard.
       expect(
         d,
         lessThanOrEqualTo(12),

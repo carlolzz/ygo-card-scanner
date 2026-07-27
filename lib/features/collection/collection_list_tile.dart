@@ -22,12 +22,18 @@ class CollectionListTile extends StatelessWidget {
   final VoidCallback onDecrement;
   final VoidCallback onDelete;
 
-  String _subtitle(CollectionEntryWithCard entryWithCard) {
+  /// The set/expansion line: the set code, or its name when the printing
+  /// carries no code. Null when this entry has no printing at all, in which
+  /// case the line is simply omitted.
+  String? get _setLine {
     final printing = entryWithCard.printing;
-    final setLabel = printing?.setCode ?? printing?.setName;
-    if (setLabel == null) return entryWithCard.entry.edition.label;
-    return '$setLabel · ${entryWithCard.entry.edition.label}';
+    return printing?.setCode ?? printing?.setName;
   }
+
+  /// The rarity, on its own line below the set. Rarity — not edition — is what
+  /// the eye looks for when scanning a list of reprints; the edition lives on
+  /// the detail screen.
+  String? get _rarityLine => entryWithCard.printing?.rarity;
 
   @override
   Widget build(BuildContext context) {
@@ -46,7 +52,10 @@ class CollectionListTile extends StatelessWidget {
         child: ConstrainedBox(
           constraints: const BoxConstraints(minHeight: AppTapTarget.minSize),
           child: Padding(
-            padding: const EdgeInsets.all(AppSpacing.md),
+            padding: const EdgeInsets.symmetric(
+              horizontal: AppSpacing.md,
+              vertical: CollectionTileTokens.verticalPadding,
+            ),
             child: Row(
               // Everything is centred against the (tallest) action column, so
               // the chip, the art, the name block and the quantity all sit on
@@ -58,18 +67,21 @@ class CollectionListTile extends StatelessWidget {
                 // list of duplicates for, so it leads the row.
                 Container(
                   padding: const EdgeInsets.symmetric(
-                    horizontal: AppSpacing.sm,
-                    vertical: AppSpacing.xs,
+                    horizontal: ConditionChipTokens.horizontalPadding,
+                    vertical: ConditionChipTokens.verticalPadding,
                   ),
                   decoration: BoxDecoration(
                     color: conditionColor,
-                    borderRadius: BorderRadius.circular(AppRadius.sm),
+                    borderRadius: BorderRadius.circular(
+                      ConditionChipTokens.radius,
+                    ),
                   ),
                   child: Text(
                     entry.condition.shortCode,
                     style: const TextStyle(
                       color: ConditionChipColors.onSelected,
                       fontWeight: FontWeight.bold,
+                      fontSize: ConditionChipTokens.fontSize,
                     ),
                   ),
                 ),
@@ -78,13 +90,16 @@ class CollectionListTile extends StatelessWidget {
                 // rather than the default square centre-crop.
                 CardThumbnail(
                   localImagePath: card.localImagePath,
+                  size: CardThumbnailSizes.collectionTile,
                   aspectRatio: ScanReticleTokens.cardAspectRatio,
                   fit: BoxFit.contain,
                 ),
                 const SizedBox(width: AppSpacing.md),
-                // Name (up to 2 lines) + set/edition (1 line), sitting to the
-                // right of the artwork and centred in the space left between it
-                // and the quantity, rather than stacked above the controls.
+                // Name (up to 2 lines), then the set and the rarity on one line
+                // each — sitting to the right of the artwork and centred in the
+                // space left between it and the quantity. Even with a wrapped
+                // name this block stays inside the action column's height, so
+                // the third line costs the row nothing.
                 Expanded(
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
@@ -97,14 +112,17 @@ class CollectionListTile extends StatelessWidget {
                         textAlign: TextAlign.center,
                         style: TextStyle(color: palette.onSurface),
                       ),
-                      const SizedBox(height: AppSpacing.xs),
-                      Text(
-                        _subtitle(entryWithCard),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        textAlign: TextAlign.center,
-                        style: TextStyle(color: palette.onSurfaceMuted),
-                      ),
+                      for (final line in [_setLine, _rarityLine])
+                        if (line != null) ...[
+                          const SizedBox(height: AppSpacing.xs),
+                          Text(
+                            line,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            textAlign: TextAlign.center,
+                            style: TextStyle(color: palette.onSurfaceMuted),
+                          ),
+                        ],
                     ],
                   ),
                 ),

@@ -41,6 +41,22 @@ void main() {
     });
   });
 
+  group('setLabel', () {
+    // The collection detail screen gives rarity a row of its own, so the Set
+    // row must not trail it — while the pickers keep searching displayLabel.
+    test('omits the rarity', () {
+      expect(_mirrorForceMetalRaiders.setLabel, 'MRD-EN094 · Metal Raiders');
+    });
+
+    test('omits missing fields', () {
+      expect(_sparse.setLabel, 'Legendary Duelists');
+    });
+
+    test('is empty when the row carries no set at all', () {
+      expect(const Printing(passcode: '1', rarity: 'Rare').setLabel, '');
+    });
+  });
+
   group('filterPrintings', () {
     test('an empty query keeps every printing', () {
       expect(filterPrintings(_all, ''), _all);

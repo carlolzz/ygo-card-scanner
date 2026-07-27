@@ -147,6 +147,25 @@ class ConditionChipColors {
   static const Color onSelected = Color(0xFF0B0B0D);
 }
 
+/// Geometry of the compact grade chip on a collection row.
+///
+/// Its own tokens because the chip previously had none: it was an inline
+/// `Container` sized entirely by generic [AppSpacing] values and the inherited
+/// body text size, so "make it a bit smaller" had nowhere to live. Only the
+/// list row uses these — the detail screen's larger chip is unchanged.
+class ConditionChipTokens {
+  const ConditionChipTokens._();
+
+  static const double horizontalPadding = 6;
+  static const double verticalPadding = 2;
+
+  /// One step below the default body size: the chip is a two-letter code read at
+  /// a glance down a column, not prose.
+  static const double fontSize = 12;
+
+  static const double radius = 6;
+}
+
 /// The home screen is four large tiles: Log Cards, My Collection,
 /// Statistics, Settings.
 class HomeMenuTokens {
@@ -161,14 +180,31 @@ class CardThumbnailSizes {
   const CardThumbnailSizes._();
 
   static const double list = 48;
+
+  /// The collection row's artwork: 20% larger than [list]. Deliberately its own
+  /// token rather than a bump to [list] — the scan review and candidate panels
+  /// keep the smaller size.
+  ///
+  /// **The ceiling is 61.7, and it is worth knowing why.** The row's height is
+  /// set by its tallest child, which is the three-button action column at
+  /// `3 * CollectionTileTokens.actionButtonSize = 90`. The artwork is drawn at
+  /// the 59/86 card aspect, so it reaches 90pt tall at a width of ~61.7 — below
+  /// that the row's height is unchanged, above it every row in the list grows.
+  /// At 57.6 (84pt tall) this is comfortably inside that budget.
+  static const double collectionTile = list * 1.2;
+
   static const double detail = 200;
 }
 
 /// Geometry of one collection list row. The row reads left-to-right as
-/// grade → art → name/set → quantity → actions, with the three action buttons
-/// stacked in a single column on the right (add, remove, delete).
+/// grade → art → name/set/rarity → quantity → actions, with the three action
+/// buttons stacked in a single column on the right (add, remove, delete).
 class CollectionTileTokens {
   const CollectionTileTokens._();
+
+  /// The row's vertical inset, trimmed well below the horizontal
+  /// [AppSpacing.md] so the row is shorter without becoming narrower.
+  static const double verticalPadding = 6;
 
   /// Fixed width for the quantity slot, so the action column stays put as the
   /// count grows from 1 to 99 instead of shifting the row's right edge.
@@ -178,8 +214,12 @@ class CollectionTileTokens {
   /// three of them at full size make the row twice the height of its artwork.
   /// The row itself stays well above [AppTapTarget.minSize], and each button
   /// keeps its own ripple, so they remain comfortably tappable.
-  static const double actionButtonSize = 36;
-  static const double actionIconSize = 22;
+  ///
+  /// The button column is what sets the row's height, so this is also the knob
+  /// that shortens the row: with [verticalPadding], `2*16 + 3*36 = 140` became
+  /// `2*6 + 3*30 = 102` — about 19pt off the top and 19pt off the bottom.
+  static const double actionButtonSize = 30;
+  static const double actionIconSize = 20;
 }
 
 /// Geometry of the shared set/expansion search box.
@@ -218,10 +258,55 @@ class ScanTuning {
   /// card logs dozens of times in a couple of seconds. Shared by both paths.
   static const int debounceEmptyFrames = 5;
 
+  /// Readings a *dismissed* card stays suppressed for — counted down on every
+  /// frame, empty or not.
+  ///
+  /// Deliberately **not** [debounceEmptyFrames], and that distinction is the
+  /// whole point. The post-confirm debounce only advances on frames with no
+  /// confident match, which is right after a confirm: the card must physically
+  /// leave the lens before it can be logged a second time. Reusing it after a
+  /// *dismiss* was a trap — the dismissed card sitting in the reticle matches
+  /// every frame, so the empty-frame counter was pinned at zero and the card
+  /// could never become eligible again while the user held it still. Nothing was
+  /// written by a dismiss, and the user is trying to scan, so all that is needed
+  /// here is enough of a gap that the review panel doesn't re-open under their
+  /// thumb. Three readings is roughly a second at the camera's throttle.
+  static const int dismissCooldownFrames = 3;
+
   /// Minimum wall-clock gap between OCR passes. The bottleneck is the human
   /// flipping cards, so we optimize for stability over raw throughput
   /// (~1 card/second) and avoid burning battery on every camera frame.
   static const Duration frameInterval = Duration(milliseconds: 300);
+
+  /// How often the artwork pipeline looks for a fresh camera frame. Shorter than
+  /// [frameInterval] on purpose: the pipeline is self-paced (it only ranks when
+  /// the camera's frame sequence has actually advanced), so a tighter poll just
+  /// means a new frame is picked up promptly rather than up to a full interval
+  /// late.
+  static const Duration artPollInterval = Duration(milliseconds: 100);
+
+  /// How often the camera is checked for a stalled image stream.
+  static const Duration cameraWatchdogInterval = Duration(seconds: 2);
+
+  /// No camera frame for this long, while the controller reports itself
+  /// initialized, means the stream has died and the camera needs restarting.
+  ///
+  /// This is a mitigation for an upstream bug, not a tuning knob: the Android
+  /// implementation is `camera_android_camerax`, whose image stream is known to
+  /// stop delivering frames at random (flutter/flutter#152763 — an NPE in
+  /// `ImageProxyHostApiImpl.close()` halts the analyzer), and whose preview can
+  /// black out under `startImageStream` (flutter/flutter#27688). Neither is
+  /// fixable from Dart; noticing and restarting is.
+  ///
+  /// Generous relative to [frameInterval] (10x) so a slow first frame after
+  /// `initialize()`, or a device throttling under heat, is never mistaken for a
+  /// stall — a needless restart costs the user a visible preview blink.
+  static const Duration cameraFrameTimeout = Duration(seconds: 3);
+
+  /// The watchdog's restart backoff doubles from [cameraWatchdogInterval] up to
+  /// this, so a camera that is permanently dead (rather than merely stalled)
+  /// stops churning through restarts.
+  static const Duration cameraRestartMaxBackoff = Duration(seconds: 20);
 }
 
 /// Geometry of the on-screen reticle that guides the user to frame the *whole*
@@ -282,10 +367,24 @@ class ScanDetectionTokens {
   const ScanDetectionTokens._();
 
   /// Slack around the reticle when it is mapped into frame coordinates, as a
-  /// fraction of the reticle's own size. Generous on purpose: the guide box is
-  /// advice, and a card held a little large should still be found rather than
-  /// silently dropped for overhanging it.
-  static const double reticleRoiMargin = 0.15;
+  /// fraction of the reticle's own size, so a card held a little large is still
+  /// found rather than silently dropped for overhanging the guide box.
+  ///
+  /// Held to 0.08 rather than the earlier 0.15, for two reasons that both point
+  /// the same way. The margin inflates each axis by `1 + 2m`, so area by
+  /// `(1 + 2m)^2`: at 0.15 the search region was **1.69x** the reticle, which
+  /// (a) re-admitted the surrounding desk into the Otsu split that sets Canny's
+  /// thresholds — the very thing cropping to the guide box exists to prevent —
+  /// and (b) left a card that perfectly fills the reticle at only 0.59 of the
+  /// search region, below [CardDetectionTuning.targetRoiAreaFraction] (0.75), so
+  /// a perfectly framed card could never earn a full fill score. At 0.08 the
+  /// region is 1.35x and a filled reticle is 0.74 of it, which makes that
+  /// existing target correct as written.
+  ///
+  /// A card framed *smaller* than the guide box is still admitted down to
+  /// [CardDetectionTuning.minRoiAreaFraction] (0.20 of the region, i.e. about
+  /// half the guide box's linear size).
+  static const double reticleRoiMargin = 0.08;
 }
 
 /// Gates and weights for choosing which quadrilateral in a frame is the card.
@@ -398,6 +497,16 @@ class ScanDiagnosticsTokens {
 
   static const double fontSize = 12;
   static const String fontFamily = 'monospace';
+
+  /// How often the readout re-reads the camera's health. It has to tick on its
+  /// own clock: a stalled camera stops the reading stream, which is exactly when
+  /// the camera line must keep updating.
+  static const Duration refreshInterval = Duration(milliseconds: 500);
+
+  /// Stroke for the diagnostics-only outline of the region the detector actually
+  /// searches — thinner than the card outline, since it is a reference frame
+  /// rather than a detection.
+  static const double searchRoiStrokeWidth = 1.5;
 }
 
 /// Tuning for the pHash artwork-match fallback (step 8). A runtime pHash of a
@@ -410,38 +519,78 @@ class ArtMatchTuning {
   /// How many nearest candidates to present for the user to choose from.
   static const int candidateCount = 5;
 
-  /// Maximum Hamming distance (of 64) still considered a plausible match. The
-  /// clean-source gap measured 0 in the reproducibility spike; this budget is
-  /// headroom for handheld glare/angle/crop imprecision. Governs the manual
-  /// "show me the alternatives" candidate list. Beyond it we show nothing rather
-  /// than a misleading guess.
+  /// How many unthresholded nearest hits the diagnostics overlay lists.
+  static const int diagnosticsNearestCount = 3;
+
+  /// Maximum Hamming distance (of **256**) still considered a plausible match —
+  /// the budget for handheld glare, angle and crop imprecision. Governs the
+  /// manual "show me the alternatives" candidate list; beyond it we show nothing
+  /// rather than a misleading guess.
   ///
-  /// Widened to 18 for the sleeve case: a sleeve adds glare and a margin the
-  /// perspective warp can latch onto, pushing a true match's distance up, so the
-  /// manual candidate list needs the extra headroom to still surface the card.
-  static const int maxHammingDistance = 18;
+  /// **Both thresholds here are even on purpose.** A pHash thresholds each
+  /// coefficient against the *median* of the block, so exactly half the bits are
+  /// set in every hash — and two equal-weight vectors always differ in an even
+  /// number of positions (`|A^B| = 256 - 2|A&B|`). Verified over the shipped
+  /// index: the popcount histogram is `{128: 14641}`, no exceptions. An odd
+  /// threshold is therefore bit-for-bit identical to the even one below it, and
+  /// the previous 64-bit pair (13/18) really behaved as 12/18.
+  ///
+  /// **Measured over the whole shipped index**, P(a card has *any* other card
+  /// within r):
+  ///
+  /// | r | % of bits | P(>=1 nbr) | mean nbrs |
+  /// |---|---|---|---|
+  /// | 48 | 18.8% | 1.20% | 0.014 |
+  /// | 72 | 28.1% | 1.37% | 0.017 |
+  /// | 84 | 32.8% | 1.81% | 0.023 |
+  /// | 88 | 34.4% | 4.04% | 0.047 |
+  /// | 96 | 37.5% | 76.4% | 1.65 |
+  ///
+  /// The curve is flat to ~84 and falls off a cliff by 96, so precision in the
+  /// middle does not matter; 72 sits with a wide margin on both sides. For
+  /// contrast, the old 64-bit index at the *same fraction of the width* (18/64)
+  /// had **100%** of cards carrying a neighbour, mean 26.3 — which is not a
+  /// threshold at all, it is the whole neighbourhood, and it is why the top-5
+  /// list could be five arbitrary cards.
+  static const int maxHammingDistance = 72;
 
   /// The tight gate for the *automatic* primary path: only auto-present a single
   /// top match when it is at least this close across [ScanTuning.artAgreementFrames]
   /// frames. Deliberately tighter than [maxHammingDistance] — an automatic guess
   /// must be more confident than one the user explicitly asked to see.
   ///
-  /// Raised from 10 to 13: sleeved cards' true matches commonly land at 11–13,
-  /// which the old gate discarded as an empty frame (so scanning "did nothing").
-  /// Still stricter than [maxHammingDistance], and every auto-present is
-  /// user-confirmed before anything is written.
-  static const int autoMatchMaxDistance = 13;
+  /// 48/256 is 18.8% of the bits, the same fraction the 64-bit index's effective
+  /// gate used. Preserving the *fraction* is measured rather than assumed: the
+  /// perturbations that actually matter here (an area-average resize standing in
+  /// for PIL's LANCZOS, and the ~622px reference vs ~322px warp resolution gap)
+  /// flip the same or a smaller share of bits at 256 as at 64.
+  static const int autoMatchMaxDistance = 48;
 
-  /// The card artwork box as normalized fractions of the *upright* card rect,
-  /// approximating a standard (non-Pendulum) frame's art window — the region the
-  /// index's cropped art was taken from. Applied to the captured luma before
-  /// hashing. Pendulum/full-art frames crop imperfectly; acceptable for a
-  /// fallback that the user still confirms.
+  /// The card artwork box as normalized fractions of the *upright* card rect —
+  /// the region the index hashes. Applied to the captured luma before hashing.
+  /// Pendulum/full-art frames crop imperfectly; acceptable for a path the user
+  /// still confirms.
+  ///
+  /// **Measured, not estimated.** YGOPRODeck publishes its own art crop
+  /// (`image_url_cropped`, 624x624) beside the full render (`image_url`,
+  /// 813x1185); aligning one inside the other by normalized cross-correlation
+  /// locates the window directly, and across a random sample it converges at NCC
+  /// 0.996-0.999 on (96, 215) size **622x622** — square, with 96px of left margin
+  /// and 95px of right, i.e. horizontally centred as a real card's art window
+  /// must be.
+  ///
+  /// The previous value, `(0.09, 0.19, 0.91, 0.68)`, has aspect 1.147. That is
+  /// what made `OpenCvCardDetector._findArtBox` dead code: it rejects candidates
+  /// whose aspect errs by more than `_artBoxAspectTolerance` (1.12), and the true
+  /// window's error against it is 1.147 — so the art-box correction could never
+  /// fire on a standard card, on any device.
   ///
   /// MUST stay in sync with `ART_BOX_ROI` in `tools/build_hash_index.py`: the
-  /// index hashes exactly this fractional region of a clean upright card, so
-  /// the runtime has to hash the same region of the card it captured.
-  static const Rect artBoxRoi = Rect.fromLTRB(0.09, 0.19, 0.91, 0.68);
+  /// index hashes exactly this fractional region of a clean upright card, so the
+  /// runtime has to hash the same region of the card it captured. `HashIndex`
+  /// enforces it at startup from the `roi` header the index carries, and
+  /// `hash_index_asset_test.dart` enforces it at build time.
+  static const Rect artBoxRoi = Rect.fromLTRB(0.1181, 0.1814, 0.8831, 0.7063);
 
   /// Where in the frame a card is looked for, as fractions of the *upright*
   /// camera frame. The user is told to put the card in the reticle, which is

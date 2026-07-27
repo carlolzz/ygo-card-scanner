@@ -34,8 +34,10 @@ class _FakeArtMatcher implements ArtMatcher {
   @override
   Future<List<ArtCandidate>> match({Size? viewportSize}) async => result;
   @override
-  ArtFrameResult rankFrame({bool includeNearest = false, Size? viewportSize}) =>
-      const ArtFrameResult(ArtFrameStatus.notDetected, []);
+  Future<ArtFrameResult> rankFrame({
+    bool includeNearest = false,
+    Size? viewportSize,
+  }) async => const ArtFrameResult(ArtFrameStatus.notDetected, []);
 }
 
 // Seeded fixture passcodes (see fake_collection_seed.dart).
@@ -234,6 +236,106 @@ void main() {
       expect(state().status, ScanStatus.detecting);
       expect(state().candidates, isEmpty);
     });
+
+    test('a dismissed card is not re-matched on the very next frame', () async {
+      fakeCandidates = [const ArtCandidate(dmCard, 2)];
+      await agreeArt(darkMagician);
+      controller().dismiss();
+
+      // The card is still under the lens the instant the panel closes; without
+      // a cooldown it would re-open under the user's thumb.
+      await feedArt(darkMagician);
+      expect(state().status, ScanStatus.detecting);
+      expect(state().matchedCard, isNull);
+    });
+
+    test('a dismissed card is re-matchable without leaving the frame', () async {
+      fakeCandidates = [const ArtCandidate(dmCard, 2)];
+      await agreeArt(darkMagician);
+      controller().dismiss();
+
+      // The regression this guards: a dismiss used to reuse the *post-confirm*
+      // debounce, which only advances on frames with no confident match. The
+      // dismissed card sitting in the reticle matched every frame, so the
+      // counter was pinned at zero and the card could never be picked up again
+      // while the user held it still. Note there is not one empty frame here.
+      for (var i = 0; i < ScanTuning.dismissCooldownFrames; i++) {
+        await feedArt(darkMagician);
+      }
+      await agreeArt(darkMagician);
+
+      expect(state().status, ScanStatus.matched);
+      expect(state().matchedCard?.passcode, darkMagician);
+    });
+
+    test('a confirmed card is not freed by the dismiss cooldown', () async {
+      fakeCandidates = [const ArtCandidate(dmCard, 2)];
+      await agreeArt(darkMagician);
+      await controller().confirm();
+      await settle();
+
+      // The two debounces must stay distinct: a confirm wrote a row, so the
+      // card has to leave the lens no matter how many frames pass with it in
+      // view. Feeding well past the dismiss cooldown proves it isn't shared.
+      for (var i = 0; i < ScanTuning.dismissCooldownFrames * 3; i++) {
+        await feedArt(darkMagician);
+      }
+      expect(state().status, isNot(ScanStatus.matched));
+    });
+
+    test('dismissing a candidate list suppresses the top guess', () async {
+      fakeCandidates = [
+        const ArtCandidate(dmCard, 2),
+        const ArtCandidate(beCard, 4),
+      ];
+      await agreeArt(darkMagician);
+      controller().showCandidates();
+      // `showCandidates` clears `matchedCard`, so "none of these" has to fall
+      // back to the top candidate or it would suppress nothing at all.
+      controller().dismiss();
+
+      await feedArt(darkMagician);
+      expect(state().status, ScanStatus.detecting);
+      expect(state().matchedCard, isNull);
+    });
+
+    group('the debounce is keyed on the index passcode, not the card', () {
+      // The index keys every `card_images[i].id` (alt-arts included) while the
+      // `cards` table stores only `card_images[0]`, and `PHashArtMatcher.match`
+      // resolves an alt-art hash to the *base* card. So on those matches the
+      // confirmed card's passcode is NOT the passcode the next frame's reading
+      // carries, and a debounce comparing them can never fire.
+      const altArtId = '46986415'; // an alt-art of Dark Magician
+      setUp(() {
+        fakeCandidates = [
+          const ArtCandidate(dmCard, 2, rankedPasscode: altArtId),
+        ];
+      });
+
+      test('a confirmed alt-art match is not immediately re-presented',
+          () async {
+        await agreeArt(altArtId);
+        await controller().confirm();
+        await settle();
+
+        // Exactly the reported failure: the card is still under the lens, and
+        // the review panel re-opens on the card just logged — the "one card
+        // logs thirty times" case the debounce exists to prevent.
+        for (var i = 0; i < ScanTuning.artAgreementFrames * 2; i++) {
+          await feedArt(altArtId);
+        }
+        expect(state().status, isNot(ScanStatus.matched));
+      });
+
+      test('a dismissed alt-art match respects its cooldown', () async {
+        await agreeArt(altArtId);
+        controller().dismiss();
+
+        await feedArt(altArtId);
+        expect(state().status, ScanStatus.detecting);
+        expect(state().matchedCard, isNull);
+      });
+    });
   });
 
   group('fallback path: on-demand passcode OCR', () {
@@ -300,6 +402,22 @@ void main() {
 
       expect(state().mode, ScanMode.passcode);
       expect(state().status, ScanStatus.readingCode);
+    });
+
+    test('a dismissed code is re-readable without leaving the frame', () async {
+      controller().requestPasscodeRead();
+      await readCode(darkMagician);
+      controller().dismiss();
+
+      // Same trap as the artwork path, and it was in both: nothing was written,
+      // so the code must become readable again with the card held still.
+      for (var i = 0; i < ScanTuning.dismissCooldownFrames; i++) {
+        await feedOcr(darkMagician);
+      }
+      await readCode(darkMagician);
+
+      expect(state().status, ScanStatus.matched);
+      expect(state().matchedCard?.passcode, darkMagician);
     });
 
     test('artwork readings are ignored while the mode is on', () async {

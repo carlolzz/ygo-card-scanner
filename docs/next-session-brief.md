@@ -1,133 +1,122 @@
-# Next session: artwork-recognition latency
+# Next session: calibrate the frame-quality gate on device
 
-**Written:** 2026-07-28 · **Against:** branch `scan-detection-and-collection-ux`
-at commit `6e9959d` (CLAUDE.md build-order step 16).
+**Written:** 2026-08-03 · **Against:** branch `scan-detection-and-collection-ux`
+(CLAUDE.md build-order step 18).
 
-**Baseline to start from:** `flutter analyze` clean, **321** tests green,
+**Baseline to start from:** `flutter analyze` clean, **384** tests green,
 `pytest tools/` green.
 
-`CLAUDE.md` step 16 and `docs/scan_pipeline_review.md` have the full background.
-This file only covers what is *not* written down there: the task, the reasoning
-that makes it safe now when it wasn't before, and the one thing to measure first.
+`CLAUDE.md` step 18 has the full background. This file covers only what is *not*
+written down there: what to look at on the phone, in what order, and why.
 
 ---
 
-## The problem
+## The one thing that must happen before anything else
 
-On device, identifying a card takes **1–2 seconds**. Most of that is waiting, not
-computing. A match needs `ScanTuning.artAgreementFrames = 2` agreeing frames, and
-frames arrive every `ScanTuning.frameInterval = 300 ms`:
+**Every threshold in `FrameQualityTuning` is a first guess.** They were chosen
+from synthetic buffers, because that is all a host test can offer. The gate they
+control decides whether a frame is hashed at all, so a wrong value here is the
+one change in step 18 that can make recognition *worse* rather than better.
+
+Turn on Settings → Scanning → diagnostics and read the new **`qual:`** line:
 
 ```
-300 ms   wait for the first frame after the card lands
-+  D     detect + hash + rank          (frame 1)
-+ 300    throttle to the next frame
-+  D     detect + hash + rank          (frame 2)  → agreement reached
-+  M     match(): up to 5 serial DB reads
-+ 0-100  artPollInterval jitter
+qual: sharp=182  glare=3%          a frame that passed
+qual: sharp=12!  glare=2%          rejected as blurred  (! marks the failing gate)
+qual: sharp=240  glare=31%  ev=-0.6   rejected as glared, exposure stepping down
 ```
 
-≈ **700 ms + 2D + M** before anything can appear on screen — of which **~600 ms is
-pure throttle**, with nothing computing.
+Point at a card you *know* the app used to recognise and watch `sharp=`:
 
-Note that `D` probably *rose* in step 16, in two ways introduced deliberately: the
-256-bit DCT is 8× the multiply-adds of the old 64-bit one, and `_findArtBox` — a
-second Canny + contour pass over the rectified card — can now actually fire for the
-first time. Both were the right calls for accuracy, but neither is free.
+- **If good frames routinely read below `minSharpness` (40)** the gate is too
+  strict and is throwing away usable frames. Raise it, or drop it to 0 to switch
+  blur rejection off entirely while you tune glare.
+- **If a visibly smeared frame reads well above 40**, it is too loose and is
+  doing nothing. Lower it.
+- `maxGlareFraction` (0.08) is the same exercise against an Ultra/Secret rare
+  under a lamp.
 
----
-
-## Measure before changing anything
-
-The scan diagnostics overlay (Settings → Scanning, or the bug icon on the scan
-screen) now shows a **`det:`** line reading e.g. `det: isolate  87ms`. That is how
-long one detect + hash pass takes — the `D` above.
-
-**This decides whether change (2) is worth doing at all.** `artReadings` is
-self-paced: it polls `CameraService.frameSequence` and works on the newest cached
-frame, so the loop naturally runs at `max(frameInterval, D)`. If `D` is already
-≥ 150 ms, lowering `frameInterval` to 150 ms buys **nothing**, and the real cost is
-inside detection instead. Do not tune this constant blind.
+The safety net is `maxConsecutiveSkips` (6): after six rejections in a row the
+gate stops rejecting, so even a badly wrong threshold degrades to step 17's
+behaviour rather than wedging. If scanning feels *intermittent* rather than
+broken, that failsafe firing repeatedly is the likely reason — check `qual:`.
 
 ---
 
-## Change 2 — `frameInterval` 300 ms → 150 ms
+## Then: which of the two hypotheses is actually true
 
-`lib/core/theme/tokens.dart`, `ScanTuning.frameInterval`.
+The 40–90 distances that prompted this step have two candidate explanations, and
+until now nothing on screen could tell them apart:
 
-This has been listed "still open" since step 13, each time with the reason *"the
-linear index scan is not the problem, so there is no reason to touch it."* That
-reasoning was about **throughput**; the cost the user actually feels is **latency**.
+1. the photograph is bad (blur / foil glare), or
+2. the **crop is landing in the wrong place**, so a perfectly good photograph is
+   hashed over the wrong pixels.
 
-Three things that made it genuinely unsafe before are now fixed:
-
-- detection runs on a worker isolate (step 14), so a faster cadence no longer
-  competes with Flutter painting the preview;
-- `scanPaused` genuinely pauses (step 16) — it was `autoDispose` and therefore
-  inert, so a faster cadence would previously have meant more wasted work behind
-  every review panel;
-- `artReadings` polls rather than subscribing, so it **cannot** build a backlog the
-  way an `await for` over a broadcast stream could.
-
-Expected saving: ~300 ms, subject to the `det:` measurement above.
+`qual:` and `art box:` together settle it. **A sharp, glare-free frame whose
+nearest card still ranks at 60 is hypothesis 2** — and that points straight at
+the item below, which has been open since step 16 and is still unverified.
 
 ---
 
-## Change 3 — batch the DB reads in `match()`
+## Still unverified since step 16: `art box: locked`
 
-`lib/features/scan/art_matcher.dart`, in `PHashArtMatcher.match()` (~line 210).
+The diagnostics `art box:` line should read **`locked`**, not `fixed roi`, on a
+standard (non-Pendulum, non-full-art) card.
 
-It currently `await`s `CardRepository.getByPasscode` **once per candidate** — up to
-`ArtMatchTuning.candidateCount` (5) serial round trips through the sqflite isolate.
-This sits *after* the agreement gate, so all of it is perceived latency.
-
-Collapse to one `WHERE passcode IN (?,?,?,?,?)`:
-
-- new batched method on `lib/data/db/dao/card_dao.dart`;
-- a passthrough on `lib/data/repositories/card_repository.dart`;
-- `match()` preserves ranked order and still **skips passcodes absent from the
-  `cards` table** — that skip is load-bearing (the index keys every
-  `card_images[i].id`, the DB stores only `card_images[0]`), and
-  `ArtCandidate.rankedPasscode` must keep carrying the index key or the debounce
-  regresses. See `ScanState.matchedIndexPasscode`.
-
-Project rules that apply: **no SQL outside `lib/data/db/`**, and **every DAO method
-gets a test before the feature that consumes it**.
+That has never been confirmed on any device. Step 16 corrected an
+`ArtMatchTuning.artBoxRoi` whose 1.147 aspect made `OpenCvCardDetector._findArtBox`
+reject on every standard card unconditionally, so the art-box correction had
+never once fired. If it still says `fixed roi`, that is a bigger thread than any
+threshold here and should be chased first — recognition accuracy would still be
+resting on the fixed fractions. See `docs/scan_pipeline_review.md` finding 1.
 
 ---
 
-## Do *not* change `artAgreementFrames` (2 → 1) as part of this
+## Exposure compensation: watch for the CameraX risk
 
-It would halve the remaining wait, and the statistical case for 2 is much weaker
-than it was — with the 256-bit descriptor only ~1.2 % of cards have a spurious
-neighbour within `autoMatchMaxDistance`, where at 64 bits the gate was meaningless.
+This is the highest-risk change in step 18. It issues real
+`setExposureOffset` calls on a device whose camera stack is the least reliable
+part of the app (see the `camerax-image-stream-instability` memory).
 
-But frame agreement also rejects **motion blur and mid-movement frames**, which no
-amount of descriptor width helps with. Only revisit if it still feels slow after
-changes 2 and 3, and treat it as a quality trade rather than a free win.
+Watch for: the preview going black, the `cam:` line reading `STALLED`, or `r=`
+climbing. If any of that correlates with `ev=` moving, the fastest bisect is to
+set `FrameQualityTuning.exposureStep = 0`, which makes `nextExposureOffset`
+return the current value forever and takes the platform call out of the loop
+without removing any other part of the gate.
 
 ---
 
-## Separate, more important, still unverified
+## Capture samples while you are there
 
-The diagnostics **`art box:`** line should now read **`locked`** rather than
-`fixed roi` on a standard (non-Pendulum, non-full-art) card.
+The diagnostics box now has a **`[ save this frame ]`** button. It writes the
+rectified card and its art crop as PGM plus a JSON sidecar and opens the share
+sheet.
 
-That has never been true on any previous build: step 16 corrected an
-`ArtMatchTuning.artBoxRoi` whose 1.147 aspect made `_findArtBox` reject on every
-standard card, unconditionally, on every device. See
-`docs/scan_pipeline_review.md` finding 1.
+Grab 5–10 on genuinely hard cards — Secret Rares under a lamp, sleeved cards,
+anything that reads `card detected, frame poor` or ranks far away while looking
+fine. That corpus is the precondition
+`.claude/skills/scan-pipeline.md` sets before *any* image preprocessing
+(highlight normalisation, CLAHE, a wider art-box search) can honestly be
+evaluated — and preprocessing is the next real lever on accuracy, since the
+descriptor and the index are already as good as measurement has made them.
 
-**If it still says `fixed roi` on device, that is a bigger thread than latency and
-should be chased first** — it would mean the corrected ROI is not reaching the
-detector, and recognition accuracy is still resting on the fixed fractions.
+PGM opens directly in PIL/OpenCV, so `tools/` can analyse them with the same
+`Image.open` the index builder uses.
 
-Two related items are also still deliberately open, both needing hardware rather
-than analysis: `CardDetectionTuning.innerQuadMinAreaRatio` (still 0.78 — find out
-whether the now-live `_findArtBox` makes the nested descent unnecessary before
-re-tuning it), and the passcode ROI filter (still off; its coordinate space is
-genuinely wrong — the *unrotated* sensor size is passed for boxes ML Kit reports in
-rotated space).
+---
+
+## Collection UX to sanity-check
+
+Nothing here is risky, but it is all new on device:
+
+- the standard list is unchanged; both grid modes render and the choice survives
+  leaving the screen (it is persisted in `meta`);
+- the filter sheet composes with the search box, Reset keeps the query, and the
+  filter button's count matches what is applied;
+- the Set picker now sits **above** condition/edition/language in both the scan
+  review gate and the collection edit sheet, so the keyboard no longer covers
+  the controls below it — this was the reported annoyance;
+- the surface hint no longer collides with "Point at a card".
 
 ---
 
@@ -135,8 +124,22 @@ rotated space).
 
 ```
 flutter analyze                    # must be clean
-flutter test                       # 321 baseline; expect more with the new DAO test
+flutter test                       # 384 baseline
+pytest tools/                      # 5 tests, untouched by step 18
 ```
 
-Then on device: re-read the `det:` line to confirm the cadence change landed, and
-time a few identifications by feel against the 1–2 s starting point.
+**App name**: if the launcher still reads `ygo_scanner`, that is a stale install,
+not a source bug — the manifest has been correct since `7bccff3`. `flutter clean`,
+uninstall the package, reinstall.
+
+---
+
+## Still open, deliberately
+
+`autoMatchMaxDistance`/`maxHammingDistance` at 48/72,
+`CardDetectionTuning.innerQuadMinAreaRatio` at 0.78, the passcode ROI filter off
+(its coordinate space is genuinely wrong — the *unrotated* sensor size is passed
+for boxes ML Kit reports in rotated space), and `artAgreementFrames` at 2.
+That last one is worth revisiting **only after** the quality gate is calibrated:
+the gate now removes the motion-blur frames that were the main argument for
+requiring two, so the trade may look different than it did in step 17.

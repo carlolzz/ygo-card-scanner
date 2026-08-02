@@ -14,9 +14,11 @@ import 'package:ygo_scanner/data/seed/fake_collection_seed.dart';
 import 'package:ygo_scanner/features/settings/settings_providers.dart';
 import 'package:ygo_scanner/features/scan/art_matcher.dart';
 import 'package:ygo_scanner/features/scan/art_providers.dart';
+import 'package:ygo_scanner/features/scan/frame_quality.dart';
 import 'package:ygo_scanner/features/scan/hash_index.dart';
 import 'package:ygo_scanner/features/scan/scan_controller.dart';
 import 'package:ygo_scanner/features/scan/scan_providers.dart';
+import 'package:ygo_scanner/features/scan/scan_sample.dart';
 import 'package:ygo_scanner/features/scan/scan_state.dart';
 import 'package:ygo_scanner/models/app_settings.dart';
 import 'package:ygo_scanner/models/card_condition.dart';
@@ -38,6 +40,8 @@ class _FakeArtMatcher implements ArtMatcher {
     bool includeNearest = false,
     Size? viewportSize,
   }) async => const ArtFrameResult(ArtFrameStatus.notDetected, []);
+  @override
+  ArtSample? get lastSample => null;
 }
 
 // Seeded fixture passcodes (see fake_collection_seed.dart).
@@ -69,12 +73,40 @@ void main() {
   var fakeCandidates = <ArtCandidate>[];
 
   /// One frame of artwork: a nearest hit at [distance], or nothing (null).
-  Future<void> feedArt(String? passcode, {int distance = 2}) async {
+  Future<void> feedArt(
+    String? passcode, {
+    int distance = 2,
+    ArtFrameStatus status = ArtFrameStatus.noFrame,
+    FrameQuality? quality,
+  }) async {
     artReadings.add(
-      ArtReading(artSeq++, passcode == null ? null : HashMatch(passcode, distance)),
+      ArtReading(
+        artSeq++,
+        passcode == null ? null : HashMatch(passcode, distance),
+        status: status,
+        quality: quality,
+      ),
     );
     await settle();
   }
+
+  /// A frame where a card was found and rectified but its art crop was rejected
+  /// before hashing — the blur/glare gate.
+  Future<void> feedLowQuality({bool glare = false}) => feedArt(
+    null,
+    status: ArtFrameStatus.lowQuality,
+    quality: glare
+        ? const FrameQuality(sharpness: 9999, glare: 0.9)
+        : const FrameQuality(sharpness: 0, glare: 0),
+  );
+
+  /// A frame where a card was detected and hashed but nothing ranked close
+  /// enough to auto-present — the state that used to render "Point at a card".
+  Future<void> feedUnmatched() => feedArt(
+    null,
+    status: ArtFrameStatus.detected,
+    quality: const FrameQuality(sharpness: 9999, glare: 0),
+  );
 
   Future<void> feedOcr(String? passcode) async {
     readings.add(PasscodeReading(ocrSeq++, passcode));
@@ -334,6 +366,172 @@ void main() {
         await feedArt(altArtId);
         expect(state().status, ScanStatus.detecting);
         expect(state().matchedCard, isNull);
+      });
+    });
+
+    group('image-quality gate', () {
+      // The reason the gate exists. A hand-held card reads cleanly most of the
+      // time but blinks: one glare frame, one shake. Those frames used to take
+      // the empty-frame branch, which *clears* the agreement buffer — so a card
+      // that was 80% readable could never accumulate `artAgreementFrames`
+      // consecutive good frames and simply never resolved.
+      test('a rejected frame does not clear a run of agreement', () async {
+        fakeCandidates = [const ArtCandidate(beCard, 2)];
+        // One good frame, one bad, then enough good ones to reach the gate.
+        await feedArt(blueEyes);
+        expect(state().artAgreementBuffer, [blueEyes]);
+
+        await feedLowQuality();
+        expect(
+          state().artAgreementBuffer,
+          [blueEyes],
+          reason: 'the skipped frame must neither confirm nor contradict',
+        );
+
+        for (var i = 1; i < ScanTuning.artAgreementFrames; i++) {
+          await feedArt(blueEyes);
+        }
+        await settle();
+        expect(state().status, ScanStatus.matched);
+      });
+
+      // `emptyFrameCount` drives the post-confirm debounce, the spec's
+      // non-optional guard against one card logging thirty times. A stream of
+      // unreadable frames must not be able to retire a confirmed card's
+      // suppression while it is still sitting under the lens.
+      test('a rejected frame does not advance the post-confirm debounce',
+          () async {
+        await feedArt(null);
+        expect(state().emptyFrameCount, 1);
+
+        await feedLowQuality();
+        expect(state().emptyFrameCount, 1);
+      });
+
+      test('it reports blur and glare separately', () async {
+        await feedLowQuality();
+        expect(state().hint, ScanHint.blurry);
+
+        await feedLowQuality(glare: true);
+        expect(state().hint, ScanHint.glare);
+      });
+
+      // The failsafe. Both thresholds are absolute values on a scene-dependent
+      // measure; if they are wrong for some device the failure mode without
+      // this is that recognition never works again, with every on-screen signal
+      // still green.
+      test('the gate stops rejecting after a streak, so it cannot wedge',
+          () async {
+        for (var i = 0; i < FrameQualityTuning.maxConsecutiveSkips; i++) {
+          await feedLowQuality();
+          expect(state().qualitySkipStreak, i + 1);
+        }
+        // Past the cap the frame falls through to the normal path, which for a
+        // reading carrying no match is the empty-frame branch.
+        await feedLowQuality();
+        expect(state().emptyFrameCount, 1);
+        expect(state().qualitySkipStreak, 0);
+      });
+
+      test('a good frame clears the skip streak', () async {
+        await feedLowQuality();
+        expect(state().qualitySkipStreak, 1);
+
+        await feedArt(blueEyes);
+        expect(state().qualitySkipStreak, 0);
+        expect(state().hint, ScanHint.none);
+      });
+    });
+
+    group('detected but unidentified', () {
+      // The headline defect. A frame that found, rectified and hashed the card
+      // but matched nothing left the machine in `detecting`, which the banner
+      // rendered as "Point at a card" — telling the user to do the one thing
+      // they were already doing, with no way out.
+      test('a detected-but-unmatched frame is not reported as an empty frame',
+          () async {
+        await feedUnmatched();
+        expect(state().status, ScanStatus.detecting);
+        expect(state().unmatchedStreak, 1);
+        expect(state().hint, ScanHint.identifying);
+      });
+
+      test('a frame with no card at all still reports nothing', () async {
+        await feedArt(null);
+        expect(state().unmatchedStreak, 0);
+        expect(state().hint, ScanHint.none);
+      });
+
+      test('the banner becomes actionable after a streak', () async {
+        for (var i = 0; i < FrameQualityTuning.unmatchedStreakForHint - 1; i++) {
+          await feedUnmatched();
+          expect(state().hint, ScanHint.identifying);
+        }
+        await feedUnmatched();
+        expect(state().hint, ScanHint.unidentified);
+      });
+
+      test('a card coming into range clears the streak', () async {
+        await feedUnmatched();
+        await feedUnmatched();
+        expect(state().unmatchedStreak, 2);
+
+        await feedArt(blueEyes);
+        expect(state().unmatchedStreak, 0);
+        expect(state().hint, ScanHint.none);
+      });
+
+      // The escape hatch: `showCandidates` is guarded on `matched` and could not
+      // be reached from here, so the ranked hits that exist out to
+      // `maxHammingDistance` were never offered at all.
+      test('showBestGuesses resolves the last frame into the candidate panel',
+          () async {
+        fakeCandidates = const [ArtCandidate(dmCard, 40)];
+        await feedUnmatched();
+        await controller().showBestGuesses();
+        await settle();
+
+        expect(state().status, ScanStatus.candidates);
+        expect(state().candidates.single.card.passcode, dmCard.passcode);
+        expect(state().hint, ScanHint.none);
+      });
+
+      test('showBestGuesses with nothing close resumes instead of showing an '
+          'empty panel', () async {
+        fakeCandidates = const [];
+        await feedUnmatched();
+        await controller().showBestGuesses();
+        await settle();
+
+        expect(state().status, ScanStatus.detecting);
+        expect(state().candidates, isEmpty);
+        expect(
+          state().unmatchedStreak,
+          0,
+          reason: 'or the offer is re-made on the very next frame',
+        );
+      });
+
+      test('a pick from those guesses goes through the same review gate',
+          () async {
+        fakeCandidates = const [ArtCandidate(dmCard, 40)];
+        await feedUnmatched();
+        await controller().showBestGuesses();
+        await settle();
+
+        controller().selectCandidate(dmCard);
+        expect(state().status, ScanStatus.matched);
+        expect(state().matchedCard, dmCard);
+      });
+
+      test('showBestGuesses is inert once a result already awaits the user',
+          () async {
+        fakeCandidates = [const ArtCandidate(beCard, 2)];
+        await agreeArt(blueEyes);
+        expect(state().status, ScanStatus.matched);
+
+        await controller().showBestGuesses();
+        expect(state().status, ScanStatus.matched);
       });
     });
   });

@@ -2,6 +2,7 @@ import 'app_theme_mode.dart';
 import 'card_condition.dart';
 import 'card_edition.dart';
 import 'card_language.dart';
+import 'collection_view_mode.dart';
 
 /// The user's persisted preferences.
 ///
@@ -22,6 +23,7 @@ class AppSettings {
     this.showScanDiagnostics = false,
     this.showScanHelp = true,
     this.confirmBeforeDelete = true,
+    this.collectionViewMode = CollectionViewMode.standard,
   });
 
   /// Pre-selected grade for a newly logged card, in both the scan review gate
@@ -50,6 +52,15 @@ class AppSettings {
   /// be undone.
   final bool confirmBeforeDelete;
 
+  /// How densely the collection list renders. Persisted, unlike an ephemeral
+  /// view toggle, because it is a browsing preference the user sets once and a
+  /// reset on every app start would be a small, repeated annoyance.
+  ///
+  /// Deliberately has no row on the Settings screen — its control lives on the
+  /// collection screen, where the effect is visible. `showScanDiagnostics` has
+  /// the same shape in reverse (a Settings row *and* a scan-screen shortcut).
+  final CollectionViewMode collectionViewMode;
+
   AppSettings copyWith({
     CardCondition? defaultCondition,
     CardEdition? defaultEdition,
@@ -58,6 +69,7 @@ class AppSettings {
     bool? showScanDiagnostics,
     bool? showScanHelp,
     bool? confirmBeforeDelete,
+    CollectionViewMode? collectionViewMode,
   }) {
     return AppSettings(
       defaultCondition: defaultCondition ?? this.defaultCondition,
@@ -67,6 +79,7 @@ class AppSettings {
       showScanDiagnostics: showScanDiagnostics ?? this.showScanDiagnostics,
       showScanHelp: showScanHelp ?? this.showScanHelp,
       confirmBeforeDelete: confirmBeforeDelete ?? this.confirmBeforeDelete,
+      collectionViewMode: collectionViewMode ?? this.collectionViewMode,
     );
   }
 }

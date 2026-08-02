@@ -1,5 +1,9 @@
+# `name` is the Dart package name and must stay `ygo_scanner` — every file in
+# lib/ and test/ imports `package:ygo_scanner/...`. The *display* name is
+# `android:label` in the Android manifest and CFBundleDisplayName/CFBundleName
+# on iOS, both of which read "YGO Scanner".
 name: ygo_scanner
-description: "A new Flutter project."
+description: "Catalogue a physical Yu-Gi-Oh card collection by camera."
 publish_to: 'none'
 version: 0.1.0+1
 

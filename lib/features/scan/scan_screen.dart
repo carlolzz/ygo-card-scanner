@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart' show listEquals;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:share_plus/share_plus.dart';
 
 import '../../core/constants.dart';
 import '../../core/routes.dart';
@@ -22,7 +23,9 @@ import 'art_providers.dart';
 import 'camera_service.dart';
 import 'card_detector.dart';
 import 'detector_isolate.dart';
+import 'frame_quality.dart';
 import 'scan_controller.dart';
+import 'scan_sample.dart';
 import 'scan_geometry.dart';
 import 'scan_providers.dart';
 import 'scan_state.dart';
@@ -162,7 +165,7 @@ class _ScanScreenState extends ConsumerState<ScanScreen>
               ref.watch(scanHelpEnabledProvider))
             const _HelpPanel(),
           // Last, so the top overlays stay above every panel.
-          _TopOverlays(status: scan.status),
+          _TopOverlays(status: scan.status, hint: scan.hint),
         ],
       ),
     );
@@ -288,64 +291,47 @@ class _ViewportProbeState extends ConsumerState<_ViewportProbe> {
 }
 
 /// A card-shaped guide the user fills with the *whole* card so its artwork
-/// fills the frame, with a note above it about the surface to lay cards on.
+/// fills the frame.
 ///
 /// The box's geometry comes from [reticleRectInViewport], the same function the
 /// detector's search region is derived from — so the box the user is asked to
 /// fill and the box actually searched cannot drift apart.
 ///
-/// **That is why the hint is `Positioned` against the box rather than stacked
-/// above it in a `Column`.** [reticleRectInViewport] is a `Rect.fromCenter` on
-/// the viewport's centre; a centred column of "text + box" would push the drawn
-/// box up by half the text's height while the searched region stayed exactly
-/// where it was, silently breaking that correspondence. Anchoring by the hint's
-/// *bottom* also means a two-line wrap grows upwards, away from the box.
-class _ReticleOverlay extends ConsumerWidget {
+/// **Nothing but the box may live in this widget's centred layout.**
+/// [reticleRectInViewport] is a `Rect.fromCenter` on the viewport's centre, so
+/// wrapping the box in a `Column` with anything above it would push the drawn
+/// box off-centre while the searched region stayed exactly where it was,
+/// silently breaking that correspondence. The surface hint therefore lives in
+/// [_TopOverlays] — anchored to the app bar, in the column it shares with the
+/// status banner it used to collide with.
+class _ReticleOverlay extends StatelessWidget {
   const _ReticleOverlay();
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    // Part of the on-screen help, so it follows the same Settings switch as the
-    // bottom how-to box. Suppressed while diagnostics is on regardless: that
-    // overlay pushes the status banner down into this exact strip, and an
-    // overlap here is the bug step 13 already fixed once.
-    final showHint =
-        ref.watch(scanHelpEnabledProvider) &&
-        !ref.watch(scanDiagnosticsEnabledProvider);
+  Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (context, constraints) {
         final reticle = reticleRectInViewport(constraints.biggest);
-        return Stack(
-          children: [
-            if (showHint)
-              Positioned(
-                left: AppSpacing.md,
-                right: AppSpacing.md,
-                bottom: constraints.maxHeight - reticle.top + AppSpacing.sm,
-                child: const _SurfaceHint(),
+        return Center(
+          child: Container(
+            width: reticle.width,
+            height: reticle.height,
+            alignment: Alignment.bottomCenter,
+            padding: const EdgeInsets.all(AppSpacing.sm),
+            decoration: BoxDecoration(
+              border: Border.all(
+                color: AppPalette.dark.accent,
+                width: ScanReticleTokens.borderWidth,
               ),
-            Center(
-              child: Container(
-                width: reticle.width,
-                height: reticle.height,
-                alignment: Alignment.bottomCenter,
-                padding: const EdgeInsets.all(AppSpacing.sm),
-                decoration: BoxDecoration(
-                  border: Border.all(
-                    color: AppPalette.dark.accent,
-                    width: ScanReticleTokens.borderWidth,
-                  ),
-                  borderRadius:
-                      BorderRadius.circular(ScanReticleTokens.cornerRadius),
-                ),
-                child: Text(
-                  AppStrings.scanHint,
-                  textAlign: TextAlign.center,
-                  style: TextStyle(color: AppPalette.dark.onSurface),
-                ),
-              ),
+              borderRadius:
+                  BorderRadius.circular(ScanReticleTokens.cornerRadius),
             ),
-          ],
+            child: Text(
+              AppStrings.scanHint,
+              textAlign: TextAlign.center,
+              style: TextStyle(color: AppPalette.dark.onSurface),
+            ),
+          ),
         );
       },
     );
@@ -828,24 +814,56 @@ class _HelpLine extends StatelessWidget {
 }
 
 /// The stack of overlays pinned under the app bar, in a single column so their
-/// order is structural rather than a coincidence of two equal top insets: the
-/// developer diagnostics box sits **above** the status banner, and the banner
-/// moves down to make room whenever diagnostics is on.
+/// order is structural rather than a coincidence of independent insets: the
+/// developer diagnostics box, then the status banner, then the surface hint —
+/// each pushing the next one down.
 ///
-/// Both are fixed to the dark palette — they sit on live camera imagery.
+/// **The surface hint lives here, not next to the reticle.** It used to be a
+/// `Positioned` anchored to `reticle.top` inside [_ReticleOverlay], while the
+/// banner grew downward from the app bar — two unrelated coordinate systems both
+/// growing toward the middle of the screen, which overlapped by ~35pt on a
+/// 360x640 viewport and closed entirely under text scaling or a taller status
+/// bar. In one column they cannot collide at all.
+///
+/// This does **not** reintroduce the trap documented on [_ReticleOverlay]: that
+/// warns against putting the hint and the guide box in one *centred* `Column`,
+/// which would shift the drawn box up by half the text's height while
+/// `detectionRoiInFrame` kept searching the old region. This column is
+/// top-aligned and contains no box — the reticle stays a `Center` widget, so
+/// `reticleRectInViewport` remains the single source of truth for both the
+/// drawing and the search.
+///
+/// All three are fixed to the dark palette — they sit on live camera imagery.
 class _TopOverlays extends ConsumerWidget {
-  const _TopOverlays({required this.status});
+  const _TopOverlays({required this.status, required this.hint});
 
   final ScanStatus status;
+  final ScanHint hint;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final diagnostics = ref.watch(scanDiagnosticsEnabledProvider);
+    // Only while the camera is actually being pointed at something. During a
+    // review the diagnostics box is *stale* anyway — `_resolveArtMatch` sets
+    // `scanPaused`, so `artReadings` stops emitting and its recognition lines
+    // freeze on the last pre-match frame — and it sits over the review panel
+    // while the user is entering card details.
+    final scanning =
+        status == ScanStatus.detecting || status == ScanStatus.reading;
+    final diagnostics = scanning && ref.watch(scanDiagnosticsEnabledProvider);
+    // Part of the on-screen help, so it follows the same Settings switch as the
+    // bottom how-to box. Suppressed while diagnostics is on purely for clutter
+    // now that an overlap is structurally impossible.
+    final showHint =
+        scanning &&
+        ref.watch(scanHelpEnabledProvider) &&
+        !ref.watch(scanDiagnosticsEnabledProvider);
     return SafeArea(
       child: Align(
         alignment: Alignment.topCenter,
         child: Padding(
-          padding: const EdgeInsets.only(top: kToolbarHeight + AppSpacing.sm),
+          padding: const EdgeInsets.symmetric(
+            horizontal: AppSpacing.md,
+          ).copyWith(top: kToolbarHeight + AppSpacing.sm),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -853,7 +871,11 @@ class _TopOverlays extends ConsumerWidget {
                 const _DiagnosticsBox(),
                 const SizedBox(height: AppSpacing.sm),
               ],
-              _StatusBanner(status: status),
+              _StatusBanner(status: status, hint: hint),
+              if (showHint) ...[
+                const SizedBox(height: AppSpacing.sm),
+                const _SurfaceHint(),
+              ],
             ],
           ),
         ),
@@ -944,15 +966,31 @@ class _DiagnosticsBoxState extends ConsumerState<_DiagnosticsBox> {
       switch (status) {
         ArtFrameStatus.noFrame => AppStrings.scanDiagnosticsNoFrame,
         ArtFrameStatus.notDetected => AppStrings.scanDiagnosticsNotDetected,
+        ArtFrameStatus.lowQuality => AppStrings.scanDiagnosticsLowQuality,
         ArtFrameStatus.detected => AppStrings.scanDiagnosticsDetected,
       },
     ];
-    if (reading != null && status == ArtFrameStatus.detected) {
+    // Shown for both statuses that assessed a crop, because the interesting
+    // reading is the one *without* a `!`: a sharp, glare-free frame whose
+    // nearest card is still far away means the crop is landing in the wrong
+    // place, not that the photograph is bad. That is the single measurement
+    // this overlay exists to make possible.
+    if (reading != null &&
+        (status == ArtFrameStatus.detected ||
+            status == ArtFrameStatus.lowQuality)) {
+      lines.add(
+        describeFrameQuality(
+          reading.quality,
+          ref.watch(scanExposureOffsetProvider),
+        ),
+      );
       lines.add(
         reading.artBoxLocked
             ? AppStrings.scanDiagnosticsArtBoxLocked
             : AppStrings.scanDiagnosticsArtBoxFallback,
       );
+    }
+    if (reading != null && status == ArtFrameStatus.detected) {
       if (reading.nearest.isEmpty) {
         lines.add(AppStrings.scanDiagnosticsNoCandidates);
       } else {
@@ -984,29 +1022,124 @@ class _DiagnosticsBoxState extends ConsumerState<_DiagnosticsBox> {
                 fontFamily: ScanDiagnosticsTokens.fontFamily,
               ),
             ),
+          const _CaptureSampleButton(),
         ],
       ),
     );
   }
 }
 
-class _StatusBanner extends StatelessWidget {
-  const _StatusBanner({required this.status});
+/// Saves the pixels the pipeline last hashed, and hands them to the share sheet.
+///
+/// The point is not debugging convenience — it is that
+/// `.claude/skills/scan-pipeline.md` forbids adding image preprocessing "before
+/// you have real failure samples to test against", and there was previously no
+/// way to obtain one: the rectified card lives for a few milliseconds inside a
+/// detector isolate and is never written anywhere. A glare-blown Secret Rare
+/// photographed by *this* phone on *this* table is the only honest input for
+/// evaluating a fix, and clean YGOPRODeck renders cannot stand in for it.
+class _CaptureSampleButton extends ConsumerStatefulWidget {
+  const _CaptureSampleButton();
 
-  final ScanStatus status;
+  @override
+  ConsumerState<_CaptureSampleButton> createState() =>
+      _CaptureSampleButtonState();
+}
+
+class _CaptureSampleButtonState extends ConsumerState<_CaptureSampleButton> {
+  bool _busy = false;
+
+  Future<void> _capture() async {
+    setState(() => _busy = true);
+    String message;
+    List<String> paths = const [];
+    try {
+      final matcher = await ref.read(artMatcherProvider.future);
+      final sample = matcher.lastSample;
+      if (sample == null) {
+        message = AppStrings.scanCaptureNothingMessage;
+      } else {
+        paths = await writeArtSample(sample);
+        message = AppStrings.scanCaptureDoneMessage;
+      }
+    } catch (_) {
+      message = AppStrings.scanCaptureFailedMessage;
+    }
+    if (!mounted) return;
+    setState(() => _busy = false);
+    // App documents isn't browsable on Android, so sharing is the only way the
+    // files reach a machine that can look at them — same route as the CSV
+    // export.
+    if (paths.isNotEmpty) {
+      await SharePlus.instance.share(
+        ShareParams(
+          files: [for (final path in paths) XFile(path)],
+          subject: AppStrings.scanCaptureSubject,
+        ),
+      );
+    }
+    if (!mounted) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
+  }
 
   @override
   Widget build(BuildContext context) {
-    final label = switch (status) {
-      ScanStatus.detecting => AppStrings.scanDetecting,
-      ScanStatus.reading => AppStrings.scanReading,
-      // matched/candidates/readingCode/unknown/error render their own panels;
-      // confirmed is transient.
-      _ => null,
+    return TextButton(
+      style: TextButton.styleFrom(
+        padding: EdgeInsets.zero,
+        minimumSize: Size.zero,
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      ),
+      onPressed: _busy ? null : _capture,
+      child: Text(
+        AppStrings.scanCaptureButton,
+        style: TextStyle(
+          color: AppPalette.dark.accent,
+          fontSize: ScanDiagnosticsTokens.fontSize,
+          fontFamily: ScanDiagnosticsTokens.fontFamily,
+        ),
+      ),
+    );
+  }
+}
+
+/// The one line of feedback while scanning — and the only thing on screen that
+/// can explain a card the app is looking straight at but cannot name.
+///
+/// It used to switch on [ScanStatus] alone, which conflated four different frame
+/// outcomes into `detecting` and so rendered **"Point at a card"** at a card
+/// already centred, rectified and hashed. [ScanHint] carries that distinction;
+/// see the enum for why it isn't a status.
+class _StatusBanner extends ConsumerWidget {
+  const _StatusBanner({required this.status, required this.hint});
+
+  final ScanStatus status;
+  final ScanHint hint;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    // matched/candidates/readingCode/unknown/error render their own panels;
+    // confirmed is transient.
+    if (status != ScanStatus.detecting && status != ScanStatus.reading) {
+      return const SizedBox.shrink();
+    }
+    final label = switch (hint) {
+      ScanHint.blurry => AppStrings.scanBlurry,
+      ScanHint.glare => AppStrings.scanGlare,
+      ScanHint.identifying => AppStrings.scanIdentifying,
+      ScanHint.unidentified => AppStrings.scanUnidentified,
+      ScanHint.none when status == ScanStatus.reading => AppStrings.scanReading,
+      ScanHint.none => AppStrings.scanDetecting,
     };
-    if (label == null) return const SizedBox.shrink();
-    final busy = status == ScanStatus.reading;
-    return Container(
+    // A spinner means "working on it". Blur/glare advice is the opposite —
+    // nothing progresses until the user changes something — so it gets none.
+    final busy =
+        status == ScanStatus.reading || hint == ScanHint.identifying;
+    final actionable = hint == ScanHint.unidentified;
+
+    final banner = Container(
       padding: const EdgeInsets.symmetric(
         horizontal: AppSpacing.md,
         vertical: AppSpacing.sm,
@@ -1015,23 +1148,56 @@ class _StatusBanner extends StatelessWidget {
         color: _cameraScrim.withValues(alpha: 0.8),
         borderRadius: BorderRadius.circular(AppRadius.lg),
       ),
-      child: Row(
+      child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          if (busy) ...[
-            SizedBox(
-              width: 16,
-              height: 16,
-              child: CircularProgressIndicator(
-                strokeWidth: 2,
-                color: AppPalette.dark.accent,
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (busy) ...[
+                SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: AppPalette.dark.accent,
+                  ),
+                ),
+                const SizedBox(width: AppSpacing.sm),
+              ],
+              Flexible(
+                child: Text(
+                  label,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: AppPalette.dark.onSurface),
+                ),
+              ),
+            ],
+          ),
+          // The escape hatch. The ranked hits exist out to
+          // `ArtMatchTuning.maxHammingDistance`, well past the automatic gate —
+          // they simply were never offered, so a card the index knows but cannot
+          // confidently place had no route into the review gate at all.
+          if (actionable)
+            TextButton(
+              onPressed: ref
+                  .read(scanControllerProvider.notifier)
+                  .showBestGuesses,
+              child: Text(
+                AppStrings.scanShowGuessesButton,
+                style: TextStyle(color: AppPalette.dark.accent),
               ),
             ),
-            const SizedBox(width: AppSpacing.sm),
-          ],
-          Text(label, style: TextStyle(color: AppPalette.dark.onSurface)),
         ],
       ),
+    );
+    // Bounded so a two-line hint wraps inside the overlay column rather than
+    // stretching the banner across the whole preview.
+    return ConstrainedBox(
+      constraints: BoxConstraints(
+        maxWidth: MediaQuery.sizeOf(context).width * 0.8,
+      ),
+      child: banner,
     );
   }
 }
@@ -1105,6 +1271,13 @@ class _MatchedPanel extends ConsumerWidget {
                   ],
                 ),
                 const SizedBox(height: AppSpacing.md),
+                // First, above the chips: its search field opens the keyboard,
+                // which covers everything below it. Self-hides (and supplies its
+                // own trailing gap) when the card has no known printings.
+                _SetPicker(
+                  passcode: card.passcode,
+                  printingId: state.printingId,
+                ),
                 Wrap(
                   spacing: AppSpacing.xs,
                   children: [
@@ -1143,10 +1316,6 @@ class _MatchedPanel extends ConsumerWidget {
                         onSelected: () => controller.setLanguage(language),
                       ),
                   ],
-                ),
-                _SetPicker(
-                  passcode: card.passcode,
-                  printingId: state.printingId,
                 ),
                 const SizedBox(height: AppSpacing.md),
                 Row(
@@ -1221,6 +1390,11 @@ class _MatchedPanel extends ConsumerWidget {
 ///
 /// Hidden when the card has no known printings: the only option would then be
 /// "no specific set", and a dead control on the fast path is worse than none.
+///
+/// It sits **above** the condition/edition/language chips, because its search
+/// field raises the keyboard and everything below it would be covered. Its gap
+/// is therefore *trailing* rather than leading, so the panel spaces correctly
+/// whether it renders or collapses to nothing.
 class _SetPicker extends ConsumerWidget {
   const _SetPicker({required this.passcode, required this.printingId});
 
@@ -1238,7 +1412,6 @@ class _SetPicker extends ConsumerWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const SizedBox(height: AppSpacing.sm),
         Text(
           AppStrings.scanSetLabel,
           style: TextStyle(color: palette.onSurfaceMuted),
@@ -1250,6 +1423,7 @@ class _SetPicker extends ConsumerWidget {
           noSetLabel: AppStrings.scanNoSetOption,
           onSelected: ref.read(scanControllerProvider.notifier).setPrinting,
         ),
+        const SizedBox(height: AppSpacing.md),
       ],
     );
   }

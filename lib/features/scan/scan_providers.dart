@@ -157,7 +157,7 @@ Future<CameraService> scanCamera(Ref ref) async {
 /// `await for` over `camera.frames` with an awaited ML Kit read in the body. A
 /// broadcast controller buffers for a paused subscriber, and an `await for` is
 /// paused while its body awaits — so any read slower than
-/// [ScanTuning.frameInterval] (likely at 720p on mid-range hardware) grew an
+/// [ScanTuning.ocrFrameInterval] (likely at 720p on mid-range hardware) grew an
 /// unbounded backlog, and the agreement / empty-frame counters then ran over
 /// frames from seconds ago. Polling the newest cached frame instead means a slow
 /// read skips frames rather than falling behind, and comparing

@@ -56,6 +56,9 @@ class CollectionRepository {
   /// rarity"), for the collection filter row's chips.
   Future<List<String?>> rarityFilterOptions() => _dao.rarityFilterOptions();
 
+  /// Every value the collection filter sheet can offer, for its controls.
+  Future<CollectionFilterOptions> filterOptions() => _dao.filterOptions();
+
   Future<int> totalCardCount() => _dao.totalCardCount();
 
   Future<int> distinctCardCount() => _dao.distinctCardCount();

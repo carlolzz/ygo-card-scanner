@@ -25,7 +25,38 @@ class AppStrings {
   static const String collectionSortByName = 'Name';
   static const String collectionSortByDateAdded = 'Date added';
   static const String collectionSortByQuantity = 'Quantity';
+  static const String collectionSortTooltip = 'Sort by';
   static const String collectionSortDirectionTooltip = 'Toggle sort direction';
+
+  // The filter sheet and the view-density menu, the two controls that replaced
+  // the two horizontally-scrolling chip rows below the search box.
+  static const String collectionFiltersButton = 'Filters';
+  static const String collectionFiltersTitle = 'Filter collection';
+  static const String collectionFiltersApply = 'Apply';
+  static const String collectionFiltersReset = 'Reset';
+  static const String collectionFiltersAdvanced = 'Advanced filters';
+  static const String collectionMinifyButton = 'View';
+  static const String collectionMinifyTooltip = 'Change how much detail is '
+      'shown';
+
+  static const String collectionFilterConditionLabel = 'Condition';
+  static const String collectionFilterRarityLabel = 'Rarity';
+  static const String collectionFilterSetLabel = 'Set';
+  static const String collectionFilterEditionLabel = 'Edition';
+  static const String collectionFilterLanguageLabel = 'Language';
+  static const String collectionFilterLevelLabel = 'Level';
+  static const String collectionFilterFrameTypeLabel = 'Card frame';
+  static const String collectionFilterCardTypeLabel = 'Card type';
+  // One control, because YGOPRODeck stores both in `cards.race` — the monster
+  // type on a monster, the Spell/Trap type on a Spell or Trap.
+  static const String collectionFilterRaceLabel =
+      'Monster / Spell / Trap type';
+  static const String collectionFilterAttributeLabel = 'Attribute';
+  static const String collectionFilterArchetypeLabel = 'Archetype';
+  static const String collectionFilterAtkLabel = 'ATK';
+  static const String collectionFilterDefLabel = 'DEF';
+  static const String collectionFilterMinHint = 'Min';
+  static const String collectionFilterMaxHint = 'Max';
   static const String collectionQuantityLabel = 'Quantity';
   static const String collectionSetLabel = 'Set';
   // Its own detail row rather than the tail of the Set row: rarity is what
@@ -88,6 +119,17 @@ class AppStrings {
 
   static const String scanDetecting = 'Point at a card';
   static const String scanReading = 'Identifying…';
+
+  // The status banner used to say `scanDetecting` for every unresolved frame,
+  // including ones where the card had been found, rectified and hashed and only
+  // the *match* had failed — so the app told the user to point at a card that
+  // was already centred in the reticle, with no way out and no explanation.
+  // These four say what is actually wrong and, for the last one, what to do.
+  static const String scanBlurry = 'Hold steady';
+  static const String scanGlare = 'Too much glare — tilt the card';
+  static const String scanIdentifying = 'Card found — identifying…';
+  static const String scanUnidentified = 'Can\'t identify this card';
+  static const String scanShowGuessesButton = 'Show best guesses';
   static const String scanUnknownTitle = 'Not recognized';
   static const String scanUnknownMessage =
       'Couldn\'t match that card. Search for it by name instead.';
@@ -137,12 +179,26 @@ class AppStrings {
   static const String scanDiagnosticsNoFrame = 'no camera frame yet';
   static const String scanDiagnosticsNotDetected = 'no card detected';
   static const String scanDiagnosticsDetected = 'card detected';
+  // A card was found and rectified but its art crop was rejected before hashing.
+  // The `qual:` line below says which gate it failed.
+  static const String scanDiagnosticsLowQuality = 'card detected, frame poor';
   static const String scanDiagnosticsNoCandidates = 'detected, nothing close';
   // Whether the crop was corrected to a located artwork window, or fell back to
   // the fixed ROI — the first thing to check when a real card is detected but
   // every distance is large.
   static const String scanDiagnosticsArtBoxLocked = 'art box: located';
   static const String scanDiagnosticsArtBoxFallback = 'art box: fixed roi';
+  // Failure-sample capture. The scan-pipeline skill forbids adding image
+  // preprocessing before there are real failure samples to test against, and
+  // this is the only way to get one off the device — the rectified card exists
+  // for a few milliseconds inside a detector isolate and is written nowhere.
+  static const String scanCaptureButton = '[ save this frame ]';
+  static const String scanCaptureSubject = 'YGO Scanner recognition sample';
+  static const String scanCaptureDoneMessage = 'Frame saved — pick where to '
+      'send it.';
+  static const String scanCaptureNothingMessage =
+      'No frame has been ranked yet.';
+  static const String scanCaptureFailedMessage = 'Could not save the frame.';
 
   // Passcode OCR — the on-demand fallback, and a mode that stays on until the
   // user turns it off or leaves the screen.

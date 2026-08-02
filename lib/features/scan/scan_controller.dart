@@ -10,8 +10,8 @@ import '../../models/collection_entry.dart';
 import '../../models/ygo_card.dart';
 import '../collection/collection_providers.dart';
 import '../settings/settings_providers.dart';
+import 'art_matcher.dart';
 import 'art_providers.dart';
-import 'hash_index.dart';
 import 'scan_providers.dart';
 import 'scan_state.dart';
 
@@ -49,7 +49,7 @@ class ScanController extends _$ScanController {
     // Primary: continuous artwork ranking.
     ref.listen(artReadingsProvider, (previous, next) {
       next.when(
-        data: (reading) => _onArtReading(reading.top),
+        data: _onArtReading,
         error: (error, _) => _onCameraError(error),
         loading: () {},
       );
@@ -111,7 +111,7 @@ class ScanController extends _$ScanController {
   // Primary path: artwork.
   // ---------------------------------------------------------------------------
 
-  void _onArtReading(HashMatch? top) {
+  void _onArtReading(ArtReading reading) {
     final s = state;
     // Artwork is ignored outright in passcode mode: the user picked the other
     // tool, and it stays picked until they switch back (see [ScanMode]).
@@ -127,14 +127,58 @@ class ScanController extends _$ScanController {
       return;
     }
 
+    // A card was found but its artwork crop was not worth hashing. **Skip the
+    // frame**: it neither confirms nor contradicts the run in progress, so the
+    // agreement buffer survives untouched.
+    //
+    // That is the whole point. Previously a single glare blink or hand-shake
+    // frame fell into the empty-frame branch below and *cleared* the buffer, so
+    // a card that reads cleanly 80% of the time could never accumulate
+    // [ScanTuning.artAgreementFrames] consecutive good frames.
+    //
+    // Deliberately *not* an empty frame either: `emptyFrameCount` drives the
+    // post-confirm debounce, the spec's non-optional guard against one card
+    // logging thirty times, and a stream of blurry frames must not be able to
+    // retire a confirmed card's suppression while it sits under the lens.
+    //
+    // The streak cap is the failsafe — see [ScanState.qualitySkipStreak].
+    if (reading.status == ArtFrameStatus.lowQuality &&
+        s.qualitySkipStreak < FrameQualityTuning.maxConsecutiveSkips) {
+      final quality = reading.quality;
+      state = s.copyWith(
+        status: ScanStatus.detecting,
+        qualitySkipStreak: s.qualitySkipStreak + 1,
+        hint: quality != null && quality.isGlared
+            ? ScanHint.glare
+            : ScanHint.blurry,
+      );
+      return;
+    }
+
+    final top = reading.top;
+
     // No confident candidate this frame — treat as an empty frame.
     if (top == null || top.distance > ArtMatchTuning.autoMatchMaxDistance) {
       final empties = s.emptyFrameCount + 1;
+      // Distinguish "nothing there" from "a card is right here and I can't name
+      // it". Both leave the machine in `detecting`; only the second is worth
+      // saying something about, and it used to render "Point at a card".
+      final sawCard = reading.status == ArtFrameStatus.detected ||
+          reading.status == ArtFrameStatus.lowQuality;
+      final unmatched = sawCard ? s.unmatchedStreak + 1 : 0;
       state = s.copyWith(
         status: ScanStatus.detecting,
         artAgreementBuffer: const [],
         emptyFrameCount: empties,
         clearLastConfirmedPasscode: empties >= ScanTuning.debounceEmptyFrames,
+        qualitySkipStreak: 0,
+        unmatchedStreak: unmatched,
+        hint: switch (unmatched) {
+          0 => ScanHint.none,
+          _ when unmatched >= FrameQualityTuning.unmatchedStreakForHint =>
+            ScanHint.unidentified,
+          _ => ScanHint.identifying,
+        },
       );
       return;
     }
@@ -153,6 +197,11 @@ class ScanController extends _$ScanController {
         emptyFrameCount: 0,
         dismissCooldown: tick.cooldown,
         clearLastConfirmedPasscode: tick.release,
+        // A suppressed card is recognised perfectly well — saying "can't
+        // identify this card" about the one just logged would be its own lie.
+        unmatchedStreak: 0,
+        qualitySkipStreak: 0,
+        hint: ScanHint.none,
       );
       return;
     }
@@ -163,6 +212,9 @@ class ScanController extends _$ScanController {
         status: ScanStatus.reading,
         artAgreementBuffer: const [],
         emptyFrameCount: 0,
+        unmatchedStreak: 0,
+        qualitySkipStreak: 0,
+        hint: ScanHint.none,
       );
       return;
     }
@@ -172,6 +224,9 @@ class ScanController extends _$ScanController {
       status: ScanStatus.reading,
       artAgreementBuffer: buffer,
       emptyFrameCount: 0,
+      unmatchedStreak: 0,
+      qualitySkipStreak: 0,
+      hint: ScanHint.none,
     );
     // Resolve exactly once, on the frame that reaches N.
     if (buffer.length == ScanTuning.artAgreementFrames) {
@@ -226,6 +281,9 @@ class ScanController extends _$ScanController {
       language: _settings.language,
       clearPrintingId: true,
       quantity: 1,
+      unmatchedStreak: 0,
+      qualitySkipStreak: 0,
+      hint: ScanHint.none,
     );
   }
 
@@ -236,6 +294,55 @@ class ScanController extends _$ScanController {
     state = state.copyWith(
       status: ScanStatus.candidates,
       clearMatchedCard: true,
+    );
+  }
+
+  /// Offers the ranked alternatives for a card that is being detected and hashed
+  /// but never ranks close enough to auto-present — the way out of what was
+  /// otherwise an unbounded loop.
+  ///
+  /// Distinct from [showCandidates], which is guarded on [ScanStatus.matched]
+  /// and only re-opens a list already resolved. This one starts from
+  /// [ScanStatus.detecting]/[ScanStatus.reading] and resolves the frame the
+  /// matcher last ranked, whose hits are thresholded at
+  /// [ArtMatchTuning.maxHammingDistance] rather than the tighter automatic gate
+  /// — precisely "the best guesses".
+  ///
+  /// Pauses **before** the awaits for the same reason [_resolveArtMatch] does:
+  /// during the DB round trip the artwork stream would otherwise stay live and a
+  /// single frame could move the status on, silently discarding the result.
+  /// Nothing is auto-selected; a pick goes through the same review gate.
+  Future<void> showBestGuesses() async {
+    if (state.status != ScanStatus.detecting &&
+        state.status != ScanStatus.reading) {
+      return;
+    }
+    _setPaused(paused: true);
+    final matcher = await ref.read(artMatcherProvider.future);
+    final candidates = await matcher.match(
+      viewportSize: ref.read(scanViewportSizeProvider),
+    );
+    if (state.status != ScanStatus.detecting &&
+        state.status != ScanStatus.reading) {
+      return;
+    }
+    if (candidates.isEmpty) {
+      // Nothing even loosely close. Resume rather than show an empty panel, and
+      // reset the streak so the offer isn't re-made on the very next frame.
+      _setPaused(paused: false);
+      state = state.copyWith(
+        status: ScanStatus.detecting,
+        unmatchedStreak: 0,
+        hint: ScanHint.none,
+      );
+      return;
+    }
+    state = state.copyWith(
+      status: ScanStatus.candidates,
+      candidates: candidates,
+      clearMatchedCard: true,
+      unmatchedStreak: 0,
+      hint: ScanHint.none,
     );
   }
 
@@ -447,7 +554,7 @@ class ScanController extends _$ScanController {
     ref.invalidate(collectionEntriesProvider);
     // A scan logged against a set can introduce a rarity the collection did not
     // hold before, which the collection filter row offers as a chip.
-    ref.invalidate(collectionRarityOptionsProvider);
+    ref.invalidate(collectionFilterOptionsProvider);
 
     _setPaused(paused: false);
     state = state.copyWith(
@@ -468,6 +575,9 @@ class ScanController extends _$ScanController {
       agreementBuffer: const [],
       artAgreementBuffer: const [],
       emptyFrameCount: 0,
+      unmatchedStreak: 0,
+      qualitySkipStreak: 0,
+      hint: ScanHint.none,
     );
     // The chosen tool survives a save: in passcode mode go straight back to
     // reading codes for the next card instead of dropping into artwork
@@ -506,6 +616,9 @@ class ScanController extends _$ScanController {
       agreementBuffer: const [],
       artAgreementBuffer: const [],
       emptyFrameCount: 0,
+      unmatchedStreak: 0,
+      qualitySkipStreak: 0,
+      hint: ScanHint.none,
     );
     if (state.mode == ScanMode.passcode) {
       _beginPasscodeRead();

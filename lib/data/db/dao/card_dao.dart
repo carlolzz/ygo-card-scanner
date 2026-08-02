@@ -33,6 +33,30 @@ class CardDao {
     return YgoCard.fromMap(rows.first);
   }
 
+  /// Batched [getByPasscode]: one round trip for many passcodes.
+  ///
+  /// Returns **only the rows that exist** — a passcode with no `cards` row is
+  /// simply absent, the same information a null from [getByPasscode] carries —
+  /// and in **unspecified order** (SQLite returns rowid order for an `IN`
+  /// predicate). Callers that need a particular order must index the result by
+  /// passcode and walk their own list; see `PHashArtMatcher.match`, which has to
+  /// preserve Hamming rank.
+  ///
+  /// The placeholder list is built from the argument's **length only**, never
+  /// from its contents, so the query stays fully parameterized.
+  Future<List<YgoCard>> getByPasscodes(List<String> passcodes) async {
+    // `IN ()` is not valid SQL, and an empty candidate list is a normal case
+    // (nothing detected in the frame).
+    if (passcodes.isEmpty) return const [];
+    final placeholders = List.filled(passcodes.length, '?').join(', ');
+    final rows = await _db.query(
+      'cards',
+      where: 'passcode IN ($placeholders)',
+      whereArgs: passcodes,
+    );
+    return rows.map(YgoCard.fromMap).toList();
+  }
+
   /// Ranks prefix matches ('query%') above substring-only matches
   /// ('%query%') so a search for "Blue-Eyes" surfaces "Blue-Eyes White
   /// Dragon" before "Toon Blue-Eyes White Dragon".

@@ -10,7 +10,9 @@ import '../../core/theme/tokens.dart';
 import '../../data/repositories/card_repository.dart';
 import 'art_matcher.dart';
 import 'card_detector.dart';
+import 'camera_service.dart';
 import 'detector_isolate.dart';
+import 'frame_quality.dart';
 import 'hash_index.dart';
 import 'scan_providers.dart';
 
@@ -108,6 +110,7 @@ class ArtReading {
     this.nearest = const [],
     this.quad,
     this.artBox,
+    this.quality,
   });
 
   /// Monotonic frame counter, for debugging/logging only.
@@ -132,6 +135,11 @@ class ArtReading {
   /// sees highlighted is the region actually being hashed.
   final Rect? artBox;
 
+  /// How usable this frame's artwork crop was, or null when none was assessed
+  /// (no frame, or no card found). Drives the controller's skip gate, the
+  /// banner's advice, and the diagnostics `qual:` line.
+  final FrameQuality? quality;
+
   bool get artBoxLocked => artBox != null;
 }
 
@@ -144,10 +152,11 @@ class ArtReading {
 /// subscribing to `camera.frames`.** Ranking is now asynchronous (detection runs
 /// on a worker isolate), and a broadcast `StreamController` *buffers* for a
 /// paused subscriber — so an `await for` whose body outran
-/// [ScanTuning.frameInterval] would grow an unbounded backlog and the outline
+/// [ScanTuning.artFrameInterval] would grow an unbounded backlog and the outline
 /// would drift further behind reality the longer scanning went on. Polling
 /// always works on the newest cached frame, so the loop naturally paces itself
-/// at `max(frameInterval, detection time)` and can never fall behind. Comparing
+/// at `max(artFrameInterval, detection time)` and can never fall behind (which
+/// is also what makes that interval safe to lower). Comparing
 /// the sequence is what stops the same physical frame being ranked twice, which
 /// would otherwise let one frame satisfy [ScanTuning.artAgreementFrames] on its
 /// own.
@@ -165,6 +174,13 @@ Stream<ArtReading> artReadings(Ref ref) async* {
 
   var sequence = 0;
   var lastFrame = -1;
+  // Exposure compensation state. Held here rather than on the camera because it
+  // is a property of *this scanning session*: the service resets to auto
+  // metering on every start, so a value cached across a restart would describe a
+  // setting the device no longer has.
+  var exposure = 0.0;
+  var exposureSetAt = DateTime.fromMillisecondsSinceEpoch(0);
+  var lastRestarts = camera.health.restarts;
   while (!disposed) {
     await Future<void>.delayed(ScanTuning.artPollInterval);
     if (disposed) return;
@@ -188,6 +204,35 @@ Stream<ArtReading> artReadings(Ref ref) async* {
       viewportSize: ref.read(scanViewportSizeProvider),
     );
     if (disposed) return;
+
+    // A camera restart (the stall watchdog, or a resume) re-asserts
+    // ExposureMode.auto, which discards any offset we had set. Forget ours
+    // rather than let the two drift apart — otherwise the next nudge steps from
+    // a value the device isn't actually on.
+    final restarts = camera.health.restarts;
+    if (restarts != lastRestarts) {
+      lastRestarts = restarts;
+      exposure = 0;
+      ref.read(scanExposureOffsetProvider.notifier).set(0);
+    }
+
+    final quality = result.quality;
+    if (quality != null) {
+      final now = DateTime.now();
+      final wanted = nextExposureOffset(exposure, quality);
+      // Rate limited: each change is a platform round trip that re-meters the
+      // camera, and at this cadence an ungated loop would issue several a
+      // second on the least reliable part of the stack.
+      if (wanted != exposure &&
+          now.difference(exposureSetAt) >= FrameQualityTuning.exposureInterval) {
+        exposure = wanted;
+        exposureSetAt = now;
+        ref.read(scanExposureOffsetProvider.notifier).set(wanted);
+        await camera.setExposureCompensation(wanted);
+        if (disposed) return;
+      }
+    }
+
     yield ArtReading(
       sequence++,
       result.matches.isEmpty ? null : result.matches.first,
@@ -195,6 +240,25 @@ Stream<ArtReading> artReadings(Ref ref) async* {
       nearest: result.nearest,
       quad: result.quad,
       artBox: result.artBox,
+      quality: quality,
     );
   }
+}
+
+/// The exposure compensation currently applied by the artwork loop, for the
+/// diagnostics overlay.
+///
+/// Its own `keepAlive` provider rather than a field on [ArtReading] because the
+/// overlay repaints on a timer while readings can stop arriving entirely (a
+/// stalled camera, or a paused pipeline) — exactly when knowing what exposure
+/// the camera was left on matters most. `keepAlive` for the reason
+/// [ScanPaused]'s doc gives: writer and reader both use `ref.read`, which holds
+/// no subscription, so an autoDispose provider would be torn down between the
+/// write and the read and always report zero.
+@Riverpod(keepAlive: true)
+class ScanExposureOffset extends _$ScanExposureOffset {
+  @override
+  double build() => 0;
+
+  void set(double value) => state = value;
 }

@@ -18,6 +18,7 @@ import 'package:ygo_scanner/features/scan/art_providers.dart';
 import 'package:ygo_scanner/features/scan/camera_service.dart';
 import 'package:ygo_scanner/features/scan/hash_index.dart';
 import 'package:ygo_scanner/features/scan/scan_providers.dart';
+import 'package:ygo_scanner/features/scan/scan_sample.dart';
 import 'package:ygo_scanner/features/scan/scan_screen.dart';
 import 'package:ygo_scanner/features/settings/settings_providers.dart';
 import 'package:ygo_scanner/models/card_condition.dart';
@@ -44,6 +45,8 @@ class _FakeArtMatcher implements ArtMatcher {
     bool includeNearest = false,
     Size? viewportSize,
   }) async => const ArtFrameResult(ArtFrameStatus.notDetected, []);
+  @override
+  ArtSample? get lastSample => null;
 }
 
 void main() {
@@ -153,7 +156,7 @@ void main() {
   // The surface a card is lying on decides whether its own edges survive the
   // detector's Otsu/Canny pass, so this note is the highest-value thing on the
   // viewfinder — but it is still help text, and follows the same one switch.
-  testWidgets('the surface hint sits above the guide box and follows the '
+  testWidgets('the surface hint sits below the status banner and follows the '
       'same Settings toggle', (tester) async {
     await tester.runAsync(() async {
       await tester.pumpWidget(
@@ -175,21 +178,31 @@ void main() {
       final hint = find.text(AppStrings.scanSurfaceHint);
       expect(hint, findsOneWidget);
 
-      // Above the box, clear of it. Asserting the geometry rather than mere
-      // presence is the point: the hint is positioned off the reticle's own
-      // rect, because stacking the two in a `Column` would have moved the box
-      // itself — and the detector's search region is derived from where that
-      // box is. The reticle is the innermost `Container` around its own label.
+      // **The regression this pins.** The hint used to be `Positioned` against
+      // the reticle's rect while the banner grew down from the app bar — two
+      // unrelated coordinate systems both advancing toward the middle of the
+      // screen, which overlapped by ~35pt on a 360x640 viewport and closed
+      // entirely under text scaling or a taller status bar. They now share one
+      // `Column`, so the order is structural and a collision is impossible.
+      // Asserting the geometry rather than mere presence is the whole point.
+      final banner = find.text(AppStrings.scanDetecting);
+      expect(banner, findsOneWidget);
+      expect(
+        tester.getBottomLeft(banner).dy,
+        lessThanOrEqualTo(tester.getTopLeft(hint).dy),
+      );
+
+      // …and the box is still exactly centred, which is the invariant that
+      // would have broken silently had the hint been stacked above it in a
+      // `Column` instead: `reticleRectInViewport` is a `Rect.fromCenter` on the
+      // viewport centre and the detector's search region is derived from it, so
+      // moving the drawn box would silently desync it from the region searched.
       final reticle = find
           .ancestor(
             of: find.text(AppStrings.scanHint),
             matching: find.byType(Container),
           )
           .first;
-      expect(tester.getBottomLeft(hint).dy, lessThan(tester.getTopLeft(reticle).dy));
-
-      // …and the box is still exactly centred, which is the invariant that
-      // would have broken silently.
       final box = tester.getRect(reticle);
       final viewport = tester.getSize(find.byType(ScanScreen));
       expect(box.center.dy, moreOrLessEquals(viewport.height / 2, epsilon: 0.5));
@@ -278,6 +291,9 @@ class _InertCamera implements CameraService {
 
   @override
   set artCaptureEnabled(bool enabled) {}
+
+  @override
+  Future<void> setExposureCompensation(double ev) async {}
 
   @override
   CameraHealth get health => const CameraHealth(

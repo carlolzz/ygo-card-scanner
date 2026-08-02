@@ -223,6 +223,30 @@ class CollectionTileTokens {
 }
 
 /// Geometry of the shared set/expansion search box.
+/// Geometry of the minified collection grids.
+///
+/// Both modes are grids because the point of minifying is cards per screen, and
+/// a row holds one card however little it says about it. The two differ only in
+/// density and whether a name is captioned.
+class CollectionGridTokens {
+  const CollectionGridTokens._();
+
+  /// Target cell width; the grid fits as many whole columns as this allows, so
+  /// the layout adapts to the viewport instead of pinning a column count that is
+  /// right on one device and wrong on the next.
+  static const double artworkAndNameExtent = 116;
+  static const double artworkOnlyExtent = 84;
+
+  static const double spacing = AppSpacing.sm;
+
+  /// Vertical room for the captioned name, on top of the artwork's own height.
+  /// Two lines at the caption size plus its padding — cards with long names are
+  /// the norm, not the exception ("Elemental HERO Shining Flare Wingman").
+  static const double nameCaptionHeight = 34;
+
+  static const double nameFontSize = 11;
+}
+
 class PrintingPickerTokens {
   const PrintingPickerTokens._();
 
@@ -273,16 +297,42 @@ class ScanTuning {
   /// thumb. Three readings is roughly a second at the camera's throttle.
   static const int dismissCooldownFrames = 3;
 
-  /// Minimum wall-clock gap between OCR passes. The bottleneck is the human
-  /// flipping cards, so we optimize for stability over raw throughput
-  /// (~1 card/second) and avoid burning battery on every camera frame.
-  static const Duration frameInterval = Duration(milliseconds: 300);
+  /// Minimum wall-clock gap between OCR passes, in passcode mode. The
+  /// bottleneck is the human flipping cards, so we optimize for stability over
+  /// raw throughput (~1 card/second) and avoid burning battery on every camera
+  /// frame.
+  static const Duration ocrFrameInterval = Duration(milliseconds: 300);
+
+  /// Minimum wall-clock gap between artwork-recognition passes — the primary
+  /// path's cadence, and half [ocrFrameInterval].
+  ///
+  /// Latency, not throughput, is what this buys. A match needs
+  /// [artAgreementFrames] agreeing frames, so the *wait* before anything can
+  /// appear on screen is at least that many intervals; at 300ms most of the
+  /// 1-2s it took to identify a card was spent with nothing computing.
+  ///
+  /// Three things had to be true before this could safely drop, and all three
+  /// are now:
+  ///  * detection runs on a worker isolate, so a faster cadence no longer
+  ///    competes with Flutter painting the preview;
+  ///  * [ScanPaused] genuinely pauses (it was `autoDispose` and therefore
+  ///    inert), so a faster cadence isn't wasted work behind a review panel;
+  ///  * `artReadings` polls [CameraService.frameSequence] rather than
+  ///    subscribing to a broadcast stream, so it **cannot** build a backlog —
+  ///    a pass slower than this interval simply skips frames.
+  ///
+  /// That last point makes this a ceiling on latency rather than a promise of
+  /// throughput: the loop self-paces at `max(artFrameInterval, D)` where `D` is
+  /// one detect+hash+rank pass (the diagnostics overlay's `det:` line). If `D`
+  /// exceeds this, lowering it further buys nothing and detection cost is the
+  /// thing to attack instead.
+  static const Duration artFrameInterval = Duration(milliseconds: 150);
 
   /// How often the artwork pipeline looks for a fresh camera frame. Shorter than
-  /// [frameInterval] on purpose: the pipeline is self-paced (it only ranks when
-  /// the camera's frame sequence has actually advanced), so a tighter poll just
-  /// means a new frame is picked up promptly rather than up to a full interval
-  /// late.
+  /// [artFrameInterval] on purpose — though only by 1.5x now, where it used to
+  /// be 3x: the pipeline is self-paced (it only ranks when the camera's frame
+  /// sequence has actually advanced), so a tighter poll just means a new frame
+  /// is picked up promptly rather than up to a full interval late.
   static const Duration artPollInterval = Duration(milliseconds: 100);
 
   /// How often the camera is checked for a stalled image stream.
@@ -298,9 +348,10 @@ class ScanTuning {
   /// black out under `startImageStream` (flutter/flutter#27688). Neither is
   /// fixable from Dart; noticing and restarting is.
   ///
-  /// Generous relative to [frameInterval] (10x) so a slow first frame after
-  /// `initialize()`, or a device throttling under heat, is never mistaken for a
-  /// stall — a needless restart costs the user a visible preview blink.
+  /// Generous relative to the frame cadence (20x [artFrameInterval], 10x
+  /// [ocrFrameInterval]) so a slow first frame after `initialize()`, or a device
+  /// throttling under heat, is never mistaken for a stall — a needless restart
+  /// costs the user a visible preview blink.
   static const Duration cameraFrameTimeout = Duration(seconds: 3);
 
   /// The watchdog's restart backoff doubles from [cameraWatchdogInterval] up to
@@ -473,11 +524,15 @@ class ScanOutlineTokens {
   const ScanOutlineTokens._();
 
   /// How long the outline takes to glide from one detection to the next (and to
-  /// fade in or out). Detections arrive on the camera throttle
-  /// ([ScanTuning.frameInterval]), so without interpolation the outline would
+  /// fade in or out). Detections arrive on the artwork throttle
+  /// ([ScanTuning.artFrameInterval]), so without interpolation the outline would
   /// visibly strobe between positions; matching that interval means each
   /// detection has just about arrived at its target when the next one lands.
-  static const Duration transition = Duration(milliseconds: 260);
+  ///
+  /// Follows [ScanTuning.artFrameInterval] whenever that changes: a glide longer
+  /// than the cadence never reaches its target before being retargeted, so the
+  /// outline would trail the card permanently instead of tracking it.
+  static const Duration transition = Duration(milliseconds: 160);
 
   static const double cardStrokeWidth = 2;
 
@@ -604,4 +659,87 @@ class ArtMatchTuning {
   /// surface. It also excludes the frame border itself, which is otherwise a
   /// perfect, always-present rectangle.
   static const Rect cardSearchRoi = Rect.fromLTRB(0.04, 0.04, 0.96, 0.96);
+}
+
+/// Thresholds for the per-frame image-quality gate (`frame_quality.dart`).
+///
+/// The gate exists because a blurred or glare-blown crop hashes to something
+/// genuinely far from the indexed art, and the pipeline previously reported that
+/// identically to "there is no card here" — so the user was told to point at a
+/// card that was already centred, rectified and hashed.
+///
+/// This is a **rejection gate, not preprocessing**, which is the distinction
+/// `.claude/skills/scan-pipeline.md` draws when it says not to add aggressive
+/// image preprocessing before there are real failure samples to test against.
+/// Discarding a frame we cannot judge is the conservative half of that rule;
+/// transforming pixels to make them match is the half still deferred.
+class FrameQualityTuning {
+  const FrameQualityTuning._();
+
+  /// Minimum variance of the 3x3 Laplacian over the art crop.
+  ///
+  /// Deliberately low. The measure is scene-dependent in absolute terms — a busy
+  /// artwork out-scores a plain one at identical focus — so this is set to catch
+  /// only frames that are *obviously* smeared, not to grade sharpness. Being too
+  /// strict here stops recognition working at all, which is why
+  /// [maxConsecutiveSkips] exists as a floor under it. Re-tune from the
+  /// diagnostics overlay's `qual:` line on real cards.
+  static const double minSharpness = 40;
+
+  /// Maximum fraction of the art crop allowed to sit at [glareLevel] or above.
+  ///
+  /// Artwork legitimately contains small bright areas (a white border detail, a
+  /// light background, Blue-Eyes), so this is not "any clipping" — it is "enough
+  /// of the window is blown that the structure under it is gone". 8% of a
+  /// 622x622-equivalent window is a substantial patch.
+  static const double maxGlareFraction = 0.08;
+
+  /// Glare must fall back to this before exposure compensation reverses. Strictly
+  /// below [maxGlareFraction] so the two form a hysteresis band — equal
+  /// thresholds would oscillate on the boundary and re-meter the camera every
+  /// frame, on the least reliable part of the stack.
+  static const double glareRecoveryFraction = 0.04;
+
+  /// Luma at or above which a pixel counts as a clipped highlight.
+  static const int glareLevel = 250;
+
+  /// Sample every Nth **row** (all columns within it). Halves the work for a
+  /// measurement that only has to be right to within a threshold.
+  ///
+  /// Rows rather than a strided grid on purpose — see `assessCrop`. A lattice
+  /// that strides both axes aliases against periodic detail and can score the
+  /// sharpest possible frame as perfectly blurred.
+  static const int sampleStride = 2;
+
+  /// After this many frames rejected in a row, the gate stops rejecting and the
+  /// frame is processed normally.
+  ///
+  /// **Not optional.** [minSharpness] and [maxGlareFraction] are absolute
+  /// thresholds on a scene-dependent measure, and if they are wrong for some
+  /// device or some lighting the failure mode without this is *recognition never
+  /// works again* with every on-screen signal green — precisely the class of
+  /// silent wedge the detector-isolate watchdog exists to prevent. With it, a
+  /// miscalibrated threshold degrades to the old behaviour at a small throughput
+  /// cost instead.
+  static const int maxConsecutiveSkips = 6;
+
+  /// Consecutive frames where a card is detected but nothing ranks close enough
+  /// before the banner offers the best guesses. Roughly a second at
+  /// [ScanTuning.artFrameInterval] — long enough not to fire while the user is
+  /// still bringing the card into frame, short enough to beat giving up.
+  static const int unmatchedStreakForHint = 6;
+
+  /// One step of exposure compensation, in EV.
+  static const double exposureStep = 0.3;
+
+  /// How far down exposure compensation may go. Bounded because the descriptor
+  /// tolerates darkening but not *underexposure*: past this the artwork's own
+  /// midtones start quantising away, which costs the same structure the glare
+  /// was destroying.
+  static const double exposureFloor = -1.5;
+
+  /// Minimum wall-clock gap between exposure changes. Each one is a platform
+  /// round trip that re-meters the camera; at the artwork cadence an ungated
+  /// loop would issue several per second.
+  static const Duration exposureInterval = Duration(milliseconds: 700);
 }

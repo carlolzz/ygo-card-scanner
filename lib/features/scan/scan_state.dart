@@ -1,3 +1,4 @@
+import '../../core/theme/tokens.dart';
 import '../../models/card_condition.dart';
 import '../../models/card_edition.dart';
 import '../../models/card_language.dart';
@@ -48,6 +49,33 @@ enum ScanStatus {
 /// controller is autoDispose, so leaving resets it).
 enum ScanMode { artwork, passcode }
 
+/// What the status banner should tell the user while the pipeline is running.
+///
+/// Separate from [ScanStatus] because it is not a phase of the state machine —
+/// several distinct frame outcomes all leave the machine in
+/// [ScanStatus.detecting], and the whole defect this fixes was that they were
+/// therefore indistinguishable on screen. A frame where the card was found,
+/// rectified and hashed but matched nothing rendered "Point at a card", telling
+/// the user to do the one thing they were already doing.
+enum ScanHint {
+  /// Nothing to say beyond the plain status.
+  none,
+
+  /// A card was found but its artwork crop was too smeared to hash.
+  blurry,
+
+  /// A card was found but its artwork crop was too glare-blown to hash.
+  glare,
+
+  /// A card is being read — found and hashed, no confident match *yet*.
+  identifying,
+
+  /// A card has been found and hashed repeatedly with nothing ranking close
+  /// enough. The banner becomes actionable here; see
+  /// `ScanController.showBestGuesses`.
+  unidentified,
+}
+
 /// Immutable snapshot of the scan pipeline. Hand-written (like
 /// `AddCardSelection` and `InitialSyncState`) rather than freezed, matching the
 /// project's controller-state convention.
@@ -69,6 +97,9 @@ class ScanState {
     this.emptyFrameCount = 0,
     this.lastConfirmedPasscode,
     this.dismissCooldown = 0,
+    this.hint = ScanHint.none,
+    this.unmatchedStreak = 0,
+    this.qualitySkipStreak = 0,
     this.error,
   });
 
@@ -147,6 +178,24 @@ class ScanState {
   /// up again without moving it.
   final int dismissCooldown;
 
+  /// What the banner should say beyond the bare [status]. See [ScanHint].
+  final ScanHint hint;
+
+  /// Consecutive frames where a card was detected and hashed but nothing ranked
+  /// within [ArtMatchTuning.autoMatchMaxDistance]. Past
+  /// [FrameQualityTuning.unmatchedStreakForHint] the banner offers the ranked
+  /// alternatives instead of silently continuing.
+  final int unmatchedStreak;
+
+  /// Consecutive frames rejected by the image-quality gate.
+  ///
+  /// Exists solely for the failsafe: at
+  /// [FrameQualityTuning.maxConsecutiveSkips] the gate stops rejecting. The
+  /// thresholds are absolute values on a scene-dependent measure, and without a
+  /// floor under them a bad calibration would mean recognition never works
+  /// again with every on-screen signal still green.
+  final int qualitySkipStreak;
+
   /// The camera error behind [ScanStatus.error].
   final Object? error;
 
@@ -172,6 +221,9 @@ class ScanState {
     String? lastConfirmedPasscode,
     bool clearLastConfirmedPasscode = false,
     int? dismissCooldown,
+    ScanHint? hint,
+    int? unmatchedStreak,
+    int? qualitySkipStreak,
     Object? error,
     bool clearError = false,
   }) {
@@ -205,6 +257,9 @@ class ScanState {
       dismissCooldown: clearLastConfirmedPasscode
           ? 0
           : (dismissCooldown ?? this.dismissCooldown),
+      hint: hint ?? this.hint,
+      unmatchedStreak: unmatchedStreak ?? this.unmatchedStreak,
+      qualitySkipStreak: qualitySkipStreak ?? this.qualitySkipStreak,
       // `error ?? this.error` alone makes an error write-once-sticky, so every
       // later transition drags it along and only a full reset can drop it.
       error: clearError ? null : (error ?? this.error),

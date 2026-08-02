@@ -38,6 +38,56 @@ void main() {
     expect(result, isNull);
   });
 
+  group('getByPasscodes', () {
+    test('returns every existing row and omits unknown passcodes', () async {
+      await dao.insertAll([blueEyes, redEyes, toonBlueEyes]);
+
+      final results = await dao.getByPasscodes([
+        blueEyes.passcode,
+        '00000000', // not in the table
+        redEyes.passcode,
+      ]);
+
+      expect(results.map((c) => c.passcode), unorderedEquals(
+        [blueEyes.passcode, redEyes.passcode],
+      ));
+    });
+
+    test('returns empty for an empty list', () async {
+      await dao.insertAll([blueEyes]);
+
+      // Guards the `IN ()` path: an empty candidate list is normal (nothing
+      // detected in the frame) and must not reach SQLite as invalid SQL.
+      expect(await dao.getByPasscodes(const []), isEmpty);
+    });
+
+    test('tolerates arbitrary non-numeric passcode strings', () async {
+      await dao.insertAll([blueEyes]);
+
+      // The artwork index keys every alt-art image id, so it can hand us keys
+      // that are not in `cards` at all — and a test fake can hand us keys that
+      // are not even digits. `passcode` is a TEXT column; neither may throw.
+      final results = await dao.getByPasscodes([
+        blueEyes.passcode,
+        'not_in_db',
+        "o'brien",
+      ]);
+
+      expect(results.map((c) => c.passcode), [blueEyes.passcode]);
+    });
+
+    test('a duplicated passcode yields one row', () async {
+      await dao.insertAll([blueEyes]);
+
+      final results = await dao.getByPasscodes([
+        blueEyes.passcode,
+        blueEyes.passcode,
+      ]);
+
+      expect(results, [blueEyes]);
+    });
+  });
+
   test('count reflects the number of inserted cards', () async {
     await dao.insertAll([blueEyes, redEyes]);
     expect(await dao.count(), 2);

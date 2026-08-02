@@ -6,6 +6,7 @@ import '../../models/app_settings.dart';
 import '../../models/app_theme_mode.dart';
 import '../../models/card_condition.dart';
 import '../../models/card_edition.dart';
+import '../../models/collection_view_mode.dart';
 import '../collection/collection_providers.dart';
 import '../sync/initial_sync_providers.dart';
 
@@ -43,6 +44,11 @@ class SettingsController extends _$SettingsController {
 
   Future<void> setConfirmBeforeDelete(bool value) =>
       _update((s) => s.copyWith(confirmBeforeDelete: value));
+
+  /// Set from the collection screen's minify menu, not the Settings screen —
+  /// the effect is only visible where the control is.
+  Future<void> setCollectionViewMode(CollectionViewMode value) =>
+      _update((s) => s.copyWith(collectionViewMode: value));
 
   /// Persist first, then publish: if the write fails the in-memory state must
   /// not claim a preference the database doesn't hold.
@@ -98,7 +104,7 @@ class ResyncController extends _$ResyncController {
       // against — names, art paths and set data can all have changed, and with
       // them the rarities the collection filter row offers.
       ref.invalidate(collectionEntriesProvider);
-      ref.invalidate(collectionRarityOptionsProvider);
+      ref.invalidate(collectionFilterOptionsProvider);
     } catch (e) {
       state = InitialSyncState(status: InitialSyncStatus.failure, error: e);
     }

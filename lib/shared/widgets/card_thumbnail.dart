@@ -19,7 +19,13 @@ class CardThumbnail extends StatelessWidget {
 
   /// The thumbnail's width. Its height is [size] when [aspectRatio] is null
   /// (a square, the default), or `size / aspectRatio` otherwise.
-  final double size;
+  ///
+  /// **Null means "fill the space the parent gives me"**, which is what a grid
+  /// cell needs — the fixed [SizedBox] below cannot stretch, so before this the
+  /// widget could only ever be used at a size known in advance. With
+  /// [aspectRatio] set it becomes an [AspectRatio] instead, so a cell of any
+  /// width renders the card at its true proportions.
+  final double? size;
 
   /// Width-over-height ratio. Null keeps the historical square; pass a card's
   /// `59 / 86` together with `fit: BoxFit.contain` to show the whole card
@@ -34,20 +40,25 @@ class CardThumbnail extends StatelessWidget {
   Widget build(BuildContext context) {
     final path = localImagePath;
     final ratio = aspectRatio;
+    final width = size;
+    final image = path == null
+        ? _placeholder(context)
+        : Image.file(
+            File(path),
+            fit: fit,
+            errorBuilder: (context, error, stackTrace) => _placeholder(context),
+          );
     return ClipRRect(
       borderRadius: BorderRadius.circular(AppRadius.sm),
-      child: SizedBox(
-        width: size,
-        height: ratio == null ? size : size / ratio,
-        child: path == null
-            ? _placeholder(context)
-            : Image.file(
-                File(path),
-                fit: fit,
-                errorBuilder: (context, error, stackTrace) =>
-                    _placeholder(context),
-              ),
-      ),
+      child: width == null
+          // Sized by the parent — a grid cell. An [AspectRatio] rather than a
+          // [SizedBox] so the cell's width drives the height.
+          ? (ratio == null ? image : AspectRatio(aspectRatio: ratio, child: image))
+          : SizedBox(
+              width: width,
+              height: ratio == null ? width : width / ratio,
+              child: image,
+            ),
     );
   }
 

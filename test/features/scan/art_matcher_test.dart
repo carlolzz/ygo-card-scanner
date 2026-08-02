@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:camera/camera.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/painting.dart' show Offset, Rect, Size;
@@ -21,6 +23,15 @@ import 'package:ygo_scanner/features/scan/phash.dart';
 import '../../data/db/test_db.dart';
 
 const darkMagician = '46986414';
+
+// Two more seeded passcodes, chosen for their *lexical* order. `passcode` is the
+// primary key, so SQLite satisfies a `passcode IN (...)` predicate from that
+// index and returns rows in ascending passcode order — measured, not assumed:
+// `getByPasscodes(['89631139', '44095762'])` comes back `[44095762, 89631139]`.
+// Making the nearer card the lexically larger one is what gives the ordering
+// test below something to catch.
+const blueEyes = '89631139';
+const mirrorForce = '44095762';
 
 /// Minimal [CameraService] that only surfaces a fixed [ArtFrame] — no hardware.
 class _FakeCamera implements CameraService {
@@ -52,6 +63,9 @@ class _FakeCamera implements CameraService {
 
   @override
   set artCaptureEnabled(bool enabled) {}
+
+  @override
+  Future<void> setExposureCompensation(double ev) async {}
 
   @override
   ValueListenable<CameraController?> get preview => _preview;
@@ -143,6 +157,14 @@ PerceptualHash expectedHash(ArtFrame frame, Rect roi) {
   );
 }
 
+/// [hash] with [bits] of its lowest lane flipped: a near neighbour, comfortably
+/// inside [ArtMatchTuning.maxHammingDistance] but not an exact hit.
+PerceptualHash nudged(PerceptualHash hash, {int bits = 4}) {
+  final lanes = Uint32List.fromList(hash.lanes);
+  lanes[PerceptualHash.laneCount - 1] ^= (1 << bits) - 1;
+  return PerceptualHash(lanes);
+}
+
 void main() {
   late Database db;
   late CardRepository repository;
@@ -187,6 +209,37 @@ void main() {
     expect(candidates, hasLength(1));
     expect(candidates.first.card.passcode, darkMagician);
     expect(candidates.first.distance, 0);
+  });
+
+  test('resolves candidates in ranked order, not database order', () async {
+    final frame = syntheticFrame();
+    final hash = expectedHash(frame, ArtMatchTuning.artBoxRoi);
+    final index = HashIndex(
+      version: 1,
+      algorithm: 'phash',
+      hashSize: HashIndex.kExpectedHashSize,
+      hashes: {
+        // The nearer card is the lexically *larger* passcode, so the batched
+        // `WHERE passcode IN (...)` hands back Mirror Force first. If `match`
+        // ever returned rows in the order the database produced them instead of
+        // walking the ranked matches, this would come out reversed and the
+        // review panel would present the second-best guess.
+        blueEyes: hash, // distance 0
+        mirrorForce: nudged(hash), // near, but farther
+      },
+    );
+
+    final matcher = PHashArtMatcher(
+      camera: _FakeCamera(frame),
+      index: index,
+      repository: repository,
+      detector: const _IdentityCardDetector(),
+    );
+    final candidates = await matcher.match();
+
+    expect(candidates.map((c) => c.card.passcode), [blueEyes, mirrorForce]);
+    expect(candidates.first.distance, 0);
+    expect(candidates.last.distance, greaterThan(0));
   });
 
   test('rankFrame ranks near hits (DB or not) with no repository read',

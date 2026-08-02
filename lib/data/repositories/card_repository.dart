@@ -53,6 +53,9 @@ class CardRepository {
   Future<YgoCard?> getByPasscode(String passcode) =>
       _cardDao.getByPasscode(passcode);
 
+  Future<List<YgoCard>> getByPasscodes(List<String> passcodes) =>
+      _cardDao.getByPasscodes(passcodes);
+
   Future<List<YgoCard>> searchByName(String query, {int limit = 20}) =>
       _cardDao.searchByName(query, limit: limit);
 

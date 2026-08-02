@@ -222,7 +222,7 @@ class _CollectionDetailScreenState
       await repository.decrement(id);
       ref.invalidate(collectionEntriesProvider);
       // The last copy takes the row with it, so a rarity may no longer be held.
-      ref.invalidate(collectionRarityOptionsProvider);
+      ref.invalidate(collectionFilterOptionsProvider);
       if (mounted) Navigator.of(context).pop();
       return;
     }
@@ -237,7 +237,7 @@ class _CollectionDetailScreenState
     final repository = await ref.read(collectionRepositoryProvider.future);
     await repository.delete(id);
     ref.invalidate(collectionEntriesProvider);
-    ref.invalidate(collectionRarityOptionsProvider);
+    ref.invalidate(collectionFilterOptionsProvider);
     if (mounted) Navigator.of(context).pop();
   }
 
@@ -255,7 +255,7 @@ class _CollectionDetailScreenState
     ref.invalidate(collectionEntriesProvider);
     // The edit can move the entry to a different printing, i.e. a different
     // rarity — the one non-delete path that changes the filter row's options.
-    ref.invalidate(collectionRarityOptionsProvider);
+    ref.invalidate(collectionFilterOptionsProvider);
     ref.invalidate(entriesForPasscodeProvider(widget.entryWithCard.entry.passcode));
     final messenger = ScaffoldMessenger.of(context);
     Navigator.of(context).pop();
@@ -426,6 +426,18 @@ class _EditEntrySheetState extends ConsumerState<_EditEntrySheet> {
                 ),
               ),
               const SizedBox(height: AppSpacing.md),
+              // First, above the chips: the picker's search field raises the
+              // keyboard, which would otherwise cover it and the language row.
+              _label(AppStrings.collectionEditSetLabel),
+              printingsAsync.when(
+                data: _printingPicker,
+                loading: () => const Padding(
+                  padding: EdgeInsets.symmetric(vertical: AppSpacing.sm),
+                  child: LinearProgressIndicator(),
+                ),
+                error: (_, _) => _printingPicker(const <Printing>[]),
+              ),
+              const SizedBox(height: AppSpacing.md),
               _label(AppStrings.collectionEditConditionLabel),
               Wrap(
                 spacing: AppSpacing.xs,
@@ -470,16 +482,6 @@ class _EditEntrySheetState extends ConsumerState<_EditEntrySheet> {
                       onSelected: () => setState(() => _language = language),
                     ),
                 ],
-              ),
-              const SizedBox(height: AppSpacing.md),
-              _label(AppStrings.collectionEditSetLabel),
-              printingsAsync.when(
-                data: _printingPicker,
-                loading: () => const Padding(
-                  padding: EdgeInsets.symmetric(vertical: AppSpacing.sm),
-                  child: LinearProgressIndicator(),
-                ),
-                error: (_, _) => _printingPicker(const <Printing>[]),
               ),
               const SizedBox(height: AppSpacing.lg),
               Row(

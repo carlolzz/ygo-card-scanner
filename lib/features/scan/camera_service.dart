@@ -94,7 +94,8 @@ String describeCameraHealth(CameraHealth health) {
 /// tests that override [passcodeReadingsProvider].
 abstract class CameraService {
   /// Throttled stream of frames ready for OCR (roughly one per
-  /// [ScanTuning.frameInterval]).
+  /// [ScanTuning.ocrFrameInterval]), and only while [artCaptureEnabled] is off —
+  /// see [latestInputImage].
   ///
   /// Prefer [latestInputImage] + [frameSequence] for anything that does slow
   /// work per frame: this is a broadcast stream, and a broadcast controller
@@ -103,8 +104,11 @@ abstract class CameraService {
   Stream<InputImage> get frames;
 
   /// The most recent frame as an ML-Kit input, or null before the first frame.
-  /// Replaced in lockstep with [latestArtFrame], so [frameSequence] identifies
-  /// both.
+  ///
+  /// Only maintained while [artCaptureEnabled] is off — i.e. in passcode mode,
+  /// the only mode that reads it. The two conversions are mutually exclusive, so
+  /// [frameSequence] identifies whichever of this and [latestArtFrame] the live
+  /// mode produces, and this one goes stale (not null) in artwork mode.
   ///
   /// Exists so the OCR pipeline can be self-paced like the artwork one: poll
   /// [frameSequence], read this, and a read that overruns the frame interval
@@ -123,11 +127,12 @@ abstract class CameraService {
   /// preview became available.
   ValueListenable<CameraController?> get preview;
 
-  /// The most recent frame reduced to luma, for the artwork-match fallback, or
-  /// null before the first frame. Updated in lockstep with [frames].
+  /// The most recent frame reduced to luma, for artwork recognition, or null
+  /// before the first frame. Only maintained while [artCaptureEnabled] is on.
   ArtFrame? get latestArtFrame;
 
-  /// Monotonic counter incremented every time [latestArtFrame] is replaced.
+  /// Monotonic counter incremented every time a frame is delivered — i.e. every
+  /// time [latestArtFrame] or [latestInputImage] is replaced.
   ///
   /// The artwork pipeline polls this instead of subscribing to [frames]: it
   /// always works on the newest frame, and comparing the sequence guarantees it
@@ -139,10 +144,28 @@ abstract class CameraService {
   /// What the camera is doing right now, for the diagnostics readout.
   CameraHealth get health;
 
-  /// Whether to keep [latestArtFrame] up to date. Turned off in passcode mode,
-  /// where the artwork pipeline never reads it: converting a frame to luma is a
-  /// full-frame copy (~1 MB/s at this cadence) and nothing consumes it.
+  /// Which pipeline the camera is feeding: [latestArtFrame] when on,
+  /// [latestInputImage]/[frames] when off. Turned off in passcode mode, where
+  /// the artwork pipeline never reads a frame — and each conversion is a
+  /// full-frame copy (~1 MB/s at this cadence), so building the one nothing
+  /// consumes is pure allocation.
+  ///
+  /// Also selects the throttle: [ScanTuning.artFrameInterval] when on,
+  /// [ScanTuning.ocrFrameInterval] when off.
   set artCaptureEnabled(bool enabled);
+
+  /// Applies an exposure compensation of [ev] stops, clamped to what the device
+  /// supports. Zero restores the metered exposure.
+  ///
+  /// Exists for foil glare, which is *specular*: the camera meters for the
+  /// average scene, an Ultra/Secret rare returns a mirror highlight, and the
+  /// artwork under it clips to white — destroying exactly the structure the
+  /// perceptual hash is computed from. Stopping down recovers it.
+  ///
+  /// Best-effort, like the metering calls: a device that refuses is left on its
+  /// own defaults rather than failing the scan. See `nextExposureOffset` for the
+  /// (pure, tested) decision of *when* to call this.
+  Future<void> setExposureCompensation(double ev);
 
   /// Opens the back camera and begins streaming frames. Throws (e.g.
   /// [CameraException] on denied permission / no camera) so the pipeline can
@@ -326,6 +349,21 @@ class CameraScanService implements CameraService {
     await _tryCamera(() => controller.setExposurePoint(_meteringPoint));
   }
 
+  @override
+  Future<void> setExposureCompensation(double ev) async {
+    final controller = _controller;
+    if (controller == null || !controller.value.isInitialized) return;
+    await _tryCamera(() async {
+      // The supported range is device-specific and the plugin *throws* outside
+      // it, so clamping is required rather than defensive. Querying each time
+      // costs two cheap platform reads and avoids caching a range across the
+      // camera swaps this service already handles.
+      final min = await controller.getMinExposureOffset();
+      final max = await controller.getMaxExposureOffset();
+      await controller.setExposureOffset(ev.clamp(min, max));
+    });
+  }
+
   /// Runs a best-effort camera call, swallowing "unsupported on this device".
   static Future<void> _tryCamera(Future<void> Function() op) async {
     try {
@@ -352,7 +390,19 @@ class CameraScanService implements CameraService {
 
     // Time-throttle: recognition is far slower than the camera's frame rate,
     // and the human flipping cards is the real bottleneck (~1 card/sec).
-    if (now.difference(_lastEmit) < ScanTuning.frameInterval) return;
+    //
+    // The interval depends on which pipeline is live, and one clock is enough
+    // because the two are mutually exclusive: [artCaptureEnabled] is false
+    // exactly in passcode mode, and `passcodeReadings` is inert outside it. The
+    // artwork path wants the faster cadence (it is the primary path, and its
+    // latency is dominated by waiting for agreeing frames); the OCR path
+    // deliberately keeps the slower one. Sharing `_lastEmit` across a mode
+    // switch only means the first frame after it can be up to one interval late.
+    final wantArt = _artCaptureEnabled;
+    final interval = wantArt
+        ? ScanTuning.artFrameInterval
+        : ScanTuning.ocrFrameInterval;
+    if (now.difference(_lastEmit) < interval) return;
 
     final rotation = _rotationDegrees(image);
     if (rotation == null) return;
@@ -360,20 +410,27 @@ class CameraScanService implements CameraService {
     // Conversion is the one thing here that can throw on an unexpected buffer
     // layout (`lumaFromYPlane` indexes by `bytesPerRow`), and a throw inside a
     // plugin callback takes the *rest* of this method with it — so a surprise in
-    // the art path would silently cost the OCR path its frame too. Convert both
-    // first, commit after.
+    // one path would silently cost the other its frame too. Convert first,
+    // commit after.
     ArtFrame? art;
     InputImage? input;
     try {
-      // Luma for the artwork path: a defensive copy, so it survives the plugin
-      // recycling this frame's buffer. Skipped entirely in passcode mode, where
-      // nothing reads it.
-      if (_artCaptureEnabled) art = _toArtFrame(image, rotation);
-      input = _toInputImage(image, rotation);
+      // Exactly one conversion runs, for whichever pipeline is live. Both are
+      // real per-frame copies — the luma plane for artwork, a concatenation of
+      // all planes for ML Kit — so building the one nothing reads is pure
+      // allocation, around a megabyte a second at this cadence. That was
+      // already true of the luma copy in passcode mode; it is now equally true
+      // of the ML Kit input in artwork mode, which matters more since artwork
+      // mode runs at twice the rate.
+      if (wantArt) {
+        art = _toArtFrame(image, rotation);
+      } else {
+        input = _toInputImage(image, rotation);
+      }
     } catch (_) {
       // A malformed frame is not fatal and not actionable: drop it *without*
       // spending the throttle window, so the next frame is tried immediately
-      // rather than 300ms later.
+      // rather than a whole interval later.
       return;
     }
     if (art == null && input == null) return;

@@ -224,7 +224,7 @@ class AddCardSelectionController extends _$AddCardSelectionController {
     ref.invalidate(collectionEntriesProvider);
     // A card logged against a printing can introduce a rarity the collection
     // did not hold before, which the collection filter row offers as a chip.
-    ref.invalidate(collectionRarityOptionsProvider);
+    ref.invalidate(collectionFilterOptionsProvider);
     // Back to search for the next card — with the defaults restored, not the
     // grade the user happened to pick for the card they just saved.
     state = _initial();

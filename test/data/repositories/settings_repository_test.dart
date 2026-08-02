@@ -6,6 +6,7 @@ import 'package:ygo_scanner/models/app_settings.dart';
 import 'package:ygo_scanner/models/app_theme_mode.dart';
 import 'package:ygo_scanner/models/card_condition.dart';
 import 'package:ygo_scanner/models/card_edition.dart';
+import 'package:ygo_scanner/models/collection_view_mode.dart';
 
 import '../db/test_db.dart';
 
@@ -34,6 +35,7 @@ void main() {
     expect(settings.showScanDiagnostics, isFalse);
     expect(settings.showScanHelp, isTrue);
     expect(settings.confirmBeforeDelete, isTrue);
+    expect(settings.collectionViewMode, CollectionViewMode.standard);
   });
 
   test('save then load round-trips every field', () async {
@@ -46,6 +48,7 @@ void main() {
         showScanDiagnostics: true,
         showScanHelp: false,
         confirmBeforeDelete: false,
+        collectionViewMode: CollectionViewMode.minifyFull,
       ),
     );
 
@@ -58,6 +61,7 @@ void main() {
     expect(settings.showScanDiagnostics, isTrue);
     expect(settings.showScanHelp, isFalse);
     expect(settings.confirmBeforeDelete, isFalse);
+    expect(settings.collectionViewMode, CollectionViewMode.minifyFull);
   });
 
   test('a malformed boolean falls back to its default', () async {
@@ -78,12 +82,17 @@ void main() {
         defaultCondition: CardCondition.poor,
         defaultEdition: CardEdition.limited,
         themeMode: AppThemeMode.system,
+        collectionViewMode: CollectionViewMode.minifyStandard,
       ),
     );
 
     expect(await metaDao.get('settings.default_condition'), 'POOR');
     expect(await metaDao.get('settings.default_edition'), 'LIMITED');
     expect(await metaDao.get('settings.theme_mode'), 'SYSTEM');
+    expect(
+      await metaDao.get('settings.collection_view_mode'),
+      'MINIFY_STANDARD',
+    );
   });
 
   test('an unrecognized stored value falls back to its default', () async {
@@ -92,12 +101,14 @@ void main() {
     await metaDao.set('settings.default_condition', 'PRISTINE');
     await metaDao.set('settings.default_edition', 'SOMETHING_NEW');
     await metaDao.set('settings.theme_mode', 'SEPIA');
+    await metaDao.set('settings.collection_view_mode', 'TINY');
 
     final settings = await repository.load();
 
     expect(settings.defaultCondition, CardCondition.nearMint);
     expect(settings.defaultEdition, CardEdition.unlimited);
     expect(settings.themeMode, AppThemeMode.dark);
+    expect(settings.collectionViewMode, CollectionViewMode.standard);
   });
 
   test('one bad value does not discard the others', () async {

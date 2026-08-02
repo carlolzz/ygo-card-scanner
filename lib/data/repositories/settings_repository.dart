@@ -4,6 +4,7 @@ import '../../models/app_settings.dart';
 import '../../models/app_theme_mode.dart';
 import '../../models/card_condition.dart';
 import '../../models/card_edition.dart';
+import '../../models/collection_view_mode.dart';
 import '../db/dao/meta_dao.dart';
 import '../db/database.dart';
 
@@ -18,10 +19,11 @@ const _themeModeKey = 'settings.theme_mode';
 const _showScanDiagnosticsKey = 'settings.show_scan_diagnostics';
 const _showScanHelpKey = 'settings.show_scan_help';
 const _confirmBeforeDeleteKey = 'settings.confirm_before_delete';
+const _collectionViewModeKey = 'settings.collection_view_mode';
 
 /// Reads and writes [AppSettings] as key/value pairs in the existing `meta`
-/// table. No schema change: `meta` has carried arbitrary keys since v1, and
-/// four preferences don't justify a table (or a new storage dependency).
+/// table. No schema change: `meta` has carried arbitrary keys since v1, and a
+/// handful of preferences don't justify a table (or a new storage dependency).
 class SettingsRepository {
   const SettingsRepository(this._metaDao);
 
@@ -58,6 +60,11 @@ class SettingsRepository {
         await _metaDao.get(_confirmBeforeDeleteKey),
         defaults.confirmBeforeDelete,
       ),
+      collectionViewMode: _parse(
+        await _metaDao.get(_collectionViewModeKey),
+        CollectionViewMode.fromDb,
+        defaults.collectionViewMode,
+      ),
     );
   }
 
@@ -74,6 +81,10 @@ class SettingsRepository {
     await _metaDao.set(
       _confirmBeforeDeleteKey,
       settings.confirmBeforeDelete.toString(),
+    );
+    await _metaDao.set(
+      _collectionViewModeKey,
+      settings.collectionViewMode.toDb(),
     );
   }
 

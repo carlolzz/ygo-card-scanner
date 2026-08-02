@@ -3,15 +3,19 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/constants.dart';
 import '../../core/theme/tokens.dart';
-import '../../data/db/dao/collection_dao.dart';
-import '../../models/card_condition.dart';
-import '../../shared/widgets/labeled_choice_chip.dart';
+import '../../models/collection_view_mode.dart';
+import '../settings/settings_providers.dart';
+import 'collection_filter_sheet.dart';
 import 'collection_providers.dart';
 
-/// Search field + condition/rarity filter chips + sort control, all backed
-/// by [CollectionFilterController]. `cardType` isn't exposed here — there's
-/// no DAO method to enumerate distinct types, and it isn't essential for a
-/// first pass.
+/// Search box, then one row: the filter button on the left and the minify menu
+/// on the right.
+///
+/// It used to be the search box plus two horizontally-scrolling chip rows
+/// (condition, then rarity with the sort dropdown tacked on the end). Those
+/// could only ever expose the two filters that fitted, and every new filter
+/// would have cost another scrolling row of screen the list needs. The sheet
+/// holds all of them without taking any height at all when closed.
 class CollectionFilterBar extends ConsumerWidget {
   const CollectionFilterBar({super.key});
 
@@ -20,6 +24,7 @@ class CollectionFilterBar extends ConsumerWidget {
     final filter = ref.watch(collectionFilterControllerProvider);
     final controller = ref.read(collectionFilterControllerProvider.notifier);
     final palette = AppPalette.of(context);
+    final activeCount = filter.activeCount;
 
     return Padding(
       padding: const EdgeInsets.symmetric(
@@ -34,10 +39,7 @@ class CollectionFilterBar extends ConsumerWidget {
             decoration: InputDecoration(
               hintText: AppStrings.collectionSearchHint,
               hintStyle: TextStyle(color: palette.onSurfaceMuted),
-              prefixIcon: Icon(
-                Icons.search,
-                color: palette.onSurfaceMuted,
-              ),
+              prefixIcon: Icon(Icons.search, color: palette.onSurfaceMuted),
               filled: true,
               fillColor: palette.surfaceRaised,
               border: OutlineInputBorder(
@@ -48,77 +50,33 @@ class CollectionFilterBar extends ConsumerWidget {
             onChanged: controller.setNameQuery,
           ),
           const SizedBox(height: AppSpacing.sm),
-          SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: Row(
-              children: [
-                LabeledChoiceChip(
-                  label: AppStrings.collectionFilterAll,
-                  selected: filter.condition == null,
-                  selectedColor: palette.accent,
-                  onSelected: () => controller.setCondition(null),
-                ),
-                for (final condition in CardCondition.values) ...[
-                  const SizedBox(width: AppSpacing.xs),
-                  LabeledChoiceChip(
-                    label: condition.shortCode,
-                    selected: filter.condition == condition,
-                    selectedColor:
-                        ConditionChipColors.byShortCode[condition
-                            .shortCode]!,
-                    onSelected: () => controller.setCondition(condition),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: () => showCollectionFilterSheet(context, ref),
+                  icon: const Icon(Icons.tune, size: 18),
+                  label: Text(
+                    activeCount == 0
+                        ? AppStrings.collectionFiltersButton
+                        // The count is the whole reason the button can replace
+                        // the chip rows: with the controls hidden, nothing else
+                        // would show that the list is narrowed.
+                        : '${AppStrings.collectionFiltersButton} ($activeCount)',
                   ),
-                ],
-              ],
-            ),
-          ),
-          const SizedBox(height: AppSpacing.xs),
-          SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: Row(
-              children: [
-                LabeledChoiceChip(
-                  label: AppStrings.collectionFilterAll,
-                  selected: filter.rarity == null,
-                  selectedColor: palette.accent,
-                  onSelected: () => controller.setRarity(null),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: activeCount == 0
+                        ? palette.onSurface
+                        : palette.accent,
+                    side: BorderSide(
+                      color: activeCount == 0 ? palette.divider : palette.accent,
+                    ),
+                  ),
                 ),
-                // Only the rarities actually held, so no chip is ever dead.
-                // `.value`, not `when`: an unresolved (or refetching) load
-                // leaves the bar's height alone instead of flashing a spinner,
-                // the same reading the scan review gate's set picker uses.
-                for (final rarity
-                    in ref.watch(collectionRarityOptionsProvider).value ??
-                        const <String?>[]) ...[
-                  const SizedBox(width: AppSpacing.xs),
-                  _RarityChip(rarity: rarity, selected: filter.rarity),
-                ],
-                const SizedBox(width: AppSpacing.md),
-                DropdownButton<CollectionSortBy>(
-                  value: filter.sortBy,
-                  dropdownColor: palette.surfaceRaised,
-                  underline: const SizedBox.shrink(),
-                  style: TextStyle(color: palette.onSurface),
-                  items: const [
-                    DropdownMenuItem(
-                      value: CollectionSortBy.name,
-                      child: Text(AppStrings.collectionSortByName),
-                    ),
-                    DropdownMenuItem(
-                      value: CollectionSortBy.dateAdded,
-                      child: Text(AppStrings.collectionSortByDateAdded),
-                    ),
-                    DropdownMenuItem(
-                      value: CollectionSortBy.quantity,
-                      child: Text(AppStrings.collectionSortByQuantity),
-                    ),
-                  ],
-                  onChanged: (sortBy) {
-                    if (sortBy != null) controller.setSortBy(sortBy);
-                  },
-                ),
-              ],
-            ),
+              ),
+              const SizedBox(width: AppSpacing.sm),
+              const Expanded(child: _MinifyMenu()),
+            ],
           ),
         ],
       ),
@@ -126,31 +84,66 @@ class CollectionFilterBar extends ConsumerWidget {
   }
 }
 
-/// One chip in the rarity filter row. Its own widget so the [RarityFilter] it
-/// stands for is built once and used for both the selected test and the tap —
-/// [rarity] being nullable (null = "no rarity") makes that easy to get subtly
-/// wrong inline.
-class _RarityChip extends ConsumerWidget {
-  const _RarityChip({required this.rarity, required this.selected});
-
-  /// The rarity this chip filters on, or null for "no rarity".
-  final String? rarity;
-
-  /// The filter row's current selection, or null when it is on "All".
-  final RarityFilter? selected;
+/// The view-density menu. Its own widget so the selected mode is read once and
+/// used for both the label and the checkmark.
+class _MinifyMenu extends ConsumerWidget {
+  const _MinifyMenu();
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final value = rarity == null
-        ? const RarityFilter.noRarity()
-        : RarityFilter.value(rarity!);
-    return LabeledChoiceChip(
-      label: rarity ?? AppStrings.collectionFilterNoRarity,
-      selected: selected == value,
-      selectedColor: AppPalette.of(context).accent,
-      onSelected: () => ref
-          .read(collectionFilterControllerProvider.notifier)
-          .setRarity(value),
+    final palette = AppPalette.of(context);
+    final mode =
+        ref.watch(settingsControllerProvider).value?.collectionViewMode ??
+        CollectionViewMode.standard;
+
+    return PopupMenuButton<CollectionViewMode>(
+      tooltip: AppStrings.collectionMinifyTooltip,
+      initialValue: mode,
+      onSelected: ref
+          .read(settingsControllerProvider.notifier)
+          .setCollectionViewMode,
+      itemBuilder: (context) => [
+        for (final option in CollectionViewMode.values)
+          PopupMenuItem(value: option, child: Text(option.label)),
+      ],
+      child: Container(
+        height: AppTapTarget.minSize - AppSpacing.md,
+        padding: const EdgeInsets.symmetric(horizontal: AppSpacing.sm),
+        decoration: BoxDecoration(
+          border: Border.all(
+            color: mode == CollectionViewMode.standard
+                ? palette.divider
+                : palette.accent,
+          ),
+          borderRadius: BorderRadius.circular(AppRadius.sm),
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              mode == CollectionViewMode.standard
+                  ? Icons.view_list
+                  : Icons.grid_view,
+              size: 18,
+              color: mode == CollectionViewMode.standard
+                  ? palette.onSurface
+                  : palette.accent,
+            ),
+            const SizedBox(width: AppSpacing.xs),
+            Flexible(
+              child: Text(
+                AppStrings.collectionMinifyButton,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: mode == CollectionViewMode.standard
+                      ? palette.onSurface
+                      : palette.accent,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

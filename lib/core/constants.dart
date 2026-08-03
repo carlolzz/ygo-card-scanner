@@ -25,6 +25,13 @@ class AppStrings {
   static const String collectionSortByName = 'Name';
   static const String collectionSortByDateAdded = 'Date added';
   static const String collectionSortByQuantity = 'Quantity';
+
+  /// Groups the list monsters → Spells → Traps. Shares its wording with
+  /// [collectionFilterCardTypeLabel] but not its meaning: the filter matches
+  /// `cards.type` exactly ("Effect Monster"), while this buckets the coarse
+  /// `frame_type` — which is what "card type" means when you are looking for
+  /// your Traps.
+  static const String collectionSortByCardType = 'Card type';
   static const String collectionSortTooltip = 'Sort by';
   static const String collectionSortDirectionTooltip = 'Toggle sort direction';
 

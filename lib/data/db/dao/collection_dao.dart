@@ -5,7 +5,10 @@ import '../../../models/card_edition.dart';
 import '../../../models/collection_entry.dart';
 import '../../../models/collection_entry_with_card.dart';
 
-enum CollectionSortBy { name, dateAdded, quantity }
+/// How the collection list is ordered. [cardType] is the odd one out: it is not
+/// a column but a three-way grouping — monsters, then Spells, then Traps — see
+/// [CollectionDao.getAll].
+enum CollectionSortBy { name, dateAdded, quantity, cardType }
 
 /// A rarity selection for the collection list: either a specific
 /// `printings.rarity` value, or "no rarity at all".
@@ -544,13 +547,32 @@ class CollectionDao {
     }
 
     final where = conditions.isEmpty ? '' : 'WHERE ${conditions.join(' AND ')}';
-    final orderColumn = switch (filter.sortBy) {
+    // An expression rather than a column, because [CollectionSortBy.cardType]
+    // is a grouping and no column holds it: `cards.type` is YGOPRODeck's
+    // fine-grained value ("Pendulum Effect Fusion Monster"), which sorts
+    // alphabetically into nonsense. The buckets come off `frame_type` using the
+    // exact rule `YgoCard.isSpell`/`isTrap` already use, so a NULL or
+    // unrecognised frame lands with the monsters — the same way `isSpellOrTrap`
+    // treats it everywhere else in the app. Enumerating the monster frames
+    // instead would be brittle: normal, effect, ritual, fusion, synchro, xyz,
+    // link and every `*_pendulum` variant, all of which YGOPRODeck may extend.
+    //
+    // Every branch is a compile-time literal chosen by an enum, so nothing user
+    // -supplied reaches the SQL; the filters above are still bound arguments.
+    final orderExpression = switch (filter.sortBy) {
       CollectionSortBy.name => 'c.name',
       CollectionSortBy.dateAdded => 'ce.created_at',
       CollectionSortBy.quantity => 'ce.quantity',
+      CollectionSortBy.cardType =>
+        "CASE c.frame_type WHEN 'spell' THEN 1 WHEN 'trap' THEN 2 ELSE 0 END",
     };
     final direction = filter.sortDescending ? 'DESC' : 'ASC';
 
+    // `c.name ASC` is a secondary key on every sort, and it is what makes a
+    // three-value one usable at all — without it the monsters come back in
+    // whatever order SQLite happens to produce. It stays ascending under
+    // [CollectionFilter.sortDescending]: the direction flips the buckets (or the
+    // dates, or the counts), not the alphabet within them.
     final rows = await _db.rawQuery('''
       SELECT
         ce.*,
@@ -573,7 +595,7 @@ class CollectionDao {
       JOIN cards c ON c.passcode = ce.passcode
       LEFT JOIN printings p ON p.id = ce.printing_id
       $where
-      ORDER BY $orderColumn $direction
+      ORDER BY $orderExpression $direction, c.name ASC
     ''', args);
 
     return rows.map(CollectionEntryWithCard.fromRow).toList();

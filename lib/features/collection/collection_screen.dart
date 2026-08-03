@@ -69,6 +69,10 @@ class CollectionScreen extends ConsumerWidget {
                         value: CollectionSortBy.quantity,
                         child: Text(AppStrings.collectionSortByQuantity),
                       ),
+                      PopupMenuItem(
+                        value: CollectionSortBy.cardType,
+                        child: Text(AppStrings.collectionSortByCardType),
+                      ),
                     ],
                   ),
                   IconButton(

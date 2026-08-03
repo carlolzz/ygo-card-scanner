@@ -132,6 +132,15 @@ class _ScanScreenState extends ConsumerState<ScanScreen>
                   !ref.read(scanDiagnosticsEnabledProvider),
                 ),
           ),
+          // Beside the toggle that produces what it saves: the matcher only
+          // retains `lastSample` while diagnostics is on. Deliberately *not*
+          // gated on the status as well — unlike the readout, which
+          // [_TopOverlays] hides behind a panel because it goes stale there, the
+          // retained sample is exactly the frame that produced the result on
+          // screen, so this stays usable in `matched`/`candidates`. That is when
+          // a wrong answer is worth capturing.
+          if (ref.watch(scanDiagnosticsEnabledProvider))
+            const _CaptureSampleButton(),
           // The other recognition tool: read the printed 8-digit code when the
           // artwork won't resolve (glare, two near-identical arts, etc.). A
           // toggle, not a one-shot — it stays on until switched off here (or on
@@ -1091,35 +1100,35 @@ class _DiagnosticsBoxState extends ConsumerState<_DiagnosticsBox> {
         color: _cameraScrim.withValues(alpha: 0.95),
         borderRadius: BorderRadius.circular(AppRadius.sm),
       ),
-      // The capture icon is *overlaid* on the readout rather than following it
-      // in the column: as a row of its own it cost more than a line and a half
-      // of a band that is a hard budget (see [_TopOverlays]). The lines are
-      // short and left-aligned, so the top-right corner is free.
-      child: Stack(
-        children: [
-          // Scrollable as the failsafe: the line count varies with what the
-          // pipeline has to report, and the alternative on a cramped viewport
-          // is an overflow stripe.
-          SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                for (final line in lines)
-                  Text(
-                    line,
-                    style: TextStyle(
-                      color: palette.onSurface,
-                      fontSize: ScanDiagnosticsTokens.fontSize,
-                      height: ScanDiagnosticsTokens.lineHeight,
-                      fontFamily: ScanDiagnosticsTokens.fontFamily,
-                    ),
-                  ),
-              ],
-            ),
-          ),
-          const Positioned(top: 0, right: 0, child: _CaptureSampleButton()),
-        ],
+      // Nothing but the readout lives in here. [_CaptureSampleButton] used to be
+      // overlaid on this corner, on the assumption that the lines were short
+      // enough to leave it free — on the device they are not, and the icon sat
+      // on the text at every readout length. It could not simply move into the
+      // column either: as a row of its own it costs more than a line and a half
+      // of a band that is a hard budget (see [_TopOverlays]), which is what put
+      // it here in the first place. It is an app-bar action now, where it costs
+      // no band at all and cannot overlap anything at any font scale.
+      //
+      // Scrollable as the failsafe: the line count varies with what the
+      // pipeline has to report, and the alternative on a cramped viewport is an
+      // overflow stripe.
+      child: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            for (final line in lines)
+              Text(
+                line,
+                style: TextStyle(
+                  color: palette.onSurface,
+                  fontSize: ScanDiagnosticsTokens.fontSize,
+                  height: ScanDiagnosticsTokens.lineHeight,
+                  fontFamily: ScanDiagnosticsTokens.fontFamily,
+                ),
+              ),
+          ],
+        ),
       ),
     );
   }
@@ -1189,21 +1198,17 @@ class _CaptureSampleButtonState extends ConsumerState<_CaptureSampleButton> {
 
   @override
   Widget build(BuildContext context) {
-    // An icon, not the old full-width `[ save this frame ]` row: every point it
-    // takes is a diagnostics line pushed out of the band above the reticle. The
-    // label survives as the tooltip and the semantic name.
-    return Align(
-      alignment: Alignment.centerRight,
-      child: IconButton(
-        padding: EdgeInsets.zero,
-        constraints: const BoxConstraints(),
-        visualDensity: VisualDensity.compact,
-        iconSize: ScanDiagnosticsTokens.captureIconSize,
-        color: AppPalette.dark.accent,
-        tooltip: AppStrings.scanCaptureButton,
-        icon: const Icon(Icons.save_alt),
-        onPressed: _busy ? null : _capture,
-      ),
+    // An app-bar action with the default tap target, not the compacted icon it
+    // was while it lived inside [_DiagnosticsBox] — up there every point it took
+    // was a diagnostics line pushed out of the band above the reticle, and here
+    // it costs nothing. The `[ save this frame ]` label survives as the tooltip
+    // and the semantic name. Gold, like the active passcode-mode pin: both say
+    // "developer tool", and it is how the button is recognised.
+    return IconButton(
+      color: AppPalette.dark.accent,
+      tooltip: AppStrings.scanCaptureButton,
+      icon: const Icon(Icons.save_alt),
+      onPressed: _busy ? null : _capture,
     );
   }
 }

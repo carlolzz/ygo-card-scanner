@@ -594,10 +594,6 @@ class ScanDiagnosticsTokens {
   static const double lineHeight = 1.3;
   static const String fontFamily = 'monospace';
 
-  /// The sample-capture affordance, an icon rather than a labelled row for the
-  /// same reason the type shrank.
-  static const double captureIconSize = 16;
-
   /// How often the readout re-reads the camera's health. It has to tick on its
   /// own clock: a stalled camera stops the reading stream, which is exactly when
   /// the camera line must keep updating.

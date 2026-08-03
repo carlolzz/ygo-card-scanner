@@ -470,6 +470,95 @@ void main() {
     });
   });
 
+  // Regression: the sample-capture icon was `Positioned(top: 0, right: 0)`
+  // *inside* the diagnostics box, on the assumption that the readout's lines
+  // were short and left-aligned enough to leave that corner free. On the device
+  // they are not — the icon sat on the text at every readout length, which is
+  // the reported "the orange button covers the debug text".
+  //
+  // Neither existing geometry test above can see this: one measures the box's
+  // bottom edge and the other its scroll extent, and an icon painted over line
+  // one changes neither. This asserts the rects are disjoint, which is the
+  // property that was actually violated.
+  testWidgets('the sample-capture button never overlaps the readout', (
+    tester,
+  ) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(393, 851);
+    tester.view.padding = const FakeViewPadding(top: 39);
+    addTearDown(tester.view.reset);
+
+    await tester.runAsync(() async {
+      final artReadings = StreamController<ArtReading>.broadcast();
+      addTearDown(artReadings.close);
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            appDatabaseProvider.overrideWith((ref) async => testDb),
+            cameraServiceProvider.overrideWith((ref) => _InertCamera()),
+            artReadingsProvider.overrideWith((ref) => artReadings.stream),
+            passcodeReadingsProvider
+                .overrideWith((ref) => const Stream<PasscodeReading>.empty()),
+          ],
+          child: MaterialApp.router(routerConfig: buildAppRouter()),
+        ),
+      );
+
+      await tester.tap(find.text(AppStrings.homeTileLogCards));
+      await pumpUntilSettled(tester);
+
+      // The button only exists while diagnostics is on — it is the same flag
+      // that makes the matcher retain a sample for it to save.
+      expect(find.byTooltip(AppStrings.scanCaptureButton), findsNothing);
+
+      final container = ProviderScope.containerOf(
+        tester.element(find.byType(ScanScreen)),
+      );
+      await container.read(settingsControllerProvider.future);
+      await container
+          .read(settingsControllerProvider.notifier)
+          .setShowScanDiagnostics(true);
+      await pumpUntilSettled(tester);
+
+      // The widest readout the pipeline can produce, so the assertion is made
+      // against the worst case rather than the two-line idle one.
+      artReadings.add(
+        const ArtReading(
+          1,
+          HashMatch(_darkMagician, 40),
+          status: ArtFrameStatus.detected,
+          quality: FrameQuality(sharpness: 612, glare: 0.03),
+          artBox: Rect.fromLTWH(0.1, 0.18, 0.76, 0.7),
+          nearest: [
+            HashMatch(_darkMagician, 40),
+            HashMatch('89631139', 58),
+            HashMatch('44095762', 66),
+          ],
+        ),
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      await pumpUntilSettled(tester);
+
+      final capture = find.byTooltip(AppStrings.scanCaptureButton);
+      expect(capture, findsOneWidget);
+
+      final box = find
+          .ancestor(
+            of: find.textContaining('art box:'),
+            matching: find.byType(Container),
+          )
+          .first;
+      expect(
+        tester.getRect(capture).overlaps(tester.getRect(box)),
+        isFalse,
+        reason: 'the capture button must not be painted over the readout it '
+            'sits beside — it belongs in the app bar, where it costs none of '
+            'the band above the reticle',
+      );
+    });
+  });
+
   // Regression: the preview layer used to read `previewController` as a plain
   // getter. It is a const widget under a provider that never republishes, so it
   // built exactly once — while the camera was still opening — and held the

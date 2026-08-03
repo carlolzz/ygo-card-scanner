@@ -212,6 +212,85 @@ void main() {
     },
   );
 
+  // Its own fixtures: the two cards the rest of the file uses carry no
+  // `frameType` at all, so they cannot distinguish the buckets from each other
+  // — only from the NULL case.
+  group('sort by card type', () {
+    // Named so that alphabetical order and bucket order disagree: 'Mirror
+    // Force' sorts before 'Mystical Space Typhoon', yet the Trap must come out
+    // last. That is what proves the bucket key dominates the name tiebreaker
+    // rather than the two merely agreeing.
+    const alphaMonster = YgoCard(
+      passcode: '11111111',
+      name: 'Alpha Warrior',
+      type: 'Effect Monster',
+      frameType: 'effect',
+    );
+    // No `frameType`, the state a hand-entered or pre-sync row is in. It must
+    // group with the monsters, matching `YgoCard.isSpellOrTrap`.
+    const zetaUnknown = YgoCard(passcode: '22222222', name: 'Zeta Warrior');
+    const spell = YgoCard(
+      passcode: '33333333',
+      name: 'Mystical Space Typhoon',
+      type: 'Spell Card',
+      frameType: 'spell',
+    );
+    const trap = YgoCard(
+      passcode: '44444444',
+      name: 'Mirror Force',
+      type: 'Trap Card',
+      frameType: 'trap',
+    );
+
+    setUp(() async {
+      await cardDao.insertAll([trap, spell, zetaUnknown, alphaMonster]);
+      for (final card in [trap, spell, zetaUnknown, alphaMonster]) {
+        await collectionDao.addOrIncrement(
+          _entry(passcode: card.passcode, condition: CardCondition.nearMint),
+        );
+      }
+    });
+
+    test('ascending groups monsters, then Spells, then Traps', () async {
+      final results = await collectionDao.getAll(
+        filter: const CollectionFilter(sortBy: CollectionSortBy.cardType),
+      );
+      expect(results.map((r) => r.card.name), [
+        // Alphabetical within the monster bucket — the `c.name ASC` secondary
+        // key, without which these two come back in arbitrary order.
+        'Alpha Warrior',
+        'Zeta Warrior',
+        'Mystical Space Typhoon',
+        'Mirror Force',
+      ]);
+    });
+
+    test('descending reverses the buckets but not the names', () async {
+      final results = await collectionDao.getAll(
+        filter: const CollectionFilter(
+          sortBy: CollectionSortBy.cardType,
+          sortDescending: true,
+        ),
+      );
+      expect(results.map((r) => r.card.name), [
+        'Mirror Force',
+        'Mystical Space Typhoon',
+        'Alpha Warrior',
+        'Zeta Warrior',
+      ]);
+    });
+
+    test('narrowing by frameType still orders within the bucket', () async {
+      final results = await collectionDao.getAll(
+        filter: const CollectionFilter(
+          frameType: 'spell',
+          sortBy: CollectionSortBy.cardType,
+        ),
+      );
+      expect(results.map((r) => r.card.name), ['Mystical Space Typhoon']);
+    });
+  });
+
   group('getAll filter and sort combinations', () {
     setUp(() async {
       await collectionDao.addOrIncrement(

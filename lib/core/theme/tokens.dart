@@ -166,6 +166,28 @@ class ConditionChipTokens {
   static const double radius = 6;
 }
 
+/// Geometry of the small language flag shown on every collection surface.
+///
+/// Sized a step above [ConditionChipTokens.fontSize]: a regional-indicator pair
+/// is drawn by the system emoji font at roughly the em box, so at the chip's
+/// own size it reads noticeably smaller than the two-letter grade beside it.
+class LanguageFlagTokens {
+  const LanguageFlagTokens._();
+
+  static const double fontSize = 14;
+
+  /// The gap between the grade chip and the flag under it on a collection row.
+  /// Small on purpose: the two are one block about the row's midline, not two
+  /// separate columns of information.
+  static const double stackGap = 4;
+
+  /// The fallback badge, drawn for a language code that names no country
+  /// (`AE`, or anything a CSV import brought in). Geometry follows the grade
+  /// chip so the two read as siblings; only the ink and the outline differ.
+  static const double fallbackFontSize = 11;
+  static const double fallbackBorderWidth = 1;
+}
+
 /// The home screen is four large tiles: Log Cards, My Collection,
 /// Statistics, Settings.
 class HomeMenuTokens {

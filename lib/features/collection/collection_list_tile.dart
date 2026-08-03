@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../core/theme/tokens.dart';
 import '../../models/collection_entry_with_card.dart';
 import '../../shared/widgets/card_art_thumbnail.dart';
+import '../../shared/widgets/language_flag.dart';
 
 /// One row in the collection list. Pure presentation — mutations flow up via
 /// callbacks, mirroring `HomeMenuTile`.
@@ -87,26 +88,40 @@ class CollectionListTile extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.center,
               children: [
                 // Grade first, then the art: the chip is what the eye scans a
-                // list of duplicates for, so it leads the row.
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: ConditionChipTokens.horizontalPadding,
-                    vertical: ConditionChipTokens.verticalPadding,
-                  ),
-                  decoration: BoxDecoration(
-                    color: conditionColor,
-                    borderRadius: BorderRadius.circular(
-                      ConditionChipTokens.radius,
+                // list of duplicates for, so it leads the row. The language
+                // flag sits under it as one block — being a column inside a
+                // centre-aligned row, the pair straddles the row's midline, so
+                // the chip rises by half the flag's height and the two end up
+                // equidistant from the tile's edges without any padding maths.
+                //
+                // Free, height-wise: the row is as tall as the 3*30 action
+                // column, and chip + gap + flag is under half of that.
+                Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: ConditionChipTokens.horizontalPadding,
+                        vertical: ConditionChipTokens.verticalPadding,
+                      ),
+                      decoration: BoxDecoration(
+                        color: conditionColor,
+                        borderRadius: BorderRadius.circular(
+                          ConditionChipTokens.radius,
+                        ),
+                      ),
+                      child: Text(
+                        entry.condition.shortCode,
+                        style: const TextStyle(
+                          color: ConditionChipColors.onSelected,
+                          fontWeight: FontWeight.bold,
+                          fontSize: ConditionChipTokens.fontSize,
+                        ),
+                      ),
                     ),
-                  ),
-                  child: Text(
-                    entry.condition.shortCode,
-                    style: const TextStyle(
-                      color: ConditionChipColors.onSelected,
-                      fontWeight: FontWeight.bold,
-                      fontSize: ConditionChipTokens.fontSize,
-                    ),
-                  ),
+                    const SizedBox(height: LanguageFlagTokens.stackGap),
+                    LanguageFlag(language: entry.language),
+                  ],
                 ),
                 const SizedBox(width: AppSpacing.md),
                 // The whole card, uncropped (a portrait card box + contain),

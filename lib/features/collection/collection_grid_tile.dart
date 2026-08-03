@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../core/theme/tokens.dart';
 import '../../models/collection_entry_with_card.dart';
 import '../../shared/widgets/card_art_thumbnail.dart';
+import '../../shared/widgets/language_flag.dart';
 
 /// One cell in a minified collection grid: the artwork, optionally captioned
 /// with the card's name, and a quantity badge when more than one copy is held.
@@ -95,6 +96,16 @@ class CollectionGridTile extends StatelessWidget {
                       top: 2,
                       child: _SelectionCheck(selected: selected),
                     ),
+                  // Bottom-left: the one corner the other two overlays don't
+                  // claim. Inside the artwork [Stack] rather than beside the
+                  // caption, so it renders in `minifyFull` too and the cell
+                  // height — computed from `nameCaptionHeight` by the grid
+                  // delegate in `collection_screen.dart` — is untouched.
+                  Positioned(
+                    left: 2,
+                    bottom: 2,
+                    child: _LanguageBadge(language: entry.language),
+                  ),
                 ],
               ),
             ),
@@ -148,6 +159,34 @@ class _SelectionCheck extends StatelessWidget {
         color: selected
             ? AppPalette.dark.accent
             : AppPalette.dark.onSurfaceMuted,
+      ),
+    );
+  }
+}
+
+/// The language flag over a cell's artwork, scrimmed like [_QuantityBadge] and
+/// for the same reason. The scrim is what makes the fixed light ink correct
+/// here in either theme: the badge sits on a dark panel of its own, not on the
+/// surface underneath.
+class _LanguageBadge extends StatelessWidget {
+  const _LanguageBadge({required this.language});
+
+  final String language;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(
+        horizontal: ConditionChipTokens.verticalPadding,
+        vertical: ConditionChipTokens.verticalPadding,
+      ),
+      decoration: BoxDecoration(
+        color: AppPalette.dark.background.withValues(alpha: 0.85),
+        borderRadius: BorderRadius.circular(ConditionChipTokens.radius),
+      ),
+      child: LanguageFlag(
+        language: language,
+        color: AppPalette.dark.onSurface,
       ),
     );
   }

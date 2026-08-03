@@ -11,6 +11,7 @@ import '../../models/collection_entry_with_card.dart';
 import '../../models/printing.dart';
 import '../../shared/widgets/card_art_thumbnail.dart';
 import '../../shared/widgets/labeled_choice_chip.dart';
+import '../../shared/widgets/language_flag.dart';
 import '../../shared/widgets/printing_picker.dart';
 import 'collection_delete_confirm.dart';
 import 'collection_providers.dart';
@@ -152,6 +153,7 @@ class _CollectionDetailScreenState
             ),
             _DetailRow(
               label: AppStrings.collectionLanguageLabel,
+              valueLeading: LanguageFlag(language: entry.language),
               value: languageLabel(entry.language),
             ),
             if (card.description != null) ...[
@@ -310,6 +312,7 @@ class _LanguageBreakdown extends ConsumerWidget {
         for (final language in languages)
           _DetailRow(
             label: languageLabel(language),
+            valueLeading: LanguageFlag(language: language),
             value: '×${byLanguage[language]}',
           ),
       ],
@@ -318,10 +321,20 @@ class _LanguageBreakdown extends ConsumerWidget {
 }
 
 class _DetailRow extends StatelessWidget {
-  const _DetailRow({required this.label, required this.value});
+  const _DetailRow({
+    required this.label,
+    required this.value,
+    this.valueLeading,
+  });
 
   final String label;
   final String value;
+
+  /// Rendered immediately before [value]. A widget rather than something folded
+  /// into the value string: the language rows put a flag here, and prefixing the
+  /// glyph onto the text would change what every exact-text matcher over this
+  /// screen sees while adding nothing.
+  final Widget? valueLeading;
 
   @override
   Widget build(BuildContext context) {
@@ -334,6 +347,10 @@ class _DetailRow extends StatelessWidget {
             width: 100,
             child: Text(label, style: TextStyle(color: palette.onSurfaceMuted)),
           ),
+          if (valueLeading != null) ...[
+            valueLeading!,
+            const SizedBox(width: AppSpacing.sm),
+          ],
           Expanded(
             child: Text(value, style: TextStyle(color: palette.onSurface)),
           ),

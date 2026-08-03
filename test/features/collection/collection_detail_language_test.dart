@@ -8,8 +8,10 @@ import 'package:ygo_scanner/data/db/dao/collection_dao.dart';
 import 'package:ygo_scanner/data/db/database.dart';
 import 'package:ygo_scanner/features/collection/collection_detail_screen.dart';
 import 'package:ygo_scanner/models/card_condition.dart';
+import 'package:ygo_scanner/models/card_language.dart';
 import 'package:ygo_scanner/models/collection_entry.dart';
 import 'package:ygo_scanner/models/ygo_card.dart';
+import 'package:ygo_scanner/shared/widgets/language_flag.dart';
 
 import '../../data/db/test_db.dart';
 import '../../support/widget_test_harness.dart';
@@ -78,6 +80,13 @@ void main() {
       expect(find.text('German'), findsWidgets);
       expect(find.text('×2'), findsOneWidget);
       expect(find.text('×1'), findsOneWidget);
+
+      // Both breakdown rows are flagged, plus the per-entry Language row above
+      // them. The names above are the point of these two: the flag is a
+      // *leading widget*, not a prefix folded into the label, so the exact-text
+      // matchers still see 'English' and 'German' on their own.
+      expect(find.byType(LanguageFlag), findsNWidgets(3));
+      expect(find.text(kCardLanguageFlags['DE']!), findsOneWidget);
     });
   });
 

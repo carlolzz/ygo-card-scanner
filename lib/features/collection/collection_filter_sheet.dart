@@ -8,6 +8,7 @@ import '../../models/card_condition.dart';
 import '../../models/card_edition.dart';
 import '../../models/card_language.dart';
 import '../../shared/widgets/labeled_choice_chip.dart';
+import '../../shared/widgets/searchable_text_picker.dart';
 import 'collection_providers.dart';
 
 /// Opens the collection filter sheet. Returns once it closes; applying is done
@@ -143,13 +144,20 @@ class _CollectionFilterSheetState
                           ),
                         ),
                       ),
+                    // A search box, not a chip row: set names are long and a
+                    // real collection spans dozens, so one chip each made this
+                    // group taller than everything else in the sheet combined
+                    // and still had to be read one chip at a time. The picker
+                    // only ever yields a name from `options.setNames`, so
+                    // `getAll`'s `p.set_name = ?` predicate is untouched.
                     if (options.setNames.isNotEmpty)
                       _Group(
                         label: AppStrings.collectionFilterSetLabel,
-                        child: _ChipRow<String>(
+                        child: SearchableTextPicker(
                           values: options.setNames,
                           selected: _draft.setName,
-                          labelOf: (s) => s,
+                          anyLabel: AppStrings.collectionFilterAll,
+                          hintText: AppStrings.collectionFilterSetHint,
                           onSelected: (value) => _update(
                             _draft.copyWith(
                               setName: value,

@@ -1390,6 +1390,107 @@ order):
     from the `qual:` line — `minSharpness` especially, since it is an absolute
     value on a scene-dependent measure.
 
+19. Seventh on-device feedback pass — lenient artwork matching, top-overlay
+    layout, set search box ← done (verified: `flutter analyze` clean, full
+    `flutter test` green at **397 tests**, `pytest tools/` green). **No DB
+    migration, no schema change, no new dependency.** Nothing here touches the
+    descriptor, `assets/card_hashes.json`, the detection algorithm or any
+    shape/quality threshold.
+    Context: ~30 more cards logged. The recurring report was that the banner said
+    "Can't identify this card", and tapping **Show best guesses** then showed the
+    right card at the top — *every time*.
+    **So the app was hiding an answer it already had, and that was one line.**
+    `PHashArtMatcher` always ranks at `ArtMatchTuning.maxHammingDistance` (72 of
+    256), but `_onArtReading` discarded any top hit worse than
+    `autoMatchMaxDistance` (48) into the **empty-frame branch** — the same branch
+    a frame containing no card at all takes. So the 48-72 band cost a "can't
+    identify this card", a wait for `unmatchedStreakForHint` (6) frames and an
+    extra tap, to reach a card the app had already found, rectified, hashed and
+    ranked correctly. The gate is now `if (top == null)`.
+    `autoMatchMaxDistance` **keeps its value and loses its job**: it selects how
+    the review gate *describes* a match, not whether one is shown. Past it the
+    panel hedges — new `ScanState.matchedDistance` + `AppStrings.scanLowConfidence`
+    ("Best guess — check the picture"). The measured case for 48 (the perturbation
+    study in its own doc) is exactly what makes it a meaningful *clean read vs
+    usable but degraded* boundary, so the constant survives with its evidence
+    intact. `matchedDistance` is bound to the card **structurally** in `copyWith`
+    — a new `matchedCard` carries only the distance passed with it, null for an
+    exact OCR match — rather than by a clear flag every future caller would have
+    to remember.
+    What makes the leniency safe is unchanged and worth naming: two agreeing
+    frames (`artAgreementFrames`), the quality gate, the 72 threshold itself, and
+    above all the review gate — nothing is written without an explicit confirm,
+    so a marginal guess costs one tap while hiding a good one cost the whole scan.
+    The statistics agree: only **1.37 %** of the 14 641 indexed cards have any
+    other card within 72, and a random non-card image's nearest entry sits ~98
+    away, so this band is populated by real cards photographed poorly, not by
+    noise.
+    **The escape hatch had to grow to match.** "Not the right card?" lost its
+    `candidates.length > 1` guard (a single candidate used to hide it entirely,
+    which is the case a wrong guess is most likely to produce); with alternatives
+    it opens the ranked panel, with only one it goes straight to manual search.
+    And since every in-threshold hit now auto-presents, reaching `showBestGuesses`
+    at all means `match()` is empty — so `ArtMatcher.bestGuesses()` was added,
+    re-ranking the last frame's hash **unthresholded**. `PHashArtMatcher` caches
+    `_lastHash` beside `_lastResult` (dropped per frame, re-set only if that frame
+    reached hashing, so guesses can never describe a card that has left the lens)
+    and both paths share one `_resolve(matches)` — which carries three invariants
+    that are silent when lost: ranked order, the skip for index passcodes absent
+    from `cards`, and `rankedPasscode` for the debounce.
+    **The top overlays are capped to the band above the reticle.** The diagnostics
+    box is eleven lines growing down from the app bar while the reticle is
+    centred, so it painted over the guide box the user has to aim through.
+    `_TopOverlays` is now a `LayoutBuilder` whose `constraints.biggest` *is* the
+    viewport (it is a non-positioned child of an expanded `Stack`), so the band is
+    measured against the same `reticleRectInViewport` the detector's search region
+    comes from; the column sits in a `ConstrainedBox` with the diagnostics box
+    `Flexible` and scrolling internally, so the fixed-height banner below is never
+    what gets squeezed out. Type dropped 12 → 10pt with a 1.3 line height and the
+    `[ save this frame ]` row became an icon. **Verified to fail** with the cap
+    removed.
+    **Found while measuring that band: the app bar was being counted twice.**
+    `Scaffold(extendBodyBehindAppBar: true)` reports the app bar to the body *as*
+    `MediaQuery` padding — which the overlays' own `SafeArea` already consumes —
+    and the padding then added `kToolbarHeight` again. That left a whole toolbar
+    of empty space between the icons and the overlays while costing 56pt of the
+    band, and it is precisely the "should sit just below the buttons" complaint.
+    The inset is now just `AppSpacing.sm`.
+    Order in the column is now diagnostics → **surface hint** → status banner: the
+    hint says how to make recognition work at all, which is worth reading before
+    the running commentary on whether it is working. The existing geometry test
+    flipped with it (it asserts the order, not mere presence, and caught this
+    change as intended).
+    **The collection Set filter is a search box.** It was a `Wrap` of one chip per
+    owned set — unbounded, with ~30-character labels, so it was taller than the
+    rest of the sheet combined and still had to be read one chip at a time. New
+    `lib/shared/widgets/searchable_text_picker.dart` is the `String`-keyed sibling
+    of `PrintingPicker`, copying its proven contract (the field doubles as query
+    and selection; blur snaps back to the selected label so a half-typed query
+    can never read as a choice; results capped at
+    `PrintingPickerTokens.maxListHeight`). A **separate widget** deliberately:
+    `PrintingPicker` is keyed to `Printing`/`int?` across three live call sites in
+    the logging flows, and making it generic would churn all of them to save a
+    file. What they now share is the part that would actually be wrong if it
+    drifted — the filter rule, extracted to `matchesSearchTerms` in
+    `lib/core/search_terms.dart` and unit-tested there, with `filterPrintings`
+    delegating to it. **Selection is always one of `options.setNames`**, so
+    `CollectionFilter.setName`, `getAll`'s `p.set_name = ?` and `filterOptions()`
+    are all untouched — no DAO change, and a chosen filter can never match
+    nothing. The `applyFilterChip` test helper is unchanged: it only ever drove
+    condition/rarity/advanced chips, which stay chips.
+    **Test gotcha**: inside the filter sheet, `find.text('Metal Raiders')` also
+    matches the collection list *underneath* the modal — the new test scopes its
+    finders to `find.byType(SearchableTextPicker)`. And the diagnostics-geometry
+    test sets a phone-shaped 393x851 viewport on purpose: the band is a function
+    of viewport height, and at the default 800x600 it falls under
+    `ScanDiagnosticsTokens.minBandHeight`, where the floor deliberately wins.
+    **Still open**, unchanged: `maxHammingDistance` at 72,
+    `CardDetectionTuning.innerQuadMinAreaRatio` at 0.78, the passcode ROI filter
+    off, `artAgreementFrames` at 2, and every `FrameQualityTuning` threshold still
+    uncalibrated on device. The new question this pass raises: with the 48-72 band
+    now visible in use, the `d=` values on cards that previously failed are the
+    evidence for whether **72 itself** is the right ceiling.
+
 ## Standing rules
 
 - No ORM. Raw SQL in DAOs only. No SQL outside `lib/data/db/`.

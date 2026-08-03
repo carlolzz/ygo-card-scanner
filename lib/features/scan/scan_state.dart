@@ -87,6 +87,7 @@ class ScanState {
     this.artAgreementBuffer = const [],
     this.matchedCard,
     this.matchedIndexPasscode,
+    this.matchedDistance,
     this.unknownPasscode,
     this.candidates = const [],
     this.condition = CardCondition.nearMint,
@@ -133,6 +134,15 @@ class ScanState {
   /// [ScanController] suppresses on this when set, falling back to the card's
   /// own passcode for the OCR path, where the two are the same value.
   final String? matchedIndexPasscode;
+
+  /// Hamming distance between the frame's hash and [matchedCard]'s, when the
+  /// match came from artwork. Null for an OCR passcode match, which is exact.
+  ///
+  /// Carried purely so the review gate can say how sure it is. Anything past
+  /// [ArtMatchTuning.autoMatchMaxDistance] is presented as a *guess* rather than
+  /// a match — see the threshold's own doc for why it no longer gates whether a
+  /// card is shown at all.
+  final int? matchedDistance;
 
   /// The unmatched passcode shown in [ScanStatus.unknown].
   final String? unknownPasscode;
@@ -182,9 +192,9 @@ class ScanState {
   final ScanHint hint;
 
   /// Consecutive frames where a card was detected and hashed but nothing ranked
-  /// within [ArtMatchTuning.autoMatchMaxDistance]. Past
-  /// [FrameQualityTuning.unmatchedStreakForHint] the banner offers the ranked
-  /// alternatives instead of silently continuing.
+  /// within [ArtMatchTuning.maxHammingDistance] at all. Past
+  /// [FrameQualityTuning.unmatchedStreakForHint] the banner offers the nearest
+  /// few regardless of distance instead of silently continuing.
   final int unmatchedStreak;
 
   /// Consecutive frames rejected by the image-quality gate.
@@ -207,6 +217,7 @@ class ScanState {
     YgoCard? matchedCard,
     bool clearMatchedCard = false,
     String? matchedIndexPasscode,
+    int? matchedDistance,
     String? unknownPasscode,
     bool clearUnknownPasscode = false,
     List<ArtCandidate>? candidates,
@@ -238,6 +249,15 @@ class ScanState {
       matchedIndexPasscode: clearMatchedCard
           ? null
           : (matchedIndexPasscode ?? this.matchedIndexPasscode),
+      // Bound to the card structurally rather than by a clear flag: a *new*
+      // card carries only the distance passed with it (null for an exact OCR
+      // match), while an edit that leaves the card alone — a condition chip, a
+      // quantity bump — preserves it. A stale distance would describe the
+      // previous card's confidence, and the review gate reads it to decide
+      // whether to hedge.
+      matchedDistance: clearMatchedCard || matchedCard != null
+          ? matchedDistance
+          : (matchedDistance ?? this.matchedDistance),
       unknownPasscode: clearUnknownPasscode
           ? null
           : (unknownPasscode ?? this.unknownPasscode),

@@ -42,6 +42,9 @@ class AppStrings {
   static const String collectionFilterConditionLabel = 'Condition';
   static const String collectionFilterRarityLabel = 'Rarity';
   static const String collectionFilterSetLabel = 'Set';
+  // The set filter is a search box rather than a chip row: a collection spans
+  // dozens of sets whose names are long, and the user knows the one they want.
+  static const String collectionFilterSetHint = 'Type a set name';
   static const String collectionFilterEditionLabel = 'Edition';
   static const String collectionFilterLanguageLabel = 'Language';
   static const String collectionFilterLevelLabel = 'Level';
@@ -151,6 +154,11 @@ class AppStrings {
       'still work.';
 
   // Artwork match — the automatic primary path.
+  //
+  // Every hit the index ranks is now presented, so the review gate has to be
+  // able to say how sure it is: past `ArtMatchTuning.autoMatchMaxDistance` the
+  // card is still shown, but as a guess to be checked against the artwork.
+  static const String scanLowConfidence = 'Best guess — check the picture';
   static const String scanNotThisCardButton = 'Not the right card?';
   static const String scanCandidatesTitle = 'Is it one of these?';
   static const String scanCandidatesSubtitle =

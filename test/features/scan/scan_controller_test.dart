@@ -31,10 +31,17 @@ import '../../data/db/test_db.dart';
 /// image asset, or pHash math — the continuous ranking is driven by the
 /// overridden [artReadingsProvider], and this just resolves the agreed run.
 class _FakeArtMatcher implements ArtMatcher {
-  _FakeArtMatcher(this.result);
+  _FakeArtMatcher(this.result, {this.guesses = const []});
   final List<ArtCandidate> result;
+
+  /// What the *unthresholded* nearest few resolve to — deliberately a separate
+  /// list, since the whole point of `bestGuesses` is answering when `match`
+  /// cannot.
+  final List<ArtCandidate> guesses;
   @override
   Future<List<ArtCandidate>> match({Size? viewportSize}) async => result;
+  @override
+  Future<List<ArtCandidate>> bestGuesses() async => guesses;
   @override
   Future<ArtFrameResult> rankFrame({
     bool includeNearest = false,
@@ -71,6 +78,7 @@ void main() {
   var ocrSeq = 0;
   // Mutated by tests before triggering an artwork match.
   var fakeCandidates = <ArtCandidate>[];
+  var fakeGuesses = <ArtCandidate>[];
 
   /// One frame of artwork: a nearest hit at [distance], or nothing (null).
   Future<void> feedArt(
@@ -135,13 +143,15 @@ void main() {
     artSeq = 0;
     ocrSeq = 0;
     fakeCandidates = <ArtCandidate>[];
+    fakeGuesses = <ArtCandidate>[];
     container = ProviderContainer(
       overrides: [
         appDatabaseProvider.overrideWith((ref) async => db),
         artReadingsProvider.overrideWith((ref) => artReadings.stream),
         passcodeReadingsProvider.overrideWith((ref) => readings.stream),
-        artMatcherProvider
-            .overrideWith((ref) async => _FakeArtMatcher(fakeCandidates)),
+        artMatcherProvider.overrideWith(
+          (ref) async => _FakeArtMatcher(fakeCandidates, guesses: fakeGuesses),
+        ),
       ],
     );
     // Keep the controller alive so its stream subscriptions stay registered.
@@ -179,11 +189,46 @@ void main() {
       expect(state().condition, CardCondition.nearMint);
     });
 
-    test('reads beyond the auto-match gate never accumulate', () async {
+    // The headline change of this pass, and the exact inverse of what this test
+    // used to assert. A hit past `autoMatchMaxDistance` but inside
+    // `maxHammingDistance` was routed into the empty-frame branch and reported
+    // as "can't identify this card"; on device the guess in that band was right
+    // every time it was asked for. It is presented now — as a guess.
+    test('a read past the confidence boundary still resolves to a match',
+        () async {
+      const far = ArtMatchTuning.autoMatchMaxDistance + 2;
+      fakeCandidates = [const ArtCandidate(dmCard, far)];
+      for (var i = 0; i < ScanTuning.artAgreementFrames; i++) {
+        await feedArt(darkMagician, distance: far);
+      }
+      await settle();
+
+      expect(state().status, ScanStatus.matched);
+      expect(state().matchedCard?.name, 'Dark Magician');
+      // What the review gate reads to decide whether to hedge.
+      expect(state().matchedDistance, far);
+      expect(
+        state().matchedDistance!,
+        greaterThan(ArtMatchTuning.autoMatchMaxDistance),
+      );
+    });
+
+    test('a confident read carries its distance without hedging', () async {
+      fakeCandidates = [const ArtCandidate(dmCard, 2)];
+      await agreeArt(darkMagician);
+
+      expect(state().status, ScanStatus.matched);
+      expect(state().matchedDistance, 2);
+      expect(
+        state().matchedDistance!,
+        lessThanOrEqualTo(ArtMatchTuning.autoMatchMaxDistance),
+      );
+    });
+
+    test('a frame with nothing ranked at all never accumulates', () async {
       fakeCandidates = [const ArtCandidate(dmCard, 2)];
       for (var i = 0; i < 5; i++) {
-        await feedArt(darkMagician,
-            distance: ArtMatchTuning.autoMatchMaxDistance + 1);
+        await feedUnmatched();
       }
       expect(state().status, ScanStatus.detecting);
       expect(state().matchedCard, isNull);
@@ -482,8 +527,7 @@ void main() {
       });
 
       // The escape hatch: `showCandidates` is guarded on `matched` and could not
-      // be reached from here, so the ranked hits that exist out to
-      // `maxHammingDistance` were never offered at all.
+      // be reached from here, so nothing was offered at all.
       test('showBestGuesses resolves the last frame into the candidate panel',
           () async {
         fakeCandidates = const [ArtCandidate(dmCard, 40)];
@@ -496,9 +540,23 @@ void main() {
         expect(state().hint, ScanHint.none);
       });
 
-      test('showBestGuesses with nothing close resumes instead of showing an '
-          'empty panel', () async {
+      // Now that every in-threshold hit auto-presents, getting here at all means
+      // `match` has nothing: the useful answer is the unthresholded nearest few.
+      test('showBestGuesses falls back to the unthresholded nearest', () async {
         fakeCandidates = const [];
+        fakeGuesses = const [ArtCandidate(beCard, 96)];
+        await feedUnmatched();
+        await controller().showBestGuesses();
+        await settle();
+
+        expect(state().status, ScanStatus.candidates);
+        expect(state().candidates.single.card.passcode, beCard.passcode);
+      });
+
+      test('showBestGuesses with nothing ranked at all resumes instead of '
+          'showing an empty panel', () async {
+        fakeCandidates = const [];
+        fakeGuesses = const [];
         await feedUnmatched();
         await controller().showBestGuesses();
         await settle();

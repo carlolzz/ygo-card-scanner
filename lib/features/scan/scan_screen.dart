@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:camera/camera.dart';
 import 'package:flutter/foundation.dart' show listEquals;
@@ -815,8 +816,18 @@ class _HelpLine extends StatelessWidget {
 
 /// The stack of overlays pinned under the app bar, in a single column so their
 /// order is structural rather than a coincidence of independent insets: the
-/// developer diagnostics box, then the status banner, then the surface hint —
+/// developer diagnostics box, then the surface hint, then the status banner —
 /// each pushing the next one down.
+///
+/// **The column is capped to the band above the reticle.** Everything here
+/// grows downward from the app bar while the reticle is centred, so the
+/// diagnostics box — eleven lines and a button — reached well into the guide box
+/// the user is trying to fill with a card, which is the one thing on this screen
+/// that must stay clear. The band is measured, not guessed: this widget is a
+/// non-positioned child of an expanded `Stack`, so its constraints *are* the
+/// viewport, the same space [reticleRectInViewport] answers in. The diagnostics
+/// box is the flexible child and scrolls internally, so the fixed-size banner
+/// below it is never the thing that gets squeezed out.
 ///
 /// **The surface hint lives here, not next to the reticle.** It used to be a
 /// `Positioned` anchored to `reticle.top` inside [_ReticleOverlay], while the
@@ -857,29 +868,58 @@ class _TopOverlays extends ConsumerWidget {
         scanning &&
         ref.watch(scanHelpEnabledProvider) &&
         !ref.watch(scanDiagnosticsEnabledProvider);
-    return SafeArea(
-      child: Align(
-        alignment: Alignment.topCenter,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(
-            horizontal: AppSpacing.md,
-          ).copyWith(top: kToolbarHeight + AppSpacing.sm),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (diagnostics) ...[
-                const _DiagnosticsBox(),
-                const SizedBox(height: AppSpacing.sm),
-              ],
-              _StatusBanner(status: status, hint: hint),
-              if (showHint) ...[
-                const SizedBox(height: AppSpacing.sm),
-                const _SurfaceHint(),
-              ],
-            ],
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        // Where this column starts, in viewport coordinates. `Scaffold` with
+        // `extendBodyBehindAppBar` reports the app bar to the body *as*
+        // `MediaQuery` padding, which the SafeArea below already consumes — so
+        // the only inset left to add is the gap. This used to add
+        // `kToolbarHeight` on top of that, counting the app bar twice and
+        // leaving a whole toolbar's worth of empty space between the icons and
+        // the overlays, at the expense of the band above the reticle.
+        final top = MediaQuery.paddingOf(context).top + AppSpacing.sm;
+        final band =
+            reticleRectInViewport(constraints.biggest).top -
+            top -
+            ScanDiagnosticsTokens.reticleGap;
+        return SafeArea(
+          child: Align(
+            alignment: Alignment.topCenter,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(
+                horizontal: AppSpacing.md,
+              ).copyWith(top: AppSpacing.sm),
+              child: ConstrainedBox(
+                constraints: BoxConstraints(
+                  maxHeight: math.max(
+                    band,
+                    ScanDiagnosticsTokens.minBandHeight,
+                  ),
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // Flexible, so a long readout yields to the banner rather
+                    // than pushing it off the bottom of the band.
+                    if (diagnostics) ...[
+                      const Flexible(child: _DiagnosticsBox()),
+                      const SizedBox(height: AppSpacing.sm),
+                    ],
+                    // Above the banner: it explains how to make recognition
+                    // work at all, so it should be read before the running
+                    // commentary on whether it is working.
+                    if (showHint) ...[
+                      const _SurfaceHint(),
+                      const SizedBox(height: AppSpacing.sm),
+                    ],
+                    _StatusBanner(status: status, hint: hint),
+                  ],
+                ),
+              ),
+            ),
           ),
-        ),
-      ),
+        );
+      },
     );
   }
 }
@@ -1009,21 +1049,27 @@ class _DiagnosticsBoxState extends ConsumerState<_DiagnosticsBox> {
         color: _cameraScrim.withValues(alpha: 0.8),
         borderRadius: BorderRadius.circular(AppRadius.sm),
       ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          for (final line in lines)
-            Text(
-              line,
-              style: TextStyle(
-                color: palette.onSurface,
-                fontSize: ScanDiagnosticsTokens.fontSize,
-                fontFamily: ScanDiagnosticsTokens.fontFamily,
+      // Scrollable because the band above the reticle is a hard budget (see
+      // [_TopOverlays]) and the line count varies with what the pipeline has to
+      // report — the alternative to scrolling is an overflow stripe.
+      child: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            for (final line in lines)
+              Text(
+                line,
+                style: TextStyle(
+                  color: palette.onSurface,
+                  fontSize: ScanDiagnosticsTokens.fontSize,
+                  height: ScanDiagnosticsTokens.lineHeight,
+                  fontFamily: ScanDiagnosticsTokens.fontFamily,
+                ),
               ),
-            ),
-          const _CaptureSampleButton(),
-        ],
+            const _CaptureSampleButton(),
+          ],
+        ),
       ),
     );
   }
@@ -1086,20 +1132,20 @@ class _CaptureSampleButtonState extends ConsumerState<_CaptureSampleButton> {
 
   @override
   Widget build(BuildContext context) {
-    return TextButton(
-      style: TextButton.styleFrom(
+    // An icon, not the old full-width `[ save this frame ]` row: every point it
+    // takes is a diagnostics line pushed out of the band above the reticle. The
+    // label survives as the tooltip and the semantic name.
+    return Align(
+      alignment: Alignment.centerRight,
+      child: IconButton(
         padding: EdgeInsets.zero,
-        minimumSize: Size.zero,
-        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-      ),
-      onPressed: _busy ? null : _capture,
-      child: Text(
-        AppStrings.scanCaptureButton,
-        style: TextStyle(
-          color: AppPalette.dark.accent,
-          fontSize: ScanDiagnosticsTokens.fontSize,
-          fontFamily: ScanDiagnosticsTokens.fontFamily,
-        ),
+        constraints: const BoxConstraints(),
+        visualDensity: VisualDensity.compact,
+        iconSize: ScanDiagnosticsTokens.captureIconSize,
+        color: AppPalette.dark.accent,
+        tooltip: AppStrings.scanCaptureButton,
+        icon: const Icon(Icons.save_alt),
+        onPressed: _busy ? null : _capture,
       ),
     );
   }
@@ -1260,6 +1306,24 @@ class _MatchedPanel extends ConsumerWidget {
                                 color: palette.onSurfaceMuted,
                               ),
                             ),
+                          // Say so when the app is guessing. Matches past
+                          // `autoMatchMaxDistance` are shown rather than
+                          // withheld, which is only defensible if the user can
+                          // tell the difference — the picture above plus this
+                          // line are how they check before confirming.
+                          if (_isLowConfidence(state))
+                            Padding(
+                              padding: const EdgeInsets.only(
+                                top: AppSpacing.xs,
+                              ),
+                              child: Text(
+                                AppStrings.scanLowConfidence,
+                                style: TextStyle(
+                                  color: palette.accent,
+                                  fontSize: ScanHelpTokens.lineFontSize,
+                                ),
+                              ),
+                            ),
                         ],
                       ),
                     ),
@@ -1362,14 +1426,27 @@ class _MatchedPanel extends ConsumerWidget {
                     child: const Text(AppStrings.scanConfirmButton),
                   ),
                 ),
-                // An automatic artwork guess can be wrong, so offer the ranked
-                // alternatives right here (only when there are any — an OCR
-                // passcode match is exact and carries none).
-                if (state.candidates.length > 1)
+                // An automatic artwork guess can be wrong, so always offer a way
+                // off it — the escape hatch is what makes presenting a marginal
+                // guess reasonable in the first place. Shown for every artwork
+                // match; an OCR passcode match is exact and carries no
+                // candidates, so it keeps the panel it always had.
+                if (state.candidates.isNotEmpty)
                   SizedBox(
                     width: double.infinity,
                     child: TextButton(
-                      onPressed: controller.showCandidates,
+                      onPressed: () {
+                        // With alternatives, show them; the candidate panel ends
+                        // in "search by name" anyway. With only this one, skip
+                        // the middle step — a one-row "is it one of these?"
+                        // listing the card just rejected is noise.
+                        if (state.candidates.length > 1) {
+                          controller.showCandidates();
+                        } else {
+                          controller.dismiss();
+                          context.push(AppRoutes.addCard);
+                        }
+                      },
                       child: const Text(AppStrings.scanNotThisCardButton),
                     ),
                   ),
@@ -1380,6 +1457,17 @@ class _MatchedPanel extends ConsumerWidget {
       ),
     );
   }
+}
+
+/// Whether the pending match is far enough out that the panel should hedge.
+///
+/// [ArtMatchTuning.autoMatchMaxDistance] no longer decides whether a card is
+/// offered — [ArtMatchTuning.maxHammingDistance] does — so this is the whole of
+/// what it decides now. Null distance means an exact OCR passcode match, which
+/// never hedges.
+bool _isLowConfidence(ScanState state) {
+  final distance = state.matchedDistance;
+  return distance != null && distance > ArtMatchTuning.autoMatchMaxDistance;
 }
 
 /// The set/expansion picker inside the review gate. The camera can't tell which

@@ -1,24 +1,77 @@
-# Next session: calibrate the frame-quality gate on device
+# Next session: is 72 the right ceiling, and is the quality gate calibrated?
 
 **Written:** 2026-08-03 · **Against:** branch `scan-detection-and-collection-ux`
-(CLAUDE.md build-order step 18).
+(CLAUDE.md build-order step 19).
 
-**Baseline to start from:** `flutter analyze` clean, **384** tests green,
+**Baseline to start from:** `flutter analyze` clean, **397** tests green,
 `pytest tools/` green.
 
-`CLAUDE.md` step 18 has the full background. This file covers only what is *not*
-written down there: what to look at on the phone, in what order, and why.
+`CLAUDE.md` steps 18 and 19 have the full background. This file covers only what
+is *not* written down there: what to look at on the phone, in what order, and why.
 
 ---
 
-## The one thing that must happen before anything else
+## What changed under you, and what it means for testing
 
-**Every threshold in `FrameQualityTuning` is a first guess.** They were chosen
-from synthetic buffers, because that is all a host test can offer. The gate they
-control decides whether a frame is hashed at all, so a wrong value here is the
-one change in step 18 that can make recognition *worse* rather than better.
+Step 19 removed the second distance gate. Every hit the index ranks within
+`ArtMatchTuning.maxHammingDistance` (72) now opens the review panel; past
+`autoMatchMaxDistance` (48) it opens hedged — **"Best guess — check the
+picture"** under the card name.
 
-Turn on Settings → Scanning → diagnostics and read the new **`qual:`** line:
+So the two things to watch are opposites of each other:
+
+1. **Cards that used to fail should now just work.** The 48-72 band was being
+   discarded into the empty-frame branch. If "Can't identify this card" still
+   appears often, the nearest hit is beyond 72 and the ceiling — not the
+   presentation — is the constraint.
+2. **Watch for a hedged panel showing the *wrong* card.** That is the cost this
+   change buys. It should be rare (only 1.37 % of indexed cards have any
+   neighbour within 72) and it is recoverable in one tap, but if it happens more
+   than occasionally, `maxHammingDistance` is too loose and the honest fix is to
+   lower *it*, not to reinstate the second gate.
+
+Note what did **not** change: two agreeing frames, the quality gate, and the
+review gate. Nothing is ever written without a confirm.
+
+---
+
+## The measurement that settles the ceiling
+
+Turn on Settings → Scanning → diagnostics and read the `d=` values on cards that
+*used* to fail.
+
+- **Clustered in 48-72** → the change did its job; leave 72 alone.
+- **Clustered just past 72** (say 74-84) → raising the ceiling is defensible on
+  the measured curve in `ArtMatchTuning.maxHammingDistance`'s own doc: the
+  neighbour probability is flat to r=84 (1.81 %) and only cliffs at 88 (4.04 %)
+  and 96 (76 %). Anything at or past 96 is noise, not a card.
+- **Sharp, glare-free frames whose nearest card is still 60+** is the *other*
+  hypothesis and points at the crop, not the threshold — see the `art box:` line
+  below.
+
+`ArtMatcher.bestGuesses()` (new) re-ranks the last frame **unthresholded**, so the
+"Show best guesses" button now always has something to show. If its top entry is
+routinely correct at distances past 72, that is the same evidence, from the other
+side.
+
+---
+
+## Still unverified since step 16: `art box: locked`
+
+Unchanged and still the biggest single thread. The diagnostics `art box:` line
+should read **`located`**, not `fixed roi`, on a standard (non-Pendulum,
+non-full-art) card. That has never been confirmed on any device. If it still says
+`fixed roi`, chase that before any threshold here — recognition accuracy would
+still be resting on the fixed fractions. See `docs/scan_pipeline_review.md`
+finding 1.
+
+---
+
+## Still uncalibrated since step 18: `FrameQualityTuning`
+
+Every threshold in it is a first guess chosen from synthetic buffers. The gate
+decides whether a frame is hashed at all, so a wrong value here is the one thing
+that can make recognition *worse*. Read the `qual:` line:
 
 ```
 qual: sharp=182  glare=3%          a frame that passed
@@ -26,97 +79,31 @@ qual: sharp=12!  glare=2%          rejected as blurred  (! marks the failing gat
 qual: sharp=240  glare=31%  ev=-0.6   rejected as glared, exposure stepping down
 ```
 
-Point at a card you *know* the app used to recognise and watch `sharp=`:
-
-- **If good frames routinely read below `minSharpness` (40)** the gate is too
-  strict and is throwing away usable frames. Raise it, or drop it to 0 to switch
-  blur rejection off entirely while you tune glare.
-- **If a visibly smeared frame reads well above 40**, it is too loose and is
-  doing nothing. Lower it.
-- `maxGlareFraction` (0.08) is the same exercise against an Ultra/Secret rare
-  under a lamp.
-
-The safety net is `maxConsecutiveSkips` (6): after six rejections in a row the
-gate stops rejecting, so even a badly wrong threshold degrades to step 17's
-behaviour rather than wedging. If scanning feels *intermittent* rather than
-broken, that failsafe firing repeatedly is the likely reason — check `qual:`.
+If good frames routinely read below `minSharpness` (40), raise it or set it to 0
+while tuning glare. If scanning feels *intermittent*, `maxConsecutiveSkips` (6)
+firing repeatedly is the likely reason. The exposure-compensation loop is the
+highest-risk part of step 18 — if `ev=` moving correlates with a black preview or
+`cam: STALLED`, set `FrameQualityTuning.exposureStep = 0` to bisect it out.
 
 ---
 
-## Then: which of the two hypotheses is actually true
+## The overlays, which you will see immediately
 
-The 40–90 distances that prompted this step have two candidate explanations, and
-until now nothing on screen could tell them apart:
-
-1. the photograph is bad (blur / foil glare), or
-2. the **crop is landing in the wrong place**, so a perfectly good photograph is
-   hashed over the wrong pixels.
-
-`qual:` and `art box:` together settle it. **A sharp, glare-free frame whose
-nearest card still ranks at 60 is hypothesis 2** — and that points straight at
-the item below, which has been open since step 16 and is still unverified.
+- The diagnostics box now sits **directly under the app-bar icons** (the app bar
+  was being counted twice in the inset) and is **capped so it can never reach the
+  orange guide box**, scrolling internally instead. Type is 10pt and the capture
+  affordance is now the ⤓ icon at the bottom right of the box.
+- The surface hint sits **above** "Point at a card".
+- Sanity-check both at a large system font size, which is where the band gets
+  tight, and confirm the guide box is still exactly centred.
 
 ---
 
-## Still unverified since step 16: `art box: locked`
+## Collection
 
-The diagnostics `art box:` line should read **`locked`**, not `fixed roi`, on a
-standard (non-Pendulum, non-full-art) card.
-
-That has never been confirmed on any device. Step 16 corrected an
-`ArtMatchTuning.artBoxRoi` whose 1.147 aspect made `OpenCvCardDetector._findArtBox`
-reject on every standard card unconditionally, so the art-box correction had
-never once fired. If it still says `fixed roi`, that is a bigger thread than any
-threshold here and should be chased first — recognition accuracy would still be
-resting on the fixed fractions. See `docs/scan_pipeline_review.md` finding 1.
-
----
-
-## Exposure compensation: watch for the CameraX risk
-
-This is the highest-risk change in step 18. It issues real
-`setExposureOffset` calls on a device whose camera stack is the least reliable
-part of the app (see the `camerax-image-stream-instability` memory).
-
-Watch for: the preview going black, the `cam:` line reading `STALLED`, or `r=`
-climbing. If any of that correlates with `ev=` moving, the fastest bisect is to
-set `FrameQualityTuning.exposureStep = 0`, which makes `nextExposureOffset`
-return the current value forever and takes the platform call out of the loop
-without removing any other part of the gate.
-
----
-
-## Capture samples while you are there
-
-The diagnostics box now has a **`[ save this frame ]`** button. It writes the
-rectified card and its art crop as PGM plus a JSON sidecar and opens the share
-sheet.
-
-Grab 5–10 on genuinely hard cards — Secret Rares under a lamp, sleeved cards,
-anything that reads `card detected, frame poor` or ranks far away while looking
-fine. That corpus is the precondition
-`.claude/skills/scan-pipeline.md` sets before *any* image preprocessing
-(highlight normalisation, CLAHE, a wider art-box search) can honestly be
-evaluated — and preprocessing is the next real lever on accuracy, since the
-descriptor and the index are already as good as measurement has made them.
-
-PGM opens directly in PIL/OpenCV, so `tools/` can analyse them with the same
-`Image.open` the index builder uses.
-
----
-
-## Collection UX to sanity-check
-
-Nothing here is risky, but it is all new on device:
-
-- the standard list is unchanged; both grid modes render and the choice survives
-  leaving the screen (it is persisted in `meta`);
-- the filter sheet composes with the search box, Reset keeps the query, and the
-  filter button's count matches what is applied;
-- the Set picker now sits **above** condition/edition/language in both the scan
-  review gate and the collection edit sheet, so the keyboard no longer covers
-  the controls below it — this was the reported annoyance;
-- the surface hint no longer collides with "Point at a card".
+Filters → **Set** is now a search box over the sets you actually own rather than
+a chip per set. Type a partial name, pick from the list, Apply. Everything else in
+the sheet is unchanged.
 
 ---
 
@@ -124,22 +111,18 @@ Nothing here is risky, but it is all new on device:
 
 ```
 flutter analyze                    # must be clean
-flutter test                       # 384 baseline
-pytest tools/                      # 5 tests, untouched by step 18
+flutter test                       # 397 baseline
+py -3 -m pytest tools/             # 5 tests, untouched since step 18
 ```
-
-**App name**: if the launcher still reads `ygo_scanner`, that is a stale install,
-not a source bug — the manifest has been correct since `7bccff3`. `flutter clean`,
-uninstall the package, reinstall.
 
 ---
 
 ## Still open, deliberately
 
-`autoMatchMaxDistance`/`maxHammingDistance` at 48/72,
-`CardDetectionTuning.innerQuadMinAreaRatio` at 0.78, the passcode ROI filter off
-(its coordinate space is genuinely wrong — the *unrotated* sensor size is passed
-for boxes ML Kit reports in rotated space), and `artAgreementFrames` at 2.
-That last one is worth revisiting **only after** the quality gate is calibrated:
-the gate now removes the motion-blur frames that were the main argument for
-requiring two, so the trade may look different than it did in step 17.
+`maxHammingDistance` at 72, `CardDetectionTuning.innerQuadMinAreaRatio` at 0.78,
+the passcode ROI filter off (its coordinate space is genuinely wrong — the
+*unrotated* sensor size is passed for boxes ML Kit reports in rotated space), and
+`artAgreementFrames` at 2. That last one is now the clearest latency lever left:
+it costs one frame interval (150 ms) plus a detection pass on every card, and the
+quality gate already removes the motion-blur frames that were the main argument
+for requiring two.

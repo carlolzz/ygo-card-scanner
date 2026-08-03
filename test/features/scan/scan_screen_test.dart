@@ -9,6 +9,7 @@ import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart
 import 'package:sqflite/sqflite.dart';
 import 'package:ygo_scanner/core/constants.dart';
 import 'package:ygo_scanner/core/router.dart';
+import 'package:ygo_scanner/core/theme/tokens.dart';
 import 'package:ygo_scanner/data/db/dao/collection_dao.dart';
 import 'package:ygo_scanner/data/db/database.dart';
 import 'package:ygo_scanner/data/seed/fake_collection_seed.dart';
@@ -17,6 +18,7 @@ import 'package:ygo_scanner/features/scan/art_matcher.dart';
 import 'package:ygo_scanner/features/scan/art_providers.dart';
 import 'package:ygo_scanner/features/scan/camera_service.dart';
 import 'package:ygo_scanner/features/scan/hash_index.dart';
+import 'package:ygo_scanner/features/scan/scan_geometry.dart';
 import 'package:ygo_scanner/features/scan/scan_providers.dart';
 import 'package:ygo_scanner/features/scan/scan_sample.dart';
 import 'package:ygo_scanner/features/scan/scan_screen.dart';
@@ -40,6 +42,8 @@ class _FakeArtMatcher implements ArtMatcher {
   final List<ArtCandidate> result;
   @override
   Future<List<ArtCandidate>> match({Size? viewportSize}) async => result;
+  @override
+  Future<List<ArtCandidate>> bestGuesses() async => result;
   @override
   Future<ArtFrameResult> rankFrame({
     bool includeNearest = false,
@@ -118,6 +122,84 @@ void main() {
     });
   });
 
+  // Every hit the index ranks is now presented, however far out it sat, so the
+  // review gate has to (a) say when it is guessing and (b) always offer a way
+  // off the guess — a single candidate used to hide the escape hatch entirely.
+  testWidgets('a marginal match is hedged and always escapable', (
+    tester,
+  ) async {
+    await tester.runAsync(() async {
+      final artReadings = StreamController<ArtReading>.broadcast();
+      addTearDown(artReadings.close);
+      const far = ArtMatchTuning.autoMatchMaxDistance + 2;
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            appDatabaseProvider.overrideWith((ref) async => testDb),
+            artReadingsProvider.overrideWith((ref) => artReadings.stream),
+            passcodeReadingsProvider
+                .overrideWith((ref) => const Stream<PasscodeReading>.empty()),
+            artMatcherProvider.overrideWith(
+              // Exactly one candidate: the case that used to render no escape.
+              (ref) async => _FakeArtMatcher(const [ArtCandidate(_dmCard, far)]),
+            ),
+          ],
+          child: MaterialApp.router(routerConfig: buildAppRouter()),
+        ),
+      );
+
+      await tester.tap(find.text(AppStrings.homeTileLogCards));
+      await pumpUntilSettled(tester);
+
+      for (var i = 0; i < 3; i++) {
+        artReadings.add(ArtReading(i, const HashMatch(_darkMagician, far)));
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+        await tester.pump(const Duration(milliseconds: 20));
+      }
+      await pumpUntilSettled(tester);
+
+      expect(find.text('Dark Magician'), findsOneWidget);
+      expect(find.text(AppStrings.scanLowConfidence), findsOneWidget);
+      expect(find.text(AppStrings.scanNotThisCardButton), findsOneWidget);
+    });
+  });
+
+  testWidgets('a confident match is not hedged', (tester) async {
+    await tester.runAsync(() async {
+      final artReadings = StreamController<ArtReading>.broadcast();
+      addTearDown(artReadings.close);
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            appDatabaseProvider.overrideWith((ref) async => testDb),
+            artReadingsProvider.overrideWith((ref) => artReadings.stream),
+            passcodeReadingsProvider
+                .overrideWith((ref) => const Stream<PasscodeReading>.empty()),
+            artMatcherProvider.overrideWith(
+              (ref) async => _FakeArtMatcher(const [ArtCandidate(_dmCard, 2)]),
+            ),
+          ],
+          child: MaterialApp.router(routerConfig: buildAppRouter()),
+        ),
+      );
+
+      await tester.tap(find.text(AppStrings.homeTileLogCards));
+      await pumpUntilSettled(tester);
+
+      for (var i = 0; i < 3; i++) {
+        artReadings.add(ArtReading(i, const HashMatch(_darkMagician, 2)));
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+        await tester.pump(const Duration(milliseconds: 20));
+      }
+      await pumpUntilSettled(tester);
+
+      expect(find.text('Dark Magician'), findsOneWidget);
+      expect(find.text(AppStrings.scanLowConfidence), findsNothing);
+    });
+  });
+
   testWidgets('the how-to box follows its Settings toggle', (tester) async {
     await tester.runAsync(() async {
       await tester.pumpWidget(
@@ -156,7 +238,7 @@ void main() {
   // The surface a card is lying on decides whether its own edges survive the
   // detector's Otsu/Canny pass, so this note is the highest-value thing on the
   // viewfinder — but it is still help text, and follows the same one switch.
-  testWidgets('the surface hint sits below the status banner and follows the '
+  testWidgets('the surface hint sits above the status banner and follows the '
       'same Settings toggle', (tester) async {
     await tester.runAsync(() async {
       await tester.pumpWidget(
@@ -185,11 +267,15 @@ void main() {
       // entirely under text scaling or a taller status bar. They now share one
       // `Column`, so the order is structural and a collision is impossible.
       // Asserting the geometry rather than mere presence is the whole point.
+      //
+      // The hint is *above* the banner: it says how to make recognition work at
+      // all, which is worth reading before the running commentary on whether it
+      // is working.
       final banner = find.text(AppStrings.scanDetecting);
       expect(banner, findsOneWidget);
       expect(
-        tester.getBottomLeft(banner).dy,
-        lessThanOrEqualTo(tester.getTopLeft(hint).dy),
+        tester.getBottomLeft(hint).dy,
+        lessThanOrEqualTo(tester.getTopLeft(banner).dy),
       );
 
       // …and the box is still exactly centred, which is the invariant that
@@ -217,6 +303,67 @@ void main() {
       await pumpUntilSettled(tester);
 
       expect(hint, findsNothing);
+    });
+  });
+
+  // The diagnostics box is eleven lines and a button growing down from the app
+  // bar, while the reticle is centred — so it used to paint straight over the
+  // guide box the user has to aim through, which is the one region on this
+  // screen that must stay clear. The whole top column is now capped to the band
+  // above the reticle, with the box scrolling inside it.
+  testWidgets('the diagnostics overlay never reaches the reticle', (
+    tester,
+  ) async {
+    // A phone-shaped viewport, not the 800x600 default: the band between the app
+    // bar and a centred reticle is a function of viewport height, and at 600pt
+    // it falls under `minBandHeight` — where the floor deliberately wins.
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(393, 851);
+    addTearDown(tester.view.reset);
+
+    await tester.runAsync(() async {
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            appDatabaseProvider.overrideWith((ref) async => testDb),
+            cameraServiceProvider.overrideWith((ref) => _InertCamera()),
+            artReadingsProvider
+                .overrideWith((ref) => const Stream<ArtReading>.empty()),
+            passcodeReadingsProvider
+                .overrideWith((ref) => const Stream<PasscodeReading>.empty()),
+          ],
+          child: MaterialApp.router(routerConfig: buildAppRouter()),
+        ),
+      );
+
+      await tester.tap(find.text(AppStrings.homeTileLogCards));
+      await pumpUntilSettled(tester);
+
+      final container = ProviderScope.containerOf(
+        tester.element(find.byType(ScanScreen)),
+      );
+      await container.read(settingsControllerProvider.future);
+      await container
+          .read(settingsControllerProvider.notifier)
+          .setShowScanDiagnostics(true);
+      await pumpUntilSettled(tester);
+
+      expect(find.text(AppStrings.scanDiagnosticsNoFrame), findsOneWidget);
+
+      // The banner is the *last* child of the top column, so its bottom is the
+      // bottom of everything up there — diagnostics included.
+      final bannerBox = find
+          .ancestor(
+            of: find.text(AppStrings.scanDetecting),
+            matching: find.byType(Container),
+          )
+          .first;
+      final viewport = tester.getSize(find.byType(ScanScreen));
+      expect(
+        tester.getRect(bannerBox).bottom,
+        lessThanOrEqualTo(reticleRectInViewport(viewport).top),
+        reason: 'the top overlays must clear the guide box entirely',
+      );
     });
   });
 

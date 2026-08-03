@@ -7,6 +7,7 @@ import 'package:ygo_scanner/features/collection/collection_grid_tile.dart';
 import 'package:ygo_scanner/features/collection/collection_list_tile.dart';
 import 'package:ygo_scanner/models/collection_view_mode.dart';
 import 'package:ygo_scanner/shared/widgets/card_thumbnail.dart';
+import 'package:ygo_scanner/shared/widgets/searchable_text_picker.dart';
 
 import '../../data/db/test_db.dart';
 import '../../support/widget_test_harness.dart';
@@ -116,6 +117,47 @@ void main() {
       // The seeded Dark Magician and Pot of Greed carry no printing.
       expect(find.text('Dark Magician'), findsOneWidget);
       expect(find.text('Pot of Greed'), findsOneWidget);
+      expect(find.text('Blue-Eyes White Dragon'), findsNothing);
+    });
+  });
+
+  // The set filter is the one control in the sheet that is not a chip row: a
+  // collection spans dozens of long set names, so it is a search box that
+  // narrows the sets actually held. Selection still resolves to one of those
+  // exact names, so the DAO's `p.set_name = ?` predicate is unchanged.
+  testWidgets('the set search box narrows the list', (tester) async {
+    await tester.runAsync(() async {
+      await openCollection(tester);
+
+      await tester.tap(find.text(AppStrings.collectionFiltersButton));
+      await pumpUntilSettled(tester);
+
+      final box = find.descendant(
+        of: find.byType(SearchableTextPicker),
+        matching: find.byType(TextField),
+      );
+      await tester.ensureVisible(box);
+      await pumpUntilSettled(tester);
+      // Focus opens the list; a partial, lower-case query must still find it.
+      await tester.tap(box);
+      await pumpUntilSettled(tester);
+      await tester.enterText(box, 'metal');
+      await pumpUntilSettled(tester);
+
+      // Scoped to the picker: the list underneath the sheet also prints set
+      // names on its tiles.
+      await tester.tap(
+        find.descendant(
+          of: find.byType(SearchableTextPicker),
+          matching: find.text('Metal Raiders'),
+        ),
+      );
+      await pumpUntilSettled(tester);
+      await tester.tap(find.text(AppStrings.collectionFiltersApply));
+      await pumpUntilSettled(tester);
+
+      // Mirror Force is seeded twice; only the Metal Raiders printing survives.
+      expect(find.text('Mirror Force'), findsOneWidget);
       expect(find.text('Blue-Eyes White Dragon'), findsNothing);
     });
   });

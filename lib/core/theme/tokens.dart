@@ -550,13 +550,38 @@ class ScanOutlineTokens {
 class ScanDiagnosticsTokens {
   const ScanDiagnosticsTokens._();
 
-  static const double fontSize = 12;
+  /// Deliberately small. The readout has ~11 lines and the space it may occupy
+  /// is fixed by geometry (see [reticleGap]), so the only free variable is how
+  /// many of them are visible at once.
+  static const double fontSize = 10;
+
+  /// Line box as a multiple of [fontSize] — tight, since these are single-line
+  /// monospace records with no descender-heavy prose.
+  static const double lineHeight = 1.3;
   static const String fontFamily = 'monospace';
+
+  /// The sample-capture affordance, an icon rather than a labelled row for the
+  /// same reason the type shrank.
+  static const double captureIconSize = 16;
 
   /// How often the readout re-reads the camera's health. It has to tick on its
   /// own clock: a stalled camera stops the reading stream, which is exactly when
   /// the camera line must keep updating.
   static const Duration refreshInterval = Duration(milliseconds: 500);
+
+  /// Clearance kept between the bottom of the top overlays and the top of the
+  /// reticle.
+  ///
+  /// Load-bearing rather than cosmetic: the reticle is the one thing on screen
+  /// the user has to aim through, and an unbounded column of diagnostics text
+  /// grew straight down over it. The overlays are capped to the band between the
+  /// app bar and this gap instead, so the guide box can never be covered.
+  static const double reticleGap = AppSpacing.sm;
+
+  /// Floor under that band, for viewports where the app bar and the reticle
+  /// leave almost nothing between them (short screens, landscape, large text).
+  /// Better to intrude slightly than to overflow a zero-height column.
+  static const double minBandHeight = 96;
 
   /// Stroke for the diagnostics-only outline of the region the detector actually
   /// searches — thinner than the card outline, since it is a reference frame
@@ -578,9 +603,11 @@ class ArtMatchTuning {
   static const int diagnosticsNearestCount = 3;
 
   /// Maximum Hamming distance (of **256**) still considered a plausible match —
-  /// the budget for handheld glare, angle and crop imprecision. Governs the
-  /// manual "show me the alternatives" candidate list; beyond it we show nothing
-  /// rather than a misleading guess.
+  /// the budget for handheld glare, angle and crop imprecision. **The one
+  /// threshold that decides whether a card is presented at all**: everything the
+  /// index ranks within it is offered for review, and beyond it we show nothing
+  /// rather than a misleading guess (though the user can still ask for the
+  /// nearest few regardless — see `ArtMatcher.bestGuesses`).
   ///
   /// **Both thresholds here are even on purpose.** A pHash thresholds each
   /// coefficient against the *median* of the block, so exactly half the bits are
@@ -609,16 +636,24 @@ class ArtMatchTuning {
   /// list could be five arbitrary cards.
   static const int maxHammingDistance = 72;
 
-  /// The tight gate for the *automatic* primary path: only auto-present a single
-  /// top match when it is at least this close across [ScanTuning.artAgreementFrames]
-  /// frames. Deliberately tighter than [maxHammingDistance] — an automatic guess
-  /// must be more confident than one the user explicitly asked to see.
+  /// The confidence boundary: at or inside this, an automatic match is presented
+  /// as a **match**; past it, the same card is presented as a **guess**, hedged
+  /// in the review gate so the user knows to check the picture.
+  ///
+  /// It does **not** gate whether a card is shown — [maxHammingDistance] does.
+  /// It used to, and that was the defect: a card ranking 48-72 was routed into
+  /// the empty-frame branch and reported as "can't identify this card", even
+  /// though tapping through to the alternatives then showed the right card at
+  /// the top essentially every time. Hiding a correct answer to avoid hedging
+  /// about it is the wrong trade when nothing is written without a confirm.
   ///
   /// 48/256 is 18.8% of the bits, the same fraction the 64-bit index's effective
   /// gate used. Preserving the *fraction* is measured rather than assumed: the
   /// perturbations that actually matter here (an area-average resize standing in
   /// for PIL's LANCZOS, and the ~622px reference vs ~322px warp resolution gap)
-  /// flip the same or a smaller share of bits at 256 as at 64.
+  /// flip the same or a smaller share of bits at 256 as at 64. That measurement
+  /// is what makes it a meaningful boundary between "clean read" and "usable but
+  /// degraded", which is exactly the distinction the wording now carries.
   static const int autoMatchMaxDistance = 48;
 
   /// The card artwork box as normalized fractions of the *upright* card rect —

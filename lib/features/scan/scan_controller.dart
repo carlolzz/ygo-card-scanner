@@ -157,8 +157,21 @@ class ScanController extends _$ScanController {
 
     final top = reading.top;
 
-    // No confident candidate this frame — treat as an empty frame.
-    if (top == null || top.distance > ArtMatchTuning.autoMatchMaxDistance) {
+    // Nothing ranked within [ArtMatchTuning.maxHammingDistance] this frame —
+    // treat as an empty frame.
+    //
+    // Everything the matcher *does* return is presented, however far out it sat.
+    // This used to apply the tighter [ArtMatchTuning.autoMatchMaxDistance] here
+    // as well, so a card ranking 48-72 took this branch — the same branch a
+    // frame with no card at all takes — and the user was told "can't identify
+    // this card" about a card the app had already found, rectified, hashed and
+    // ranked correctly. On device the top guess in that band was right every
+    // time it was asked for. Nothing is written without an explicit confirm, so
+    // the cost of showing a marginal guess is one tap; the cost of hiding a good
+    // one was the whole scan. The remaining guards are unchanged and are what
+    // make this safe: two agreeing frames ([ScanTuning.artAgreementFrames]), the
+    // quality gate, the 72-bit ranking threshold itself, and the review gate.
+    if (top == null) {
       final empties = s.emptyFrameCount + 1;
       // Distinguish "nothing there" from "a card is right here and I can't name
       // it". Both leave the machine in `detecting`; only the second is worth
@@ -274,6 +287,7 @@ class ScanController extends _$ScanController {
       status: ScanStatus.matched,
       matchedCard: top.card,
       matchedIndexPasscode: top.indexPasscode,
+      matchedDistance: top.distance,
       candidates: candidates,
       artAgreementBuffer: const [],
       condition: _settings.defaultCondition,
@@ -297,16 +311,22 @@ class ScanController extends _$ScanController {
     );
   }
 
-  /// Offers the ranked alternatives for a card that is being detected and hashed
-  /// but never ranks close enough to auto-present — the way out of what was
-  /// otherwise an unbounded loop.
+  /// Offers the nearest cards for one that is being detected and hashed but
+  /// never ranks close enough to present — the way out of what was otherwise an
+  /// unbounded loop.
   ///
   /// Distinct from [showCandidates], which is guarded on [ScanStatus.matched]
   /// and only re-opens a list already resolved. This one starts from
   /// [ScanStatus.detecting]/[ScanStatus.reading] and resolves the frame the
-  /// matcher last ranked, whose hits are thresholded at
-  /// [ArtMatchTuning.maxHammingDistance] rather than the tighter automatic gate
-  /// — precisely "the best guesses".
+  /// matcher last ranked.
+  ///
+  /// Since every in-threshold hit is now auto-presented, reaching this method at
+  /// all means nothing ranked within [ArtMatchTuning.maxHammingDistance] — so
+  /// `match` is expected to come back empty and the useful answer comes from
+  /// `ArtMatcher.bestGuesses`, the *unthresholded* nearest few. `match` is still
+  /// tried first: it costs one map lookup when a frame has in-range hits (a
+  /// dismissed card the debounce is holding back, say) and returns the better
+  /// list when it does.
   ///
   /// Pauses **before** the awaits for the same reason [_resolveArtMatch] does:
   /// during the DB round trip the artwork stream would otherwise stay live and a
@@ -319,16 +339,20 @@ class ScanController extends _$ScanController {
     }
     _setPaused(paused: true);
     final matcher = await ref.read(artMatcherProvider.future);
-    final candidates = await matcher.match(
+    var candidates = await matcher.match(
       viewportSize: ref.read(scanViewportSizeProvider),
     );
+    if (candidates.isEmpty) {
+      candidates = await matcher.bestGuesses();
+    }
     if (state.status != ScanStatus.detecting &&
         state.status != ScanStatus.reading) {
       return;
     }
     if (candidates.isEmpty) {
-      // Nothing even loosely close. Resume rather than show an empty panel, and
-      // reset the streak so the offer isn't re-made on the very next frame.
+      // No frame has been ranked at all, or every nearest hit is an alt-art the
+      // app DB doesn't store. Resume rather than show an empty panel, and reset
+      // the streak so the offer isn't re-made on the very next frame.
       _setPaused(paused: false);
       state = state.copyWith(
         status: ScanStatus.detecting,
@@ -360,6 +384,7 @@ class ScanController extends _$ScanController {
       status: ScanStatus.matched,
       matchedCard: card,
       matchedIndexPasscode: picked?.indexPasscode ?? card.passcode,
+      matchedDistance: picked?.distance,
       clearUnknownPasscode: true,
       condition: _settings.defaultCondition,
       edition: _settings.defaultEdition,

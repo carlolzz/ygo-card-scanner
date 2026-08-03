@@ -7,6 +7,7 @@ import 'art_frame.dart';
 import 'camera_service.dart';
 import 'card_detector.dart';
 import 'frame_quality.dart';
+import 'hamming.dart';
 import 'hash_index.dart';
 import 'phash.dart';
 import 'scan_geometry.dart';
@@ -128,6 +129,20 @@ abstract class ArtMatcher {
   /// match is presented.
   Future<List<ArtCandidate>> match({Size? viewportSize});
 
+  /// The nearest few cards to the last ranked frame **regardless of distance**,
+  /// resolved the same way [match] resolves its hits.
+  ///
+  /// The way out of a dead end, and deliberately not on any automatic path: when
+  /// nothing at all ranks within [ArtMatchTuning.maxHammingDistance] the user is
+  /// otherwise told the card can't be identified and offered nothing to act on.
+  /// The nearest three or four are still the app's honest best answer, and they
+  /// go through the same review gate as any other guess.
+  ///
+  /// Empty when no frame has been ranked yet. `HashIndex.rank` is a bounded
+  /// partial selection, so this is one index pass — but it runs on a user tap,
+  /// never per frame.
+  Future<List<ArtCandidate>> bestGuesses();
+
   /// The pixels the last [rankFrame] actually hashed, for the diagnostics-only
   /// sample capture, or null when nothing has been ranked (which is what the
   /// test fakes return — only the production matcher retains a frame, and only
@@ -156,6 +171,13 @@ class PHashArtMatcher implements ArtMatcher {
   /// was sitting on.
   ArtFrameResult? _lastResult;
 
+  /// The hash [_lastResult] was ranked from, so [bestGuesses] can re-rank the
+  /// same frame without a threshold. Kept beside the result rather than on it:
+  /// `ArtFrameResult` crosses no isolate port but is otherwise a UI-facing value
+  /// (it rides `ArtReading` to the painters), and a 256-bit descriptor has no
+  /// business travelling with it.
+  PerceptualHash? _lastHash;
+
   /// The last ranked frame's pixels, retained **only while diagnostics is on**
   /// (`rankFrame(includeNearest: …)` carries that flag already). A rectified
   /// card is ~260 KB and nothing on the normal path reads it, so keeping one
@@ -171,6 +193,10 @@ class PHashArtMatcher implements ArtMatcher {
     Size? viewportSize,
   }) async {
     _lastSample = null;
+    // Dropped per frame, then re-set only if this one gets as far as hashing —
+    // so a frame with no card leaves none behind and `bestGuesses` can't offer
+    // guesses about a card that is no longer in front of the lens.
+    _lastHash = null;
     final result = await _rank(
       includeNearest: includeNearest,
       viewportSize: viewportSize,
@@ -293,6 +319,7 @@ class PHashArtMatcher implements ArtMatcher {
         matches = flippedMatches;
       }
     }
+    _lastHash = hash;
     // The unthresholded nearest, for the overlay only, so a "detected but far"
     // frame still shows how far the real card sits (past the match gate).
     final nearest = includeNearest
@@ -329,20 +356,34 @@ class PHashArtMatcher implements ArtMatcher {
     // user is shown could differ from the one the outline locked onto.
     final result =
         _lastResult ?? await rankFrame(viewportSize: viewportSize);
-    if (result.matches.isEmpty) return const [];
+    return _resolve(result.matches);
+  }
+
+  @override
+  Future<List<ArtCandidate>> bestGuesses() async {
+    final hash = _lastHash;
+    if (hash == null) return const [];
+    return _resolve(_index.rank(hash, n: ArtMatchTuning.candidateCount));
+  }
+
+  /// Ranked hits -> cards, preserving three invariants that are easy to lose and
+  /// silent when lost, which is why both callers share one implementation.
+  Future<List<ArtCandidate>> _resolve(List<HashMatch> matches) async {
+    if (matches.isEmpty) return const [];
 
     // One query, not one per candidate. This sits *after* the agreement gate, so
     // every round trip through the sqflite isolate is latency the user waits
     // through before the review panel can appear.
     final cards = await _repository.getByPasscodes([
-      for (final match in result.matches) match.passcode,
+      for (final match in matches) match.passcode,
     ]);
     final byPasscode = {for (final card in cards) card.passcode: card};
 
-    // Walk the matches, not the rows: the query returns them in rowid order, and
+    // Walk the matches, not the rows: `passcode` is the primary key, so SQLite
+    // answers `IN (...)` from that index in ascending passcode order, and
     // nearest-first is the whole point of a ranked list.
     final candidates = <ArtCandidate>[];
-    for (final match in result.matches) {
+    for (final match in matches) {
       // Absent from `cards` — an alt-art the app DB doesn't store. The query
       // filtered on these very keys, so a miss here is exactly the null that
       // `getByPasscode` used to return, and skipping it is load-bearing.

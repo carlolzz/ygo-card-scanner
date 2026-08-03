@@ -945,4 +945,108 @@ void main() {
       expect(all.single.printingId, printing.id);
     });
   });
+
+  group('getEntriesForPasscodes', () {
+    setUp(() async {
+      await collectionDao.addOrIncrement(
+        _entry(passcode: _blueEyes.passcode, condition: CardCondition.mint),
+      );
+      await collectionDao.addOrIncrement(
+        _entry(passcode: _blueEyes.passcode, condition: CardCondition.poor),
+      );
+      await collectionDao.addOrIncrement(
+        _entry(passcode: _redEyes.passcode, condition: CardCondition.good),
+      );
+    });
+
+    test('returns every entry of every listed card', () async {
+      final entries = await collectionDao.getEntriesForPasscodes([
+        _blueEyes.passcode,
+        _redEyes.passcode,
+      ]);
+      expect(entries, hasLength(3));
+    });
+
+    test('ignores passcodes with no entries', () async {
+      final entries = await collectionDao.getEntriesForPasscodes([
+        _redEyes.passcode,
+        '00000000',
+      ]);
+      expect(entries, hasLength(1));
+    });
+
+    test('an empty list is not a query at all', () async {
+      expect(await collectionDao.getEntriesForPasscodes(const []), isEmpty);
+    });
+  });
+
+  group('applyImport', () {
+    test('inserts new rows and updates quantities in one call', () async {
+      final existing = await collectionDao.addOrIncrement(
+        _entry(
+          passcode: _blueEyes.passcode,
+          condition: CardCondition.mint,
+          quantity: 1,
+        ),
+      );
+
+      final written = await collectionDao.applyImport(
+        inserts: [
+          _entry(
+            passcode: _redEyes.passcode,
+            condition: CardCondition.good,
+            quantity: 4,
+          ),
+        ],
+        quantities: {existing.id!: 7},
+        updatedAt: 5000,
+      );
+
+      expect(written, 2);
+      final blue = await collectionDao.getEntriesForPasscode(
+        _blueEyes.passcode,
+      );
+      expect(blue.single.quantity, 7);
+      expect(blue.single.updatedAt, 5000);
+      final red = await collectionDao.getEntriesForPasscode(_redEyes.passcode);
+      expect(red.single.quantity, 4);
+    });
+
+    // Absolute rather than delta, so an import applied twice by accident lands
+    // on the same numbers instead of doubling them.
+    test('quantities are absolute, so re-applying is idempotent', () async {
+      final existing = await collectionDao.addOrIncrement(
+        _entry(
+          passcode: _blueEyes.passcode,
+          condition: CardCondition.mint,
+          quantity: 1,
+        ),
+      );
+
+      for (var i = 0; i < 2; i++) {
+        await collectionDao.applyImport(
+          inserts: const [],
+          quantities: {existing.id!: 3},
+          updatedAt: 5000,
+        );
+      }
+
+      final entries = await collectionDao.getEntriesForPasscode(
+        _blueEyes.passcode,
+      );
+      expect(entries.single.quantity, 3);
+    });
+
+    test('an empty plan touches nothing', () async {
+      expect(
+        await collectionDao.applyImport(
+          inserts: const [],
+          quantities: const {},
+          updatedAt: 5000,
+        ),
+        0,
+      );
+      expect(await collectionDao.totalCardCount(), 0);
+    });
+  });
 }

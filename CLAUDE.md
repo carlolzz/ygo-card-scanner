@@ -19,6 +19,14 @@ Use exactly this, do not substitute.
 - camera + google_mlkit_text_recognition for the scan pipeline
 - sqflite_common_ffi for running DAO tests on the host
 
+"Do not substitute" governs the choices above: nothing here gets swapped for an
+equivalent. Packages have been *added* where the list covers no equivalent at
+all, each recorded in the build-order step that added it — `path_provider` and
+`path` (file paths, step 5), `opencv_core` (the artwork-first pivot),
+`share_plus` (getting exports and scan samples off the device, steps 10/18) and
+`file_selector` (opening a user-chosen file, step 20). A new one needs that same
+justification: a capability none of the above provides.
+
 Generated code (`*.freezed.dart`, `*.g.dart`) is gitignored, not committed.
 Regenerate with `dart run build_runner build --delete-conflicting-outputs`
 after editing any annotated class.
@@ -48,6 +56,12 @@ lib/
     repositories/collection_repository.dart
     repositories/settings_repository.dart
     seed/fake_collection_seed.dart
+    export/collection_csv.dart        # writer  ┐ one format,
+    export/collection_csv_parser.dart # reader  ┘ one directory
+    export/collection_exporter.dart
+    import/collection_import_plan.dart  # the pure merge rule
+    import/collection_importer.dart
+    import/csv_file_source.dart         # the file-picker seam
   models/
     ygo_card.dart
     printing.dart
@@ -1490,6 +1504,96 @@ order):
     uncalibrated on device. The new question this pass raises: with the 48-72 band
     now visible in use, the `d=` values on cards that previously failed are the
     evidence for whether **72 itself** is the right ceiling.
+
+20. CSV import — merging an existing collection into this one ← done (verified:
+    `flutter analyze` clean, full `flutter test` green at **464 tests**,
+    `pytest tools/` green). **No DB migration, no schema change.** The first
+    **new runtime dependency since step 18**: `file_selector` (see below).
+    Lives on the Statistics screen, beside the export it reverses.
+    **The export format is now a real interchange format, not just an output.**
+    `lib/data/export/collection_csv_parser.dart` is the reader, deliberately in
+    the same directory as the writer: they are one format, and the escaping
+    rules (quoted fields, doubled quotes, embedded newlines, the formula guard)
+    have to agree exactly. A round trip through both is the cheapest proof that
+    they do, and `collection_csv_parser_test.dart` runs one. The parser is
+    hand-written rather than a split on commas and newlines because `notes` is
+    free text that can legitimately contain both; it accepts `\r\n`, bare `\n`
+    and bare `\r`; it **matches columns by header name, not position** (a
+    spreadsheet round trip reorders columns, and binding to position would
+    silently read a rarity as a condition); only `passcode`, `condition` and
+    `quantity` are required. It also **un-guards the formula prefix**, or a name
+    would accumulate an apostrophe on every export/import cycle. One bad row is
+    reported with its line number rather than failing the file — a collection
+    CSV that has been through a spreadsheet is quite likely to have one stray
+    value, and refusing nine hundred good rows over it is worse.
+    **The merge rule is one pure function**, `planCollectionImport`
+    (`lib/data/import/collection_import_plan.dart`), because every way of
+    getting it wrong is silent: a duplicated row looks like a real second entry
+    and a wrongly merged one looks like a card the user never owned. Two
+    strategies, chosen by the user per import: `keepExisting` (the default —
+    the existing row is left exactly as it is, so **re-importing this app's own
+    export is a no-op**, which is test-pinned both ways) and `sumQuantities`.
+    It folds rows into a **working set** rather than matching each against an
+    unchanging snapshot, and that is load-bearing: a file holding two identical
+    rows describes *one* entry, and a snapshot planner would emit two inserts —
+    the second either violating the `collection_entries` UNIQUE constraint or,
+    for a null `printing_id` where the constraint cannot fire, quietly creating
+    the duplicate row the collection screen would then show twice. The key is a
+    Dart record `(passcode, printingId, condition, edition, language)`, whose
+    structural equality gets the null-printing case right for free — the case
+    every other write path in the DAO special-cases by hand.
+    **Resolution is the other half.** A CSV names a set the way a human does
+    (code, name, rarity) while the collection stores a `printings.id`.
+    `resolveImportRow` tries `(set_code, rarity)` first — the `printings` UNIQUE
+    key, so it is exact — then `(set_name, rarity)`, then either alone, case-
+    and space-insensitively. **No match imports the row without a set rather
+    than dropping it** (losing the set is bad, losing the card is worse) and is
+    counted so the dialog can say how often it happened. A passcode with no
+    `cards` row is **skipped**: `collection_entries.passcode` is a foreign key,
+    so the insert would be rejected anyway, and the row would have no name or
+    art to show. Usually it means a re-sync is due.
+    **Two phases, never one.** `CollectionImporter.preview` reads and resolves
+    without writing; `apply` writes only what was confirmed. The counts are
+    strategy-independent (test-pinned), so the dialog can report "42 new, 14
+    already yours, 3 skipped" *before* asking the merge question — and the
+    question is only asked when something actually matched. New DAO methods:
+    `PrintingDao.getForPasscodes` and `CollectionDao.getEntriesForPasscodes`
+    (both following step 17's dynamic-`IN` convention — placeholders from the
+    argument's length only, early return for empty) and
+    `CollectionDao.applyImport`, one transaction taking **explicit
+    instructions** rather than raw rows. That split is the point: the DAO
+    executes, the pure planner decides, and duplicating the "same entry" rule in
+    SQL is how the two would drift. Quantities are **absolute, not deltas**, so
+    an import somehow applied twice lands on the same numbers.
+    **`file_selector`, not `file_picker`.** The app could not open a
+    user-chosen file at all — exports go to app-documents, which Android does
+    not let you browse. `file_picker` 8-11 pins `win32 ^5.9` against
+    `share_plus`'s `^6.0.1` and pub resolves it down to a 2021-era **3.0.4**;
+    `file_selector` is the Flutter-team package, resolves clean, and is a better
+    citizen. It sits behind a `CsvFileSource` seam (`csv_file_source.dart`),
+    exactly like `CameraService`/`PasscodeOcr`: it is the one part that cannot
+    run in a widget test, and everything interesting is behind it, so the whole
+    flow from button tap to written rows is host-testable. Its type filter is
+    deliberately **broad** (`csv`/`txt` plus five MIME types) — a `.csv` from
+    Drive or a mail attachment is reported under any of them, and filtering
+    tightly means the user's own export shows up greyed out. Picking the wrong
+    file is cheap and well explained: the parser rejects anything without the
+    required columns before a row is written.
+    **UI**: the export and import buttons moved into a shared `_Actions`, which
+    is now rendered in the **empty-collection branch too** — importing into an
+    empty collection is the *main* case for that button and it was previously
+    unreachable, since the whole body was replaced by the empty message.
+    Counts render as `RichText` (bold number, muted label) and each line is
+    hidden at zero, because a dialog reading "0 skipped, 0 unrecognised" warns
+    about problems that do not exist. `RadioGroup` rather than the per-tile
+    `groupValue`/`onChanged`, which Flutter deprecated after 3.32.
+    **Test gotchas**: `find.textContaining` skips `RichText` unless given
+    `findRichText: true`. An "empty collection" cannot be tested with an empty
+    database — `flutter test` runs with `kDebugMode == true`, so
+    `debugSeedCollectionProvider` fills it first; the test stubs
+    `collectionStatsProvider` instead. And the actions sit at the end of a lazy
+    `ListView`, so at the default 600pt viewport they are never built and
+    `ensureVisible` cannot find them — hence the `useTallViewport` helper.
 
 ## Standing rules
 

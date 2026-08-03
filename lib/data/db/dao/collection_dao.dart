@@ -675,4 +675,59 @@ class CollectionDao {
     );
     return rows.map(CollectionEntry.fromMap).toList();
   }
+
+  /// Every entry for any of the listed cards, for callers that would otherwise
+  /// do one round trip per card. Same dynamic-`IN` convention as
+  /// `CardDao.getByPasscodes`; order unspecified.
+  Future<List<CollectionEntry>> getEntriesForPasscodes(
+    List<String> passcodes,
+  ) async {
+    if (passcodes.isEmpty) return const [];
+    final placeholders = List.filled(passcodes.length, '?').join(', ');
+    final rows = await _db.query(
+      'collection_entries',
+      where: 'passcode IN ($placeholders)',
+      whereArgs: passcodes,
+    );
+    return rows.map(CollectionEntry.fromMap).toList();
+  }
+
+  /// Writes a prepared import: new rows inserted, matched rows set to a new
+  /// **absolute** quantity. One transaction, so a partial import is impossible.
+  ///
+  /// Takes explicit instructions rather than raw CSV rows because deciding what
+  /// counts as "the same entry" is the interesting part, and it lives in exactly
+  /// one place — the pure, host-tested `planCollectionImport`. Duplicating that
+  /// rule in SQL here is how the two would drift.
+  ///
+  /// Absolute quantities rather than deltas: an import that is somehow applied
+  /// twice then lands on the same numbers instead of doubling them.
+  ///
+  /// Returns the number of rows actually written (inserted + updated).
+  Future<int> applyImport({
+    required List<CollectionEntry> inserts,
+    required Map<int, int> quantities,
+    required int updatedAt,
+  }) async {
+    if (inserts.isEmpty && quantities.isEmpty) return 0;
+    return _db.transaction((txn) async {
+      var written = 0;
+      final batch = txn.batch();
+      for (final entry in inserts) {
+        batch.insert('collection_entries', entry.toMap());
+        written++;
+      }
+      for (final change in quantities.entries) {
+        batch.update(
+          'collection_entries',
+          {'quantity': change.value, 'updated_at': updatedAt},
+          where: 'id = ?',
+          whereArgs: [change.key],
+        );
+        written++;
+      }
+      await batch.commit(noResult: true);
+      return written;
+    });
+  }
 }

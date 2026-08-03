@@ -42,4 +42,50 @@ void main() {
     final printings = await dao.getForPasscode('89631139');
     expect(printings, isEmpty);
   });
+
+  group('getForPasscodes', () {
+    const darkMagician = YgoCard(passcode: '46986414', name: 'Dark Magician');
+
+    setUp(() async {
+      await cardDao.insertAll([darkMagician]);
+      await dao.insertAll([
+        const Printing(
+          passcode: '89631139',
+          setCode: 'LOB-EN001',
+          rarity: 'Ultra Rare',
+        ),
+        const Printing(
+          passcode: '89631139',
+          setCode: 'SDK-001',
+          rarity: 'Ultra Rare',
+        ),
+        const Printing(
+          passcode: '46986414',
+          setCode: 'LOB-005',
+          rarity: 'Ultra Rare',
+        ),
+      ]);
+    });
+
+    test('returns the printings of every listed card', () async {
+      final printings = await dao.getForPasscodes(['89631139', '46986414']);
+
+      expect(printings, hasLength(3));
+      expect(
+        printings.where((p) => p.passcode == '89631139'),
+        hasLength(2),
+      );
+    });
+
+    test('ignores passcodes with no printings', () async {
+      final printings = await dao.getForPasscodes(['46986414', '00000000']);
+      expect(printings, hasLength(1));
+    });
+
+    // `IN ()` is not valid SQL, and an import of a file with no readable rows
+    // reaches this with nothing to look up.
+    test('an empty list is not a query at all', () async {
+      expect(await dao.getForPasscodes(const []), isEmpty);
+    });
+  });
 }

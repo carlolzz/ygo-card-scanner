@@ -107,11 +107,40 @@ the sheet is unchanged.
 
 ---
 
+## CSV import (step 20) — what to try on device
+
+Statistics → **Import collection from CSV**. The safest first test is the one
+that should do nothing at all:
+
+1. **Export, then immediately import the file you just exported, keeping
+   entries.** Every count must be unchanged. That round trip is the property the
+   default strategy is built around, and it is test-pinned both ways — the same
+   file under *sum* doubles every quantity instead.
+2. Then a real merge: a CSV from elsewhere. Read the confirmation dialog before
+   tapping Import; it is the only point at which you can see what a file is
+   about to do to the collection.
+
+Worth watching, in rough order of likelihood:
+
+- **`file_selector` is a new native plugin**, so it is the one part of this only
+  a device can prove. If the picker will not open at all, that is the plugin, not
+  the import. Its type filter is deliberately broad; if a CSV still shows greyed
+  out in some provider, note which provider — the fix is another MIME type in
+  `FileSelectorCsvSource._csv`.
+- **"N rows skipped"** almost always means passcodes the card database does not
+  have. `collection_entries.passcode` is a foreign key, so those rows genuinely
+  cannot be stored. Re-sync the card database in Settings and import again.
+- **"N imported without their set"** means the set code/name/rarity in the file
+  matched no printing this database knows for that card. The entry is still
+  imported, just without a set — worth checking what those rows actually say.
+
+---
+
 ## Verification
 
 ```
 flutter analyze                    # must be clean
-flutter test                       # 397 baseline
+flutter test                       # 464 baseline
 py -3 -m pytest tools/             # 5 tests, untouched since step 18
 ```
 

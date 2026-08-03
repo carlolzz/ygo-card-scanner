@@ -4,9 +4,14 @@ import 'package:share_plus/share_plus.dart';
 
 import '../../core/constants.dart';
 import '../../core/theme/tokens.dart';
+import '../../data/export/collection_csv_parser.dart';
 import '../../data/export/collection_exporter.dart';
+import '../../data/import/collection_import_plan.dart';
+import '../../data/import/collection_importer.dart';
+import '../../data/import/csv_file_source.dart';
 import '../../models/card_condition.dart';
 import '../../models/card_language.dart';
+import '../collection/collection_providers.dart';
 import 'statistics_providers.dart';
 
 /// Collection statistics: totals and breakdowns by condition, language, and
@@ -23,12 +28,26 @@ class StatisticsScreen extends ConsumerWidget {
     return Scaffold(
       appBar: AppBar(title: const Text(AppStrings.statisticsTitle)),
       body: statsAsync.when(
+        // The actions live outside the empty check on purpose: importing a CSV
+        // into an empty collection is the *main* case for that button, and it
+        // used to be unreachable there because the whole body was replaced by
+        // the empty message.
         data: (stats) => stats.totalCopies == 0
-            ? Center(
-                child: Text(
-                  AppStrings.statisticsEmptyMessage,
-                  style: TextStyle(color: palette.onSurfaceMuted),
-                ),
+            ? ListView(
+                padding: const EdgeInsets.all(AppSpacing.lg),
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.symmetric(
+                      vertical: AppSpacing.lg,
+                    ),
+                    child: Text(
+                      AppStrings.statisticsEmptyMessage,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: palette.onSurfaceMuted),
+                    ),
+                  ),
+                  const _Actions(),
+                ],
               )
             : _StatisticsBody(stats: stats),
         loading: () => const Center(child: CircularProgressIndicator()),
@@ -88,7 +107,7 @@ class _StatisticsBody extends StatelessWidget {
           rows: _typeRows(stats.byCardType),
         ),
         const SizedBox(height: AppSpacing.md),
-        const _ExportButton(),
+        const _Actions(),
       ],
     );
   }
@@ -221,6 +240,23 @@ class _BreakdownSection extends StatelessWidget {
   }
 }
 
+/// The two file actions, kept together so the empty-collection branch and the
+/// populated one can render the same pair.
+class _Actions extends StatelessWidget {
+  const _Actions();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Column(
+      children: [
+        SizedBox(width: double.infinity, child: _ExportButton()),
+        SizedBox(height: AppSpacing.sm),
+        SizedBox(width: double.infinity, child: _ImportButton()),
+      ],
+    );
+  }
+}
+
 /// Writes the entire collection to a CSV file and reports where it landed.
 /// Stateful only to disable itself while a write is in flight.
 class _ExportButton extends ConsumerStatefulWidget {
@@ -263,15 +299,235 @@ class _ExportButtonState extends ConsumerState<_ExportButton> {
 
   @override
   Widget build(BuildContext context) {
-    return SizedBox(
-      width: double.infinity,
-      child: FilledButton.icon(
-        icon: const Icon(Icons.download),
-        onPressed: _running ? null : _export,
-        label: Text(
-          _running
-              ? AppStrings.statisticsExportRunningMessage
-              : AppStrings.statisticsExportButton,
+    return FilledButton.icon(
+      icon: const Icon(Icons.download),
+      onPressed: _running ? null : _export,
+      label: Text(
+        _running
+            ? AppStrings.statisticsExportRunningMessage
+            : AppStrings.statisticsExportButton,
+      ),
+    );
+  }
+}
+
+/// Folds a CSV into the collection already on the device.
+///
+/// Two steps, never one: the file is read and resolved first, then the user is
+/// shown what it would do and picks how duplicates are handled. A collection is
+/// not something to modify on the strength of a file name.
+class _ImportButton extends ConsumerStatefulWidget {
+  const _ImportButton();
+
+  @override
+  ConsumerState<_ImportButton> createState() => _ImportButtonState();
+}
+
+class _ImportButtonState extends ConsumerState<_ImportButton> {
+  bool _running = false;
+
+  Future<void> _import() async {
+    setState(() => _running = true);
+    try {
+      final picked = await ref.read(csvFileSourceProvider).pick();
+      // Cancelled at the picker: no dialog, no message, nothing happened.
+      if (picked == null) return;
+
+      final importer = await ref.read(collectionImporterProvider.future);
+      final CollectionImportPreview preview;
+      try {
+        preview = await importer.preview(picked.contents);
+      } on CsvFormatException catch (error) {
+        _say('${AppStrings.statisticsImportFailedMessage}\n\n$error');
+        return;
+      }
+      if (!mounted) return;
+
+      if (preview.rows.isEmpty) {
+        _say(AppStrings.statisticsImportNothingMessage);
+        return;
+      }
+
+      final strategy = await showDialog<ImportMergeStrategy>(
+        context: context,
+        builder: (context) => _ImportPreviewDialog(preview: preview),
+      );
+      if (strategy == null || !mounted) return;
+
+      final result = await importer.apply(preview, strategy);
+      // Everything downstream of the collection rows: the list, the filter
+      // options (an import can bring in sets and languages that were not held
+      // before) and these very statistics.
+      ref
+        ..invalidate(collectionEntriesProvider)
+        ..invalidate(collectionFilterOptionsProvider)
+        ..invalidate(collectionStatsProvider);
+      _say(_describe(result));
+    } catch (_) {
+      _say(AppStrings.statisticsImportFailedMessage);
+    } finally {
+      if (mounted) setState(() => _running = false);
+    }
+  }
+
+  String _describe(CollectionImportResult result) {
+    final parts = <String>[
+      if (result.entriesAdded > 0) '${result.entriesAdded} added',
+      if (result.entriesMerged > 0) '${result.entriesMerged} merged',
+      if (result.skipped > 0) '${result.skipped} skipped',
+    ];
+    if (parts.isEmpty) return AppStrings.statisticsImportDoneMessage;
+    return '${AppStrings.statisticsImportDoneMessage} ${parts.join(', ')}.';
+  }
+
+  void _say(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return OutlinedButton.icon(
+      icon: const Icon(Icons.upload_file),
+      onPressed: _running ? null : _import,
+      label: Text(
+        _running
+            ? AppStrings.statisticsImportRunningMessage
+            : AppStrings.statisticsImportButton,
+      ),
+    );
+  }
+}
+
+/// What the file will do, and the one question only the user can answer.
+///
+/// The merge choice is offered *only* when something actually matches — with
+/// nothing to merge there is no question, and asking one anyway invites the
+/// user to think there is a decision they might be getting wrong.
+class _ImportPreviewDialog extends StatefulWidget {
+  const _ImportPreviewDialog({required this.preview});
+
+  final CollectionImportPreview preview;
+
+  @override
+  State<_ImportPreviewDialog> createState() => _ImportPreviewDialogState();
+}
+
+class _ImportPreviewDialogState extends State<_ImportPreviewDialog> {
+  ImportMergeStrategy _strategy = ImportMergeStrategy.keepExisting;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = AppPalette.of(context);
+    final preview = widget.preview;
+    final plan = preview.plan;
+
+    return AlertDialog(
+      title: const Text(AppStrings.statisticsImportTitle),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _Count(plan.newEntries, AppStrings.statisticsImportNewLabel),
+            _Count(plan.matchedEntries, AppStrings.statisticsImportMatchedLabel),
+            _Count(preview.skipped, AppStrings.statisticsImportSkippedLabel),
+            _Count(
+              plan.setsUnresolved,
+              AppStrings.statisticsImportUnresolvedSetLabel,
+            ),
+            if (plan.matchedEntries > 0) ...[
+              const SizedBox(height: AppSpacing.md),
+              Text(
+                AppStrings.statisticsImportMergeQuestion,
+                style: TextStyle(
+                  color: palette.onSurface,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              // `RadioGroup` rather than the per-tile `groupValue`/`onChanged`,
+              // which Flutter deprecated after 3.32.
+              RadioGroup<ImportMergeStrategy>(
+                groupValue: _strategy,
+                onChanged: (value) => setState(
+                  () => _strategy = value ?? ImportMergeStrategy.keepExisting,
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    for (final option in ImportMergeStrategy.values)
+                      RadioListTile<ImportMergeStrategy>(
+                        contentPadding: EdgeInsets.zero,
+                        value: option,
+                        activeColor: palette.accent,
+                        title: Text(
+                          switch (option) {
+                            ImportMergeStrategy.keepExisting =>
+                              AppStrings.statisticsImportKeepOption,
+                            ImportMergeStrategy.sumQuantities =>
+                              AppStrings.statisticsImportSumOption,
+                          },
+                          style: TextStyle(color: palette.onSurface),
+                        ),
+                        subtitle: Text(
+                          switch (option) {
+                            ImportMergeStrategy.keepExisting =>
+                              AppStrings.statisticsImportKeepDetail,
+                            ImportMergeStrategy.sumQuantities =>
+                              AppStrings.statisticsImportSumDetail,
+                          },
+                          style: TextStyle(color: palette.onSurfaceMuted),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text(AppStrings.statisticsImportCancelButton),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.of(context).pop(_strategy),
+          child: const Text(AppStrings.statisticsImportConfirmButton),
+        ),
+      ],
+    );
+  }
+}
+
+/// One line of the preview, hidden when its count is zero — a dialog of "0
+/// skipped, 0 unrecognised" reads as a warning about problems that do not
+/// exist.
+class _Count extends StatelessWidget {
+  const _Count(this.count, this.label);
+
+  final int count;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    if (count == 0) return const SizedBox.shrink();
+    final palette = AppPalette.of(context);
+    return Padding(
+      padding: const EdgeInsets.only(bottom: AppSpacing.xs),
+      child: RichText(
+        text: TextSpan(
+          style: TextStyle(color: palette.onSurfaceMuted),
+          children: [
+            TextSpan(
+              text: '$count ',
+              style: TextStyle(
+                color: palette.onSurface,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            TextSpan(text: label),
+          ],
         ),
       ),
     );

@@ -293,6 +293,35 @@ class AppStrings {
   static const String statisticsExportFailedMessage =
       'Export failed. Please try again.';
 
+  // CSV import. The confirmation dialog is deliberately wordy: it is the only
+  // point at which the user can see what a file is about to do to a collection
+  // they may have spent hours building.
+  static const String statisticsImportButton = 'Import collection from CSV';
+  static const String statisticsImportRunningMessage = 'Reading the file…';
+  static const String statisticsImportTitle = 'Import collection';
+  static const String statisticsImportNewLabel = 'new entries to add';
+  static const String statisticsImportMatchedLabel =
+      'already in your collection';
+  static const String statisticsImportSkippedLabel =
+      'rows skipped (unreadable, or a card this app does not know)';
+  static const String statisticsImportUnresolvedSetLabel =
+      'will be imported without their set, which was not recognised';
+  static const String statisticsImportMergeQuestion =
+      'For the entries you already have:';
+  static const String statisticsImportKeepOption = 'Keep as one entry';
+  static const String statisticsImportKeepDetail =
+      'Leave your copies as they are. Re-importing a backup changes nothing.';
+  static const String statisticsImportSumOption = 'Add the quantities together';
+  static const String statisticsImportSumDetail =
+      'Your copies and the file\'s copies add up.';
+  static const String statisticsImportConfirmButton = 'Import';
+  static const String statisticsImportCancelButton = 'Cancel';
+  static const String statisticsImportNothingMessage =
+      'That file has nothing to import.';
+  static const String statisticsImportFailedMessage =
+      'Could not read that file. Pick a collection CSV exported from this app.';
+  static const String statisticsImportDoneMessage = 'Collection updated.';
+
   static const String syncFetchingMessage = 'Downloading card database…';
   static const String syncWritingMessage = 'Saving to your device…';
   static const String syncErrorMessage =

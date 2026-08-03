@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../core/theme/tokens.dart';
 import '../../models/collection_entry_with_card.dart';
-import '../../shared/widgets/card_thumbnail.dart';
+import '../../shared/widgets/card_art_thumbnail.dart';
 
 /// One row in the collection list. Pure presentation — mutations flow up via
 /// callbacks, mirroring `HomeMenuTile`.
@@ -11,16 +11,30 @@ class CollectionListTile extends StatelessWidget {
     super.key,
     required this.entryWithCard,
     required this.onTap,
+    required this.onLongPress,
     required this.onIncrement,
     required this.onDecrement,
     required this.onDelete,
+    this.selectionActive = false,
+    this.selected = false,
   });
 
   final CollectionEntryWithCard entryWithCard;
+
+  /// What a tap does is decided by the screen — open the detail page normally,
+  /// toggle this row while selecting — so the tile stays presentation-only.
   final VoidCallback onTap;
+
+  /// Enters selection mode with this row picked.
+  final VoidCallback onLongPress;
+
   final VoidCallback onIncrement;
   final VoidCallback onDecrement;
   final VoidCallback onDelete;
+
+  /// Whether the list is in multi-select mode, and whether this row is picked.
+  final bool selectionActive;
+  final bool selected;
 
   /// The set/expansion line: the set code, or its name when the printing
   /// carries no code. Null when this entry has no printing at all, in which
@@ -44,11 +58,20 @@ class CollectionListTile extends StatelessWidget {
 
     final palette = AppPalette.of(context);
     return Material(
-      color: palette.surfaceRaised,
+      // Blended rather than a new palette field: adding a colour means giving it
+      // a value in *both* palettes, and this is the accent the theme already
+      // owns, laid over the surface it already has.
+      color: selected
+          ? Color.alphaBlend(
+              palette.accent.withValues(alpha: 0.18),
+              palette.surfaceRaised,
+            )
+          : palette.surfaceRaised,
       borderRadius: BorderRadius.circular(AppRadius.md),
       child: InkWell(
         borderRadius: BorderRadius.circular(AppRadius.md),
         onTap: onTap,
+        onLongPress: onLongPress,
         child: ConstrainedBox(
           constraints: const BoxConstraints(minHeight: AppTapTarget.minSize),
           child: Padding(
@@ -87,9 +110,12 @@ class CollectionListTile extends StatelessWidget {
                 ),
                 const SizedBox(width: AppSpacing.md),
                 // The whole card, uncropped (a portrait card box + contain),
-                // rather than the default square centre-crop.
-                CardThumbnail(
-                  localImagePath: card.localImagePath,
+                // rather than the default square centre-crop. The *art*
+                // thumbnail, so a card imported from CSV — which never went
+                // through `addOrIncrement` and so never triggered a download —
+                // fetches its picture the first time this row is built.
+                CardArtThumbnail(
+                  card: card,
                   size: CardThumbnailSizes.collectionTile,
                   aspectRatio: ScanReticleTokens.cardAspectRatio,
                   fit: BoxFit.contain,
@@ -139,27 +165,50 @@ class CollectionListTile extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(width: AppSpacing.xs),
-                // Add / remove / delete stacked in one column, in that order.
-                Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    _TileAction(
-                      icon: Icons.add_circle_outline,
-                      color: palette.accent,
-                      onPressed: onIncrement,
+                // While selecting, the action column is **replaced**, not
+                // hidden, and the slot keeps its exact size. Two reasons: three
+                // live-looking per-row buttons inside a multi-row mode invite
+                // the worst possible mis-tap, and `CollectionTileTokens`
+                // documents that this column is what sets the row's height — so
+                // removing it would reflow the whole list the instant the mode
+                // is entered, moving rows under the finger that just
+                // long-pressed. The check is an indicator; the whole-row
+                // `InkWell` is the target, which is the bigger one-handed hit
+                // area anyway.
+                if (selectionActive)
+                  SizedBox(
+                    width: CollectionTileTokens.actionButtonSize,
+                    height: CollectionTileTokens.actionButtonSize * 3,
+                    child: Icon(
+                      selected
+                          ? Icons.check_circle
+                          : Icons.circle_outlined,
+                      size: CollectionTileTokens.actionIconSize,
+                      color: selected ? palette.accent : palette.onSurfaceMuted,
                     ),
-                    _TileAction(
-                      icon: Icons.remove_circle_outline,
-                      color: palette.onSurfaceMuted,
-                      onPressed: onDecrement,
-                    ),
-                    _TileAction(
-                      icon: Icons.delete_outline,
-                      color: palette.onSurfaceMuted,
-                      onPressed: onDelete,
-                    ),
-                  ],
-                ),
+                  )
+                else
+                  // Add / remove / delete stacked in one column, in that order.
+                  Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      _TileAction(
+                        icon: Icons.add_circle_outline,
+                        color: palette.accent,
+                        onPressed: onIncrement,
+                      ),
+                      _TileAction(
+                        icon: Icons.remove_circle_outline,
+                        color: palette.onSurfaceMuted,
+                        onPressed: onDecrement,
+                      ),
+                      _TileAction(
+                        icon: Icons.delete_outline,
+                        color: palette.onSurfaceMuted,
+                        onPressed: onDelete,
+                      ),
+                    ],
+                  ),
               ],
             ),
           ),

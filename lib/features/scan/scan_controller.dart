@@ -46,6 +46,16 @@ class ScanController extends _$ScanController {
 
   @override
   ScanState build() {
+    // Note on [ScanPaused], which this controller is the only writer of: it is
+    // `keepAlive` and so outlives this autoDispose controller. Every resolution
+    // path below therefore releases the pause structurally (a `finally`, not a
+    // branch), because a path that forgot did not cost one frame — it left
+    // recognition dead for the rest of the process. The remaining case, the
+    // screen being torn down with a panel still up, is cleared by
+    // `_ScanScreenState.initState`: Riverpod forbids a provider writing to
+    // another provider during its build *or* from its own `ref.onDispose`, and
+    // asserts on both, so it cannot be done from here.
+    //
     // Primary: continuous artwork ranking.
     ref.listen(artReadingsProvider, (previous, next) {
       next.when(
@@ -65,6 +75,9 @@ class ScanController extends _$ScanController {
     return _initialState();
   }
 
+  /// Pauses while the error panel is up, which is correct — and backing out of
+  /// that panel without tapping Retry is covered by the reset the scan screen
+  /// does on entry, which is the only thing that used to clear it.
   void _onCameraError(Object error) {
     _setPaused(paused: true);
     state = state.copyWith(status: ScanStatus.error, error: error);
@@ -261,44 +274,68 @@ class ScanController extends _$ScanController {
     // already accepted. At two agreeing frames on a 300ms cadence that is a
     // plausible share of the "hard to lock on" reports.
     _setPaused(paused: true);
-    final matcher = await ref.read(artMatcherProvider.future);
-    final candidates = await matcher.match(
-      viewportSize: ref.read(scanViewportSizeProvider),
-    );
-    // The user may have acted, or a disagreement/empty frame moved us on.
-    if (state.status != ScanStatus.reading) return;
+    // The pause is released in the `finally` unless a result takes ownership of
+    // it. Each exit used to release it by hand and three of them did not — the
+    // `status != reading` return below, and any throw out of the matcher or the
+    // DB. Since [ScanPaused] outlives this controller, a missed release did not
+    // cost one frame: it killed recognition until the app was relaunched.
+    var handedOff = false;
+    try {
+      final matcher = await ref.read(artMatcherProvider.future);
+      final candidates = await matcher.match(
+        viewportSize: ref.read(scanViewportSizeProvider),
+      );
+      // The user may have acted, or a disagreement/empty frame moved us on.
+      if (state.status != ScanStatus.reading) return;
 
-    if (candidates.isEmpty) {
-      // Nothing resolvable — resume, but debounce the hash that got us here, or
-      // the same unresolvable run re-agrees and re-resolves every two frames.
-      _setPaused(paused: false);
+      if (candidates.isEmpty) {
+        // Nothing resolvable — resume, but debounce the hash that got us here,
+        // or the same unresolvable run re-agrees and re-resolves every two
+        // frames.
+        state = state.copyWith(
+          status: ScanStatus.detecting,
+          artAgreementBuffer: const [],
+          lastConfirmedPasscode: state.artAgreementBuffer.isEmpty
+              ? null
+              : state.artAgreementBuffer.last,
+          dismissCooldown: ScanTuning.dismissCooldownFrames,
+        );
+        return;
+      }
+      final top = candidates.first;
+      state = state.copyWith(
+        status: ScanStatus.matched,
+        matchedCard: top.card,
+        matchedIndexPasscode: top.indexPasscode,
+        matchedDistance: top.distance,
+        candidates: candidates,
+        artAgreementBuffer: const [],
+        condition: _settings.defaultCondition,
+        edition: _settings.defaultEdition,
+        language: _settings.language,
+        clearPrintingId: true,
+        quantity: 1,
+        unmatchedStreak: 0,
+        qualitySkipStreak: 0,
+        hint: ScanHint.none,
+      );
+      // The review panel owns the pause now; `confirm`/`dismiss`/dispose clear
+      // it.
+      handedOff = true;
+    } catch (_) {
+      // A DB hiccup or a matcher failure costs this run, not the session.
+      // Nothing was written and the next frame retries, so `ScanStatus.error` —
+      // whose Retry rebuilds the *camera* — would be the wrong story to tell.
+      // This method is called unawaited from a `ref.listen` callback, so without
+      // the catch the rejection is an unhandled async error nobody sees.
       state = state.copyWith(
         status: ScanStatus.detecting,
         artAgreementBuffer: const [],
-        lastConfirmedPasscode: state.artAgreementBuffer.isEmpty
-            ? null
-            : state.artAgreementBuffer.last,
-        dismissCooldown: ScanTuning.dismissCooldownFrames,
+        hint: ScanHint.none,
       );
-      return;
+    } finally {
+      if (!handedOff) _setPaused(paused: false);
     }
-    final top = candidates.first;
-    state = state.copyWith(
-      status: ScanStatus.matched,
-      matchedCard: top.card,
-      matchedIndexPasscode: top.indexPasscode,
-      matchedDistance: top.distance,
-      candidates: candidates,
-      artAgreementBuffer: const [],
-      condition: _settings.defaultCondition,
-      edition: _settings.defaultEdition,
-      language: _settings.language,
-      clearPrintingId: true,
-      quantity: 1,
-      unmatchedStreak: 0,
-      qualitySkipStreak: 0,
-      hint: ScanHint.none,
-    );
   }
 
   /// From a review, reveals the ranked artwork alternatives so the user can
@@ -338,36 +375,51 @@ class ScanController extends _$ScanController {
       return;
     }
     _setPaused(paused: true);
-    final matcher = await ref.read(artMatcherProvider.future);
-    var candidates = await matcher.match(
-      viewportSize: ref.read(scanViewportSizeProvider),
-    );
-    if (candidates.isEmpty) {
-      candidates = await matcher.bestGuesses();
-    }
-    if (state.status != ScanStatus.detecting &&
-        state.status != ScanStatus.reading) {
-      return;
-    }
-    if (candidates.isEmpty) {
-      // No frame has been ranked at all, or every nearest hit is an alt-art the
-      // app DB doesn't store. Resume rather than show an empty panel, and reset
-      // the streak so the offer isn't re-made on the very next frame.
-      _setPaused(paused: false);
+    // Released in the `finally` unless the candidate panel takes it over — same
+    // structure and the same reason as [_resolveArtMatch].
+    var handedOff = false;
+    try {
+      final matcher = await ref.read(artMatcherProvider.future);
+      var candidates = await matcher.match(
+        viewportSize: ref.read(scanViewportSizeProvider),
+      );
+      if (candidates.isEmpty) {
+        candidates = await matcher.bestGuesses();
+      }
+      if (state.status != ScanStatus.detecting &&
+          state.status != ScanStatus.reading) {
+        return;
+      }
+      if (candidates.isEmpty) {
+        // No frame has been ranked at all, or every nearest hit is an alt-art
+        // the app DB doesn't store. Resume rather than show an empty panel, and
+        // reset the streak so the offer isn't re-made on the very next frame.
+        state = state.copyWith(
+          status: ScanStatus.detecting,
+          unmatchedStreak: 0,
+          hint: ScanHint.none,
+        );
+        return;
+      }
+      state = state.copyWith(
+        status: ScanStatus.candidates,
+        candidates: candidates,
+        clearMatchedCard: true,
+        unmatchedStreak: 0,
+        hint: ScanHint.none,
+      );
+      handedOff = true;
+    } catch (_) {
+      // Resume rather than wedge, and clear the streak so the failed offer is
+      // not immediately re-made on the next frame.
       state = state.copyWith(
         status: ScanStatus.detecting,
         unmatchedStreak: 0,
         hint: ScanHint.none,
       );
-      return;
+    } finally {
+      if (!handedOff) _setPaused(paused: false);
     }
-    state = state.copyWith(
-      status: ScanStatus.candidates,
-      candidates: candidates,
-      clearMatchedCard: true,
-      unmatchedStreak: 0,
-      hint: ScanHint.none,
-    );
   }
 
   /// Promotes a picked artwork candidate back into the review gate. Keeps the

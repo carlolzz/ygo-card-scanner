@@ -373,9 +373,21 @@ class CameraScanService implements CameraService {
     }
   }
 
-  /// Where focus and exposure are metered, in normalized preview coordinates.
-  /// The reticle is centred, so this is the card.
-  static const Offset _meteringPoint = Offset(0.5, 0.5);
+  /// Where focus and exposure are metered, in normalized preview coordinates:
+  /// the centre of the guide box, which is where the card is.
+  ///
+  /// The box is no longer at the viewport's centre — it sits
+  /// [ScanReticleTokens.verticalOffsetFraction] below it, to leave a readable
+  /// band above — so this follows it rather than staying at 0.5. The
+  /// correspondence is exact only where the preview's vertical axis maps 1:1
+  /// through the cover crop (the usual tall-phone-versus-4:3-sensor case); on
+  /// other pairings it is off by the crop factor, which is well inside any
+  /// device's metering region. Unverifiable on host, like everything else that
+  /// talks to the camera.
+  static const Offset _meteringPoint = Offset(
+    0.5,
+    0.5 + ScanReticleTokens.verticalOffsetFraction,
+  );
 
   void _onFrame(CameraImage image) {
     // Record *arrival* first, unconditionally: this is what the watchdog judges,

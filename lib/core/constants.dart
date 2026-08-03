@@ -94,6 +94,22 @@ class AppStrings {
   static const String collectionDeleteDialogCancel = 'Cancel';
   static const String collectionDeleteDialogConfirm = 'Remove';
 
+  // Multi-select delete. The count is composed at the call site rather than
+  // interpolated here — `AppStrings` is all `const` — which also sidesteps
+  // pluralisation, since the exact number is already on screen in the app bar.
+  static const String collectionDeleteManyDialogTitle =
+      'Remove the selected cards?';
+  static const String collectionDeleteManyDialogMessage =
+      'entries will be removed from your collection. This can\'t be undone.';
+  static const String collectionSelectedSuffix = 'selected';
+  static const String collectionSelectAllTooltip = 'Select all';
+  static const String collectionSelectNoneTooltip = 'Clear selection';
+  static const String collectionExitSelectionTooltip = 'Done';
+  static const String collectionDeleteSelectedTooltip = 'Remove selected';
+  static const String collectionDeletedManyMessage = 'entries removed.';
+  static const String collectionSelectHint =
+      'Hold a card to select several at once';
+
   // Editing an existing collection entry's details (language/set/edition/
   // condition) from the detail screen.
   static const String collectionEditTooltip = 'Edit card details';
@@ -111,7 +127,6 @@ class AppStrings {
 
   static const String scanTitle = 'Log Cards';
   static const String scanManualTooltip = 'Search by name instead';
-  static const String scanHint = 'Fit the whole card inside the box';
 
   /// Shown just above the guide box. Detection crops to that box and derives
   /// Canny's thresholds from an Otsu split of it, so what the card is lying on
@@ -194,8 +209,11 @@ class AppStrings {
   // Whether the crop was corrected to a located artwork window, or fell back to
   // the fixed ROI — the first thing to check when a real card is detected but
   // every distance is large.
-  static const String scanDiagnosticsArtBoxLocked = 'art box: located';
-  static const String scanDiagnosticsArtBoxFallback = 'art box: fixed roi';
+  /// Appended to the frame-status line rather than occupying one of their own:
+  /// they describe the same frame, and the readout's height is a hard budget.
+  static const String scanDiagnosticsArtBoxLockedSuffix = ' · art box: located';
+  static const String scanDiagnosticsArtBoxFallbackSuffix =
+      ' · art box: fixed roi';
   // Failure-sample capture. The scan-pipeline skill forbids adding image
   // preprocessing before there are real failure samples to test against, and
   // this is the only way to get one off the device — the rectified card exists

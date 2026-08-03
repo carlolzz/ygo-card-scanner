@@ -51,6 +51,32 @@ class _ScanScreenState extends ConsumerState<ScanScreen>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    // **Clear any pause left behind by a previous scanning session.**
+    //
+    // [ScanPaused] is `keepAlive` — deliberately, since its writer and reader
+    // both use `ref.read` and autoDispose made the whole optimisation inert —
+    // while its only writer, [ScanController], is autoDispose. So a screen torn
+    // down with a review panel, candidate list or camera error on it left the
+    // flag `true` for the rest of the process, after which `artReadings` skipped
+    // every frame forever: the camera restarted correctly on every re-entry, the
+    // preview was live, the reticle was drawn, and nothing was ever recognised
+    // again until the app was relaunched. That is the reported "decline a card
+    // and the camera stops working" bug, and it is why closing the app fixed it.
+    //
+    // Reset on **entry**, not on the previous screen's exit, for two reasons: a
+    // fresh [ScanController] always starts in `detecting`, so unpaused is the
+    // only correct state here whatever happened last time; and Riverpod asserts
+    // on provider writes from any widget life-cycle, `dispose` included (the
+    // same latent trap `_ViewportProbeState.dispose` sits in). A post-frame
+    // callback is outside the build phase, which is what makes the write legal —
+    // the same reason `_ViewportProbe` publishes its size from one.
+    //
+    // The controller releases the pause structurally on every resolution path;
+    // this is the backstop for the paths that end by leaving the screen.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      ref.read(scanPausedProvider.notifier).set(paused: false);
+    });
   }
 
   @override
@@ -143,7 +169,7 @@ class _ScanScreenState extends ConsumerState<ScanScreen>
           const _CameraLayer(),
           if (scan.status == ScanStatus.detecting ||
               scan.status == ScanStatus.reading) ...[
-            const _ReticleOverlay(),
+            _ReticleOverlay(status: scan.status, hint: scan.hint),
             const _SearchRoiOverlay(),
             const _DetectionOutline(),
           ] else if (scan.status == ScanStatus.readingCode)
@@ -166,7 +192,7 @@ class _ScanScreenState extends ConsumerState<ScanScreen>
               ref.watch(scanHelpEnabledProvider))
             const _HelpPanel(),
           // Last, so the top overlays stay above every panel.
-          _TopOverlays(status: scan.status, hint: scan.hint),
+          _TopOverlays(status: scan.status),
         ],
       ),
     );
@@ -298,46 +324,65 @@ class _ViewportProbeState extends ConsumerState<_ViewportProbe> {
 /// detector's search region is derived from — so the box the user is asked to
 /// fill and the box actually searched cannot drift apart.
 ///
-/// **Nothing but the box may live in this widget's centred layout.**
-/// [reticleRectInViewport] is a `Rect.fromCenter` on the viewport's centre, so
-/// wrapping the box in a `Column` with anything above it would push the drawn
-/// box off-centre while the searched region stayed exactly where it was,
-/// silently breaking that correspondence. The surface hint therefore lives in
-/// [_TopOverlays] — anchored to the app bar, in the column it shares with the
-/// status banner it used to collide with.
+/// **The box is placed from that rect and nothing else.** It used to be a
+/// `Center`, with a doc warning that wrapping it in a `Column` alongside
+/// anything else would push the drawn box off-centre while the searched region
+/// stayed put — a silent desync. `Positioned.fromRect` removes the hazard
+/// rather than documenting it: the box is the rect, wherever the rect is. The
+/// surface hint still lives in [_TopOverlays], where it belongs anyway.
+///
+/// Content placed *inside* the fixed-size `Container` is free, however, and that
+/// is where the status banner now sits: the box has an explicit `width`/`height`
+/// from the rect, so its child cannot move it. Putting the banner there is what
+/// frees the band above the guide for the diagnostics readout — which the
+/// banner used to take the bottom ~44pt of. It replaces the old static "fit the
+/// whole card inside the box" line, which the box's own shape already says.
 class _ReticleOverlay extends StatelessWidget {
-  const _ReticleOverlay();
+  const _ReticleOverlay({required this.status, required this.hint});
+
+  final ScanStatus status;
+  final ScanHint hint;
 
   @override
   Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (context, constraints) {
         final reticle = reticleRectInViewport(constraints.biggest);
-        return Center(
-          child: Container(
-            width: reticle.width,
-            height: reticle.height,
-            alignment: Alignment.bottomCenter,
-            padding: const EdgeInsets.all(AppSpacing.sm),
-            decoration: BoxDecoration(
-              border: Border.all(
-                color: AppPalette.dark.accent,
-                width: ScanReticleTokens.borderWidth,
+        // `Positioned.fromRect`, not a `Center`: the box is no longer at the
+        // viewport's centre, and placing it from the rect itself states the
+        // invariant instead of re-deriving it.
+        return Stack(
+          children: [
+            Positioned.fromRect(
+              rect: reticle,
+              child: Container(
+                key: scanReticleKey,
+                alignment: Alignment.bottomCenter,
+                padding: const EdgeInsets.all(AppSpacing.sm),
+                decoration: BoxDecoration(
+                  border: Border.all(
+                    color: AppPalette.dark.accent,
+                    width: ScanReticleTokens.borderWidth,
+                  ),
+                  borderRadius: BorderRadius.circular(
+                    ScanReticleTokens.cornerRadius,
+                  ),
+                ),
+                child: _StatusBanner(status: status, hint: hint),
               ),
-              borderRadius:
-                  BorderRadius.circular(ScanReticleTokens.cornerRadius),
             ),
-            child: Text(
-              AppStrings.scanHint,
-              textAlign: TextAlign.center,
-              style: TextStyle(color: AppPalette.dark.onSurface),
-            ),
-          ),
+          ],
         );
       },
     );
   }
 }
+
+/// Identifies the drawn guide box for tests, which assert it is exactly
+/// [reticleRectInViewport] — the invariant that keeps the box the user aims
+/// through and the region the detector searches the same rectangle.
+@visibleForTesting
+const Key scanReticleKey = Key('scan-reticle');
 
 /// The "lay the cards on a plain dark surface" note. Scrimmed like
 /// [_HelpPanel], since it sits on live camera imagery and has to stay legible
@@ -814,42 +859,40 @@ class _HelpLine extends StatelessWidget {
   }
 }
 
-/// The stack of overlays pinned under the app bar, in a single column so their
-/// order is structural rather than a coincidence of independent insets: the
-/// developer diagnostics box, then the surface hint, then the status banner —
-/// each pushing the next one down.
+/// The overlays pinned under the app bar: the developer diagnostics box, and
+/// the surface hint when diagnostics is off. They are mutually exclusive today,
+/// but they stay in one column so their order is structural rather than a
+/// coincidence of two independent insets — which is exactly how they used to
+/// collide.
 ///
-/// **The column is capped to the band above the reticle.** Everything here
-/// grows downward from the app bar while the reticle is centred, so the
-/// diagnostics box — eleven lines and a button — reached well into the guide box
-/// the user is trying to fill with a card, which is the one thing on this screen
-/// that must stay clear. The band is measured, not guessed: this widget is a
-/// non-positioned child of an expanded `Stack`, so its constraints *are* the
-/// viewport, the same space [reticleRectInViewport] answers in. The diagnostics
-/// box is the flexible child and scrolls internally, so the fixed-size banner
-/// below it is never the thing that gets squeezed out.
+/// **The column is capped to the band above the reticle.** Everything here grows
+/// downward from the app bar while the guide box is fixed, so an uncapped
+/// diagnostics box reached well into the box the user is trying to fill with a
+/// card — the one region on this screen that must stay clear. The band is
+/// measured, not guessed: this widget is a non-positioned child of an expanded
+/// `Stack`, so its constraints *are* the viewport, the same space
+/// [reticleRectInViewport] answers in.
+///
+/// **The status banner is not here — it lives inside the guide box.** It was the
+/// fixed-size last child of this column and so took its height off the top of
+/// the band before the flexible diagnostics box saw any, leaving the readout
+/// about a third of the room it needed on a 393x851 phone. Inside the box it
+/// costs the band nothing (see [_ReticleOverlay] for why that is safe), and
+/// [ScanReticleTokens.verticalOffsetFraction] lowers the box to widen the band
+/// further.
 ///
 /// **The surface hint lives here, not next to the reticle.** It used to be a
 /// `Positioned` anchored to `reticle.top` inside [_ReticleOverlay], while the
 /// banner grew downward from the app bar — two unrelated coordinate systems both
 /// growing toward the middle of the screen, which overlapped by ~35pt on a
 /// 360x640 viewport and closed entirely under text scaling or a taller status
-/// bar. In one column they cannot collide at all.
+/// bar.
 ///
-/// This does **not** reintroduce the trap documented on [_ReticleOverlay]: that
-/// warns against putting the hint and the guide box in one *centred* `Column`,
-/// which would shift the drawn box up by half the text's height while
-/// `detectionRoiInFrame` kept searching the old region. This column is
-/// top-aligned and contains no box — the reticle stays a `Center` widget, so
-/// `reticleRectInViewport` remains the single source of truth for both the
-/// drawing and the search.
-///
-/// All three are fixed to the dark palette — they sit on live camera imagery.
+/// Both are fixed to the dark palette — they sit on live camera imagery.
 class _TopOverlays extends ConsumerWidget {
-  const _TopOverlays({required this.status, required this.hint});
+  const _TopOverlays({required this.status});
 
   final ScanStatus status;
-  final ScanHint hint;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -899,20 +942,13 @@ class _TopOverlays extends ConsumerWidget {
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    // Flexible, so a long readout yields to the banner rather
-                    // than pushing it off the bottom of the band.
-                    if (diagnostics) ...[
-                      const Flexible(child: _DiagnosticsBox()),
-                      const SizedBox(height: AppSpacing.sm),
-                    ],
-                    // Above the banner: it explains how to make recognition
-                    // work at all, so it should be read before the running
-                    // commentary on whether it is working.
-                    if (showHint) ...[
-                      const _SurfaceHint(),
-                      const SizedBox(height: AppSpacing.sm),
-                    ],
-                    _StatusBanner(status: status, hint: hint),
+                    // Flexible, and it now gets the whole band: with the banner
+                    // moved into the guide box there is no fixed-size sibling
+                    // taking its height first. It still scrolls internally, as
+                    // the failsafe for landscape or large-text viewports where
+                    // `minBandHeight` wins.
+                    if (diagnostics) const Flexible(child: _DiagnosticsBox()),
+                    if (showHint) const _SurfaceHint(),
                   ],
                 ),
               ),
@@ -1003,11 +1039,18 @@ class _DiagnosticsBoxState extends ConsumerState<_DiagnosticsBox> {
       _describeFrame(camera, MediaQuery.orientationOf(context)),
       if (detector is IsolateCardDetector)
         'det: ${describeDetectorHealth(detector.health)}',
+      // The frame's outcome, with the art-box result appended rather than given
+      // a line of its own: they are one sentence about one frame, both are
+      // short, and every line saved is a line of the readout that fits in the
+      // band. The `noFrame`/`notDetected` branches stay whole — no crop was
+      // assessed there, so there is no art box to report.
       switch (status) {
         ArtFrameStatus.noFrame => AppStrings.scanDiagnosticsNoFrame,
         ArtFrameStatus.notDetected => AppStrings.scanDiagnosticsNotDetected,
-        ArtFrameStatus.lowQuality => AppStrings.scanDiagnosticsLowQuality,
-        ArtFrameStatus.detected => AppStrings.scanDiagnosticsDetected,
+        ArtFrameStatus.lowQuality =>
+          AppStrings.scanDiagnosticsLowQuality + _artBoxSuffix(reading),
+        ArtFrameStatus.detected =>
+          AppStrings.scanDiagnosticsDetected + _artBoxSuffix(reading),
       },
     ];
     // Shown for both statuses that assessed a crop, because the interesting
@@ -1023,11 +1066,6 @@ class _DiagnosticsBoxState extends ConsumerState<_DiagnosticsBox> {
           reading.quality,
           ref.watch(scanExposureOffsetProvider),
         ),
-      );
-      lines.add(
-        reading.artBoxLocked
-            ? AppStrings.scanDiagnosticsArtBoxLocked
-            : AppStrings.scanDiagnosticsArtBoxFallback,
       );
     }
     if (reading != null && status == ArtFrameStatus.detected) {
@@ -1046,33 +1084,52 @@ class _DiagnosticsBoxState extends ConsumerState<_DiagnosticsBox> {
         vertical: AppSpacing.xs,
       ),
       decoration: BoxDecoration(
-        color: _cameraScrim.withValues(alpha: 0.8),
+        // Nearly opaque, not the 0.8 the other overlays use: the search-ROI
+        // outline is drawn *under* this box (it is an earlier stack child) and
+        // read straight through it, which is what "the debug text is covered by
+        // the white rectangle" was describing.
+        color: _cameraScrim.withValues(alpha: 0.95),
         borderRadius: BorderRadius.circular(AppRadius.sm),
       ),
-      // Scrollable because the band above the reticle is a hard budget (see
-      // [_TopOverlays]) and the line count varies with what the pipeline has to
-      // report — the alternative to scrolling is an overflow stripe.
-      child: SingleChildScrollView(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            for (final line in lines)
-              Text(
-                line,
-                style: TextStyle(
-                  color: palette.onSurface,
-                  fontSize: ScanDiagnosticsTokens.fontSize,
-                  height: ScanDiagnosticsTokens.lineHeight,
-                  fontFamily: ScanDiagnosticsTokens.fontFamily,
-                ),
-              ),
-            const _CaptureSampleButton(),
-          ],
-        ),
+      // The capture icon is *overlaid* on the readout rather than following it
+      // in the column: as a row of its own it cost more than a line and a half
+      // of a band that is a hard budget (see [_TopOverlays]). The lines are
+      // short and left-aligned, so the top-right corner is free.
+      child: Stack(
+        children: [
+          // Scrollable as the failsafe: the line count varies with what the
+          // pipeline has to report, and the alternative on a cramped viewport
+          // is an overflow stripe.
+          SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                for (final line in lines)
+                  Text(
+                    line,
+                    style: TextStyle(
+                      color: palette.onSurface,
+                      fontSize: ScanDiagnosticsTokens.fontSize,
+                      height: ScanDiagnosticsTokens.lineHeight,
+                      fontFamily: ScanDiagnosticsTokens.fontFamily,
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          const Positioned(top: 0, right: 0, child: _CaptureSampleButton()),
+        ],
       ),
     );
   }
+
+  /// The art-box outcome, appended to the frame-status line.
+  static String _artBoxSuffix(ArtReading? reading) => reading == null
+      ? ''
+      : (reading.artBoxLocked
+            ? AppStrings.scanDiagnosticsArtBoxLockedSuffix
+            : AppStrings.scanDiagnosticsArtBoxFallbackSuffix);
 }
 
 /// Saves the pixels the pipeline last hashed, and hands them to the share sheet.

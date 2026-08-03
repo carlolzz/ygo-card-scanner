@@ -44,6 +44,65 @@ class CollectionFilterController extends _$CollectionFilterController {
       state = state.copyWith(sortDescending: !state.sortDescending);
 }
 
+/// Which collection entries are selected, and whether the screen is in
+/// selection mode at all.
+///
+/// A hand-written immutable class rather than freezed, matching
+/// `AddCardSelection` and `ScanState`: it is UI state, not a DB row.
+class CollectionSelection {
+  const CollectionSelection({this.active = false, this.ids = const <int>{}});
+
+  /// Whether the list is in selection mode. True with an empty [ids] is a real
+  /// state — the user deselected everything without leaving the mode.
+  final bool active;
+
+  /// `collection_entries.id`, the only stable key here: one passcode backs
+  /// several rows (conditions, languages, printings) and selecting a card means
+  /// selecting exactly one of them.
+  final Set<int> ids;
+
+  int get count => ids.length;
+  bool contains(int? id) => id != null && ids.contains(id);
+}
+
+/// Owns [CollectionSelection] for the collection screen.
+///
+/// autoDispose, and unlike the scan pause this genuinely dies with its screen:
+/// `CollectionScreen` **watches** it, so there is a real subscription holding it
+/// up rather than a pair of `ref.read`s that close immediately.
+@riverpod
+class CollectionSelectionController extends _$CollectionSelectionController {
+  @override
+  CollectionSelection build() {
+    // Watching the filter *is* the clearing rule. Any change to the filter or
+    // the search box rebuilds this notifier back to empty and inactive — which
+    // matters because a row filtered out of the list would otherwise stay
+    // selected invisibly and be swept up by a delete button whose count never
+    // showed it. That is the one way this feature could destroy data the user
+    // did not choose.
+    ref.watch(collectionFilterControllerProvider);
+    return const CollectionSelection();
+  }
+
+  /// Enters selection mode with one card picked — the long-press.
+  void enter(int id) => state = CollectionSelection(active: true, ids: {id});
+
+  void toggle(int id) {
+    final next = Set<int>.of(state.ids);
+    if (!next.remove(id)) next.add(id);
+    // Deselecting the last card keeps the mode on: leaving it would fight the
+    // user, who is one tap away from picking a different card.
+    state = CollectionSelection(active: true, ids: next);
+  }
+
+  void selectAll(Iterable<int> ids) =>
+      state = CollectionSelection(active: true, ids: ids.toSet());
+
+  void clearSelection() => state = const CollectionSelection(active: true);
+
+  void exit() => state = const CollectionSelection();
+}
+
 @riverpod
 Future<List<CollectionEntryWithCard>> collectionEntries(Ref ref) async {
   await ref.watch(debugSeedCollectionProvider.future);

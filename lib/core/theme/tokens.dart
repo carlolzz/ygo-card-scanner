@@ -245,6 +245,13 @@ class CollectionGridTokens {
   static const double nameCaptionHeight = 34;
 
   static const double nameFontSize = 11;
+
+  /// The multi-select check over a cell's artwork, and the outline of a selected
+  /// cell. Both are needed in `minifyFull`, where the cell has no text at all
+  /// and a corner badge alone is thin evidence that a card scrolled two rows up
+  /// is still part of what Remove will take.
+  static const double selectionCheckSize = 16;
+  static const double selectedBorderWidth = 2;
 }
 
 class PrintingPickerTokens {
@@ -374,10 +381,36 @@ class ScanReticleTokens {
   static const double cardAspectRatio = 59 / 86;
 
   /// Never let the derived height exceed this fraction of the preview, so the
-  /// guide always leaves room for the status banner and the bottom help/review
-  /// panels — held below the earlier 0.7 so the reticle clears the "three ways
-  /// to log a card" help box on shorter screens.
+  /// guide always leaves room for the bottom help/review panels — held below
+  /// the earlier 0.7 so the reticle clears the "three ways to log a card" help
+  /// box on shorter screens.
   static const double maxHeightFraction = 0.62;
+
+  /// How far below the viewport's vertical centre the guide box sits, as a
+  /// fraction of viewport height.
+  ///
+  /// Everything that grows down from the app bar is budgeted against
+  /// `reticle.top`, and the diagnostics readout did not fit in the ~91pt a
+  /// centred box left on a 393x851 phone — so its most useful lines were always
+  /// the ones scrolled out of sight. Dropping the box buys that band directly.
+  ///
+  /// Because [reticleRectInViewport] is the single source of truth for both the
+  /// drawn box and `detectionRoiInFrame`, the region actually searched follows
+  /// it — which is the point, and is what the user saw as "move the white
+  /// rectangle slightly lower".
+  ///
+  /// Deliberately **not** conditional on the diagnostics setting: the detector
+  /// maps this rect on a worker isolate from the viewport size alone, so a
+  /// settings-dependent reticle would have to thread that flag across the
+  /// isolate boundary and would desync the drawn box from the searched region
+  /// the moment it didn't. It is also better that what you watch while
+  /// debugging is exactly what normal scanning does.
+  ///
+  /// **Capped by the bottom panels, not by taste.** `_HelpPanel` grows up from
+  /// the bottom and step 11 dropped [maxHeightFraction] 0.7 -> 0.62 precisely to
+  /// clear it; this spends part of that clearance. At 0.03 a 393x851 phone keeps
+  /// ~12pt between the reticle and the help box; 0.043 and above overlaps.
+  static const double verticalOffsetFraction = 0.03;
 
   static const double borderWidth = 3;
   static const double cornerRadius = AppRadius.md;
@@ -550,10 +583,11 @@ class ScanOutlineTokens {
 class ScanDiagnosticsTokens {
   const ScanDiagnosticsTokens._();
 
-  /// Deliberately small. The readout has ~11 lines and the space it may occupy
-  /// is fixed by geometry (see [reticleGap]), so the only free variable is how
-  /// many of them are visible at once.
-  static const double fontSize = 10;
+  /// Deliberately small. The readout runs to eight lines and the space it may
+  /// occupy is fixed by geometry (see [reticleGap]), so the only free variables
+  /// are the type size and how many of the lines are visible at once — and the
+  /// whole point of a diagnostics overlay is that all of them are.
+  static const double fontSize = 9;
 
   /// Line box as a multiple of [fontSize] — tight, since these are single-line
   /// monospace records with no descender-heavy prose.

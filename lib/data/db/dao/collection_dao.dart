@@ -347,6 +347,35 @@ class CollectionDao {
     await _db.delete('collection_entries', where: 'id = ?', whereArgs: [id]);
   }
 
+  /// Removes several entries at once — the collection screen's multi-select
+  /// delete. Returns how many rows were actually removed; ids that no longer
+  /// exist are simply not counted.
+  ///
+  /// Same dynamic-`IN` convention as [getEntriesForPasscodes] and
+  /// `CardDao.getByPasscodes`: placeholders built from the argument's **length**
+  /// only, never its contents, so the ids stay parameterized.
+  ///
+  /// The empty early return is not defensive padding. `IN ()` is invalid SQL,
+  /// but the real hazard is that building `where` without the clause at all
+  /// deletes the whole table — and an empty selection is a perfectly ordinary
+  /// state here, since the user can deselect every row without leaving the mode.
+  ///
+  /// One statement in one transaction: a multi-select delete is a single user
+  /// action, so a partial result is not a state the collection should ever be
+  /// in. (A lone DELETE is already atomic in SQLite; the transaction matches
+  /// [applyImport] and [updateEntryDetails].)
+  Future<int> deleteMany(List<int> ids) async {
+    if (ids.isEmpty) return 0;
+    final placeholders = List.filled(ids.length, '?').join(', ');
+    return _db.transaction(
+      (txn) => txn.delete(
+        'collection_entries',
+        where: 'id IN ($placeholders)',
+        whereArgs: ids,
+      ),
+    );
+  }
+
   /// Edits the entry [id]'s printing/condition/edition/language in place. If the
   /// new combination collides with a *different* existing entry for the same
   /// card (the same `collection_entries` UNIQUE key), the two are **merged**:

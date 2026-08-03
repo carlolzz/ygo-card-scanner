@@ -1,5 +1,6 @@
-import 'package:flutter/painting.dart' show Offset, Size;
+import 'package:flutter/painting.dart' show Offset, Rect, Size;
 import 'package:flutter_test/flutter_test.dart';
+import 'package:ygo_scanner/core/theme/tokens.dart';
 import 'package:ygo_scanner/features/scan/scan_geometry.dart';
 
 /// A 3:4 sensor frame (portrait) against a taller, narrower phone viewport —
@@ -75,6 +76,87 @@ void main() {
       expect(
         frameFractionToViewport(const Offset(0.25, 0.75), square, viewport),
         const Offset(50, 150),
+      );
+    });
+  });
+
+  // The guide box sits below the viewport's centre so the overlays above it —
+  // the diagnostics readout above all — have a band tall enough to be read in
+  // one glance. Everything here is really one invariant: the box the user is
+  // asked to fill and the region the detector searches are the same rectangle,
+  // wherever that rectangle is.
+  group('reticleRectInViewport', () {
+    const phone = Size(393, 851);
+
+    test('the box sits the configured fraction below centre', () {
+      final rect = reticleRectInViewport(phone);
+      expect(
+        rect.center.dy - phone.height / 2,
+        closeTo(phone.height * ScanReticleTokens.verticalOffsetFraction, 0.01),
+      );
+      expect(rect.center.dx, closeTo(phone.width / 2, 0.01));
+    });
+
+    test('the offset changes the position and nothing else', () {
+      final rect = reticleRectInViewport(phone);
+      expect(rect.width, closeTo(phone.width * ScanReticleTokens.widthFraction, 0.01));
+      expect(
+        rect.width / rect.height,
+        closeTo(ScanReticleTokens.cardAspectRatio, 0.0001),
+      );
+    });
+
+    // The clamp is against the *inflated* rect, not the box: `detectionRoiInFrame`
+    // grows it by `reticleRoiMargin` on every side and then clamps in frame
+    // space, so an offset that pushed the inflated rect off the bottom would
+    // silently truncate the searched region on one edge — worse recognition
+    // with no visible symptom at all.
+    for (final viewport in const [
+      phone,
+      Size(360, 640),
+      Size(800, 600),
+      Size(851, 393), // landscape
+      Size(320, 480),
+    ]) {
+      test('the box plus its search margin stays inside $viewport', () {
+        final rect = reticleRectInViewport(viewport);
+        final margin = rect.height * ScanDetectionTokens.reticleRoiMargin;
+        expect(rect.top - margin, greaterThanOrEqualTo(-0.01));
+        expect(
+          rect.bottom + margin,
+          lessThanOrEqualTo(viewport.height + 0.01),
+          reason: 'the inflated search region must not run off the bottom',
+        );
+      });
+    }
+
+    test('the offset is clamped, never negative, when there is no slack', () {
+      // Short and wide: `maxHeightFraction` binds and the margin eats what is
+      // left, so the box has to stay centred rather than move up.
+      const squat = Size(900, 300);
+      final rect = reticleRectInViewport(squat);
+      expect(rect.center.dy, greaterThanOrEqualTo(squat.height / 2 - 0.01));
+    });
+
+    test('the detection ROI follows the box down and stays in range', () {
+      const frame = Size(720, 1280);
+      final roi = detectionRoiInFrame(viewport: phone, frame: frame);
+      final centred = Rect.fromCenter(
+        center: Offset(phone.width / 2, phone.height / 2),
+        width: reticleRectInViewport(phone).width,
+        height: reticleRectInViewport(phone).height,
+      );
+
+      expect(roi.top, greaterThanOrEqualTo(0));
+      expect(roi.bottom, lessThanOrEqualTo(1));
+      // Strictly lower than it would be for a centred box — the pairing of the
+      // drawn rect and the searched region is what is under test, not either on
+      // its own.
+      expect(
+        roi.center.dy,
+        greaterThan(
+          viewportToFrameFraction(centred.center, frame, phone).dy,
+        ),
       );
     });
   });

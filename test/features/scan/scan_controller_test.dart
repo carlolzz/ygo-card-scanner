@@ -51,6 +51,49 @@ class _FakeArtMatcher implements ArtMatcher {
   ArtSample? get lastSample => null;
 }
 
+/// A matcher whose resolution fails. Stands in for a sqflite hiccup or a
+/// detector/index failure mid-resolve — the case that used to leave
+/// `scanPaused` true forever *and* drop an unhandled async error, since
+/// `_resolveArtMatch` is called unawaited from a `ref.listen` callback.
+class _ThrowingArtMatcher implements ArtMatcher {
+  @override
+  Future<List<ArtCandidate>> match({Size? viewportSize}) async =>
+      throw StateError('resolution failed');
+  @override
+  Future<List<ArtCandidate>> bestGuesses() async =>
+      throw StateError('resolution failed');
+  @override
+  Future<ArtFrameResult> rankFrame({
+    bool includeNearest = false,
+    Size? viewportSize,
+  }) async => const ArtFrameResult(ArtFrameStatus.notDetected, []);
+  @override
+  ArtSample? get lastSample => null;
+}
+
+/// A matcher that blocks in `match` until the test releases it, so a test can
+/// interleave a frame with a resolution that is still in flight.
+class _GatedArtMatcher implements ArtMatcher {
+  _GatedArtMatcher(this.gate, this.result);
+  final Completer<void> gate;
+  final List<ArtCandidate> result;
+  @override
+  Future<List<ArtCandidate>> match({Size? viewportSize}) async {
+    await gate.future;
+    return result;
+  }
+
+  @override
+  Future<List<ArtCandidate>> bestGuesses() async => const [];
+  @override
+  Future<ArtFrameResult> rankFrame({
+    bool includeNearest = false,
+    Size? viewportSize,
+  }) async => const ArtFrameResult(ArtFrameStatus.notDetected, []);
+  @override
+  ArtSample? get lastSample => null;
+}
+
 // Seeded fixture passcodes (see fake_collection_seed.dart).
 const darkMagician = '46986414';
 const blueEyes = '89631139';
@@ -79,6 +122,10 @@ void main() {
   // Mutated by tests before triggering an artwork match.
   var fakeCandidates = <ArtCandidate>[];
   var fakeGuesses = <ArtCandidate>[];
+
+  /// Set by tests that need a matcher which throws or blocks; null means the
+  /// default [_FakeArtMatcher] over [fakeCandidates]/[fakeGuesses].
+  ArtMatcher? fakeMatcher;
 
   /// One frame of artwork: a nearest hit at [distance], or nothing (null).
   Future<void> feedArt(
@@ -144,13 +191,16 @@ void main() {
     ocrSeq = 0;
     fakeCandidates = <ArtCandidate>[];
     fakeGuesses = <ArtCandidate>[];
+    fakeMatcher = null;
     container = ProviderContainer(
       overrides: [
         appDatabaseProvider.overrideWith((ref) async => db),
         artReadingsProvider.overrideWith((ref) => artReadings.stream),
         passcodeReadingsProvider.overrideWith((ref) => readings.stream),
         artMatcherProvider.overrideWith(
-          (ref) async => _FakeArtMatcher(fakeCandidates, guesses: fakeGuesses),
+          (ref) async =>
+              fakeMatcher ??
+              _FakeArtMatcher(fakeCandidates, guesses: fakeGuesses),
         ),
       ],
     );
@@ -816,6 +866,88 @@ void main() {
       expect(scanned, hasLength(1));
       expect(scanned.first.edition, CardEdition.first);
       expect(scanned.first.language, 'DE');
+    });
+  });
+
+  // Half of the "declining a card kills scanning" fix. [ScanPaused] is
+  // `keepAlive` and this controller is its only writer, so a resolution that
+  // exits without releasing the pause does not cost one frame — it stops
+  // `artReadings` yielding for the rest of the process, with the camera still
+  // streaming and every on-screen signal green. Each exit used to release the
+  // pause by hand and three of them did not.
+  //
+  // The other half — the screen being torn down while a panel is up — is owned
+  // by `_ScanScreenState.dispose()` and covered in `scan_screen_test.dart`,
+  // because Riverpod forbids a provider writing to another provider from its
+  // own `onDispose`.
+  group('the pause is released on every resolution path', () {
+    test('a review panel keeps the pause it was handed', () async {
+      fakeCandidates = const [ArtCandidate(dmCard, 4)];
+      await agreeArt(darkMagician);
+
+      expect(state().status, ScanStatus.matched);
+      expect(
+        container.read(scanPausedProvider),
+        isTrue,
+        reason: 'the review gate is meant to freeze the pipeline — the '
+            '`finally` must not undo the hand-off',
+      );
+    });
+
+    test('a failing resolution resumes scanning instead of wedging it',
+        () async {
+      fakeMatcher = _ThrowingArtMatcher();
+      await agreeArt(darkMagician);
+
+      expect(state().status, ScanStatus.detecting);
+      expect(state().artAgreementBuffer, isEmpty);
+      expect(
+        container.read(scanPausedProvider),
+        isFalse,
+        reason: 'a DB or matcher hiccup costs one run, not the session',
+      );
+    });
+
+    test('a status change mid-resolution does not pin the pause', () async {
+      final gate = Completer<void>();
+      fakeMatcher = _GatedArtMatcher(gate, const [ArtCandidate(dmCard, 4)]);
+
+      // Starts the resolve, which now blocks on the gate.
+      await agreeArt(darkMagician);
+      expect(state().status, ScanStatus.reading);
+
+      // A frame with no card arrives while the DB round trip is in flight and
+      // moves the machine on, so the resolve's `status != reading` guard will
+      // discard the result. That branch used to return without un-pausing.
+      await feedArt(null);
+      expect(state().status, ScanStatus.detecting);
+
+      gate.complete();
+      await settle();
+
+      expect(container.read(scanPausedProvider), isFalse);
+    });
+
+    test('a failing showBestGuesses resumes scanning', () async {
+      await feedUnmatched();
+      fakeMatcher = _ThrowingArtMatcher();
+      await controller().showBestGuesses();
+      await settle();
+
+      expect(state().status, ScanStatus.detecting);
+      expect(state().unmatchedStreak, 0);
+      expect(container.read(scanPausedProvider), isFalse);
+    });
+
+    test('showBestGuesses finding nothing releases the pause', () async {
+      fakeCandidates = const [];
+      fakeGuesses = const [];
+      await feedUnmatched();
+      await controller().showBestGuesses();
+      await settle();
+
+      expect(state().status, ScanStatus.detecting);
+      expect(container.read(scanPausedProvider), isFalse);
     });
   });
 }

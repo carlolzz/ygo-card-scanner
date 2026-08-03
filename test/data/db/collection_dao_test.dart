@@ -1049,4 +1049,67 @@ void main() {
       expect(await collectionDao.totalCardCount(), 0);
     });
   });
+
+  // Backs the collection screen's multi-select delete.
+  group('deleteMany', () {
+    late int blueEyesNm;
+    late int blueEyesLp;
+    late int redEyesNm;
+
+    setUp(() async {
+      blueEyesNm = (await collectionDao.addOrIncrement(
+        _entry(passcode: _blueEyes.passcode, condition: CardCondition.nearMint),
+      )).id!;
+      blueEyesLp = (await collectionDao.addOrIncrement(
+        _entry(
+          passcode: _blueEyes.passcode,
+          condition: CardCondition.lightPlayed,
+        ),
+      )).id!;
+      redEyesNm = (await collectionDao.addOrIncrement(
+        _entry(passcode: _redEyes.passcode, condition: CardCondition.nearMint),
+      )).id!;
+    });
+
+    test('removes exactly the listed rows and leaves the others', () async {
+      expect(await collectionDao.deleteMany([blueEyesNm, redEyesNm]), 2);
+
+      final remaining = await collectionDao.getAll();
+      expect(remaining.map((e) => e.entry.id), [blueEyesLp]);
+    });
+
+    // The one that matters. `IN ()` is invalid SQL, but the real hazard is an
+    // implementation that builds `where` without the clause at all and wipes the
+    // table — and an empty selection is an ordinary state, since the user can
+    // deselect every row without leaving the mode.
+    test('an empty list is a no-op that deletes nothing', () async {
+      expect(await collectionDao.deleteMany(const []), 0);
+      expect(await collectionDao.getAll(), hasLength(3));
+    });
+
+    test('unknown ids are skipped without affecting the count', () async {
+      expect(await collectionDao.deleteMany([blueEyesNm, 987654]), 1);
+      expect(await collectionDao.getAll(), hasLength(2));
+    });
+
+    test('removes every row when the whole collection is selected', () async {
+      expect(
+        await collectionDao.deleteMany([blueEyesNm, blueEyesLp, redEyesNm]),
+        3,
+      );
+      expect(await collectionDao.getAll(), isEmpty);
+      expect(await collectionDao.totalCardCount(), 0);
+    });
+
+    // Ids reach SQLite as bound parameters, never as interpolated text: the
+    // placeholder string is built from the list's *length* only.
+    test('ids are parameterized, not interpolated', () async {
+      expect(await collectionDao.deleteMany([blueEyesLp]), 1);
+      final remaining = await collectionDao.getAll();
+      expect(remaining.map((e) => e.entry.id), unorderedEquals([
+        blueEyesNm,
+        redEyesNm,
+      ]));
+    });
+  });
 }

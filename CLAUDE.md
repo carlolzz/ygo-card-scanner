@@ -1595,6 +1595,145 @@ order):
     `ListView`, so at the default 600pt viewport they are never built and
     `ensureVisible` cannot find them — hence the `useTallViewport` helper.
 
+21. Eighth on-device feedback pass — the scan-pause lifetime bug, a readable
+    diagnostics band, lazily-fetched artwork, multi-select delete ← done
+    (verified: `flutter analyze` clean, full `flutter test` green at **503
+    tests**, `pytest tools/` green). **No DB migration, no schema change, no new
+    dependency.** Nothing here touches the descriptor,
+    `assets/card_hashes.json`, the detection algorithm or any shape/matching/
+    quality threshold.
+    **Scanning died for the rest of the app's life after declining one card**,
+    and this was the worst defect the app has had: preview live, camera
+    streaming, reticle drawn, nothing ever recognised again, and only relaunching
+    fixed it. `ScanPaused` is `@Riverpod(keepAlive: true)` — correctly, since
+    step 16 measured that autoDispose made the whole pause inert — while its only
+    writer, `ScanController`, is autoDispose, and **nothing ever cleared it**. So
+    any teardown with a result on screen pinned it `true` for the process and
+    `artReadings` skipped every subsequent frame. Backing out of a review panel
+    is the likely repro: `dismiss()` does clear the pause, but after a dismiss
+    the panel re-opens on the same card once `dismissCooldown` expires.
+    Fixed in two halves, both needed. **Releasing the pause is now structural**:
+    `_resolveArtMatch` and `showBestGuesses` wrap their bodies in
+    `try/catch/finally` with a single `handedOff` flag set only on the branch
+    that actually puts a panel in front of the user, so the `status != reading`
+    early return, the empty-candidates branch and any throw all release it by
+    construction. The `catch` is not optional decoration: `_resolveArtMatch` is
+    called *unawaited* from a `ref.listen` callback, so without it a matcher or
+    DB failure was both an unwatched wedge and an unhandled async error, and the
+    regression test could not be written at all. And **`_ScanScreenState`
+    clears any residue on entry**, from a post-frame callback. On *entry*, not on
+    the previous screen's exit, for two reasons: a fresh `ScanController` always
+    starts in `detecting`, so unpaused is the only correct state there however
+    the last session ended; and **Riverpod asserts on cross-provider writes from
+    a provider's `build`, from its own `ref.onDispose`, and from any widget
+    life-cycle including `dispose`** — all three were tried, all three throw, and
+    a post-frame callback is outside the build phase, which is the same reason
+    `_ViewportProbe` publishes its size from one. (Noted while proving that:
+    `_ViewportProbeState.dispose()` writes to `ScanViewportSize` and so trips
+    the same assert whenever the scan screen is torn down mid-frame. Pre-existing,
+    debug-only, left alone — but it is why the reset here could not simply copy
+    it.) Both halves were **verified to fail** against the pre-change code.
+    Flagged, not fixed: `_MatchedPanel`'s confirm button shows the "added to your
+    collection" SnackBar unconditionally, so a write failure reports success.
+    **The diagnostics readout is readable, and this was arithmetic, not taste.**
+    On a 393x851 phone the band above the guide box was ~91pt (floored to
+    `minBandHeight` 96), the fixed-size status banner took ~44 of it first, and
+    the content needed ~141 — so the box scrolled and the lines that matter for
+    tuning, the last ones, were exactly the ones hidden. Four levers, all spent:
+    the **status banner moved inside the orange guide box**, replacing the static
+    "fit the whole card inside the box" (which the box's own shape already says)
+    and freeing the whole band for the readout; `ScanReticleTokens.verticalOffsetFraction`
+    = **0.03** drops the box, widening the band directly; `fontSize` 10 → **9**;
+    and the frame-status line **absorbs** the art-box line
+    (`card detected · art box: located`), 9 lines → 8. Result at 393x851: 116.6pt
+    of band against 101.6pt of content. Two findings worth keeping:
+    - **The "white rectangle covering the debug text" is the search-ROI outline
+      reading *through* the box.** `_SearchRoiOverlay` is an earlier stack child,
+      so its 1.5pt muted stroke showed through the 0.8-alpha scrim. Now 0.95.
+    - **The existing 393x851 regression test could not see the bug.** It set
+      `physicalSize` but not `tester.view.padding`, and `Scaffold` with
+      `extendBodyBehindAppBar` reports the body's `padding.top` as
+      `max(view padding, app bar height)` — so it measured a 130pt band where the
+      device has 91. The test passed while the device clipped.
+      `FakeViewPadding(top: 39)` is now part of it.
+    The offset lives in `reticleRectInViewport` — the single source of truth —
+    so the drawn box, the searched region and the debug outline move together;
+    it is **clamped against the ROI margin, not the box**, since
+    `detectionRoiInFrame` inflates by `reticleRoiMargin` and then clamps in frame
+    space, where an over-large offset would silently truncate the search region on
+    one edge with no visible symptom. 0.03 is capped by `_HelpPanel`: it leaves
+    ~12pt of clearance at 393x851, and 0.043 overlaps. `_ReticleOverlay` is now
+    `Positioned.fromRect` rather than a `Center`, which *removes* the trap its
+    old doc comment warned about instead of documenting it, and carries a
+    `scanReticleKey` so the screen test can assert the drawn box **equals**
+    `reticleRectInViewport` on all four edges — the correct form of the old
+    `center.dy == height / 2`, which was only ever a proxy for it. The new
+    "fits without scrolling" test asserts `maxScrollExtent == 0` rather than a
+    pixel height, so it measures the property complained about and survives
+    font-metric drift; it was checked to fail with the offset and font reverted.
+    `CameraScanService._meteringPoint` follows the box down.
+    **CSV-imported cards had no artwork, ever.** `CollectionImporter.apply`
+    writes through `CollectionDao.applyImport`, bypassing
+    `CollectionRepository.addOrIncrement` — the only place
+    `ensureImageDownloaded` is ever fired — so imported rows keep a NULL
+    `local_image_path`, and every collection surface used the plain
+    `CardThumbnail`, which reads the path and never fetches. `CardArtThumbnail`
+    (which already existed for the scan candidates) was widened to
+    `CardThumbnail`'s full API — nullable `size`, `aspectRatio`, `fit` — and now
+    backs the list tile, both grid cells and the detail screen. Owned cards
+    **never touch the provider**, which is what makes it safe on every surface
+    and is the first thing its test pins. `cardArtProvider` calls `ref.keepAlive()`
+    **only on a hit**: caching a miss would mean one offline moment blanked a card
+    for the app's lifetime. Fixed at display rather than at import (decided with
+    the user): a 900-row import would otherwise be a 900-request burst at
+    YGOPRODeck for cards the user may never look at. A minified grid still puts
+    15-30 cells on screen at once, so `CardImageDownloader` gained a
+    `ConcurrencyLimiter` (a completer FIFO, no package) at
+    `kMaxConcurrentDownloads = 4`, matching the tool's `--workers 4`; the digit
+    validation stays outside the gate, and a throwing body releases its slot —
+    without that, a few 404s deadlock every later download and
+    `ensureImageDownloaded` swallows the reason.
+    **Long-press multi-select delete**, in all three view modes. New
+    `CollectionSelection` + `CollectionSelectionController` (hand-written
+    immutable class, matching `AddCardSelection`; keyed on `collection_entries.id`,
+    the only stable key since one passcode backs several rows). Its `build()`
+    **watches `collectionFilterControllerProvider`**, and that watch *is* the
+    clearing rule — the one way this feature could destroy data the user did not
+    choose is a row filtered out of the list staying selected invisibly and being
+    swept up by a button whose count never showed it. Unlike the scan pause this
+    controller genuinely dies with its screen, because the screen `watch`es it.
+    New `CollectionDao.deleteMany` follows the documented dynamic-`IN` convention
+    (placeholders from the argument's **length** only); its empty early return is
+    a live path, not defensive padding — the user can deselect every row without
+    leaving the mode, and a `where` built without the clause deletes the table.
+    `confirmRemoveCard` was **generalized rather than copied** (it is the one
+    place `confirmBeforeDelete` is read, and a copy is a second place to forget
+    it): passing `bulkCount` marks the multi-select path, which **always confirms
+    whatever the setting says** (decided with the user — that toggle was written
+    for a one-tap row delete where a mis-tap costs one card), while the wording
+    still follows the count so removing one selected card doesn't say "1
+    entries". On the list row the action column is **replaced, not hidden**:
+    three live-looking per-row buttons inside a multi-row mode are the worst place
+    for a mis-tap, and `CollectionTileTokens` documents that that column is what
+    sets the row height, so removing it would reflow the whole list under the
+    finger that just long-pressed. Grid cells get a check in the corner opposite
+    the quantity badge plus an accent outline — in `minifyFull` the cell is
+    nothing but artwork. `PopScope` makes Android back cancel the mode; the filter
+    bar hides while selecting, since changing a filter clears the selection by
+    design and offering it would look like silent discarding.
+    **Test gotchas, both new**: `tester.longPress` **does not work inside
+    `tester.runAsync`** and fails silently — no missed-hit warning, just a
+    gesture that never becomes a long press, because the recognizer's deadline is
+    a *real* timer while `longPress` advances the fake clock. The helper holds
+    the pointer down over a real `Future.delayed` instead. And `Material` asserts
+    when given both `borderRadius` and `shape`, so the selected-cell outline had
+    to fold the radius into the shape.
+    **Still open**, unchanged: `maxHammingDistance` at 72,
+    `CardDetectionTuning.innerQuadMinAreaRatio` at 0.78, the passcode ROI filter
+    off, `artAgreementFrames` at 2, and every `FrameQualityTuning` threshold still
+    uncalibrated on device. The readout being fully legible for the first time is
+    what makes calibrating them possible.
+
 ## Standing rules
 
 - No ORM. Raw SQL in DAOs only. No SQL outside `lib/data/db/`.

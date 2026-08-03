@@ -9,7 +9,7 @@ import '../../models/card_edition.dart';
 import '../../models/card_language.dart';
 import '../../models/collection_entry_with_card.dart';
 import '../../models/printing.dart';
-import '../../shared/widgets/card_thumbnail.dart';
+import '../../shared/widgets/card_art_thumbnail.dart';
 import '../../shared/widgets/labeled_choice_chip.dart';
 import '../../shared/widgets/printing_picker.dart';
 import 'collection_delete_confirm.dart';
@@ -67,8 +67,8 @@ class _CollectionDetailScreenState
             Center(
               // The whole card, uncropped (portrait card box + contain) rather
               // than a square centre-crop.
-              child: CardThumbnail(
-                localImagePath: card.localImagePath,
+              child: CardArtThumbnail(
+                card: card,
                 size: CardThumbnailSizes.detail,
                 aspectRatio: ScanReticleTokens.cardAspectRatio,
                 fit: BoxFit.contain,

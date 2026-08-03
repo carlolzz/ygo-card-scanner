@@ -1,11 +1,14 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:ygo_scanner/core/constants.dart';
+import 'package:ygo_scanner/features/settings/settings_providers.dart';
 import 'package:ygo_scanner/data/seed/fake_collection_seed.dart';
 import 'package:ygo_scanner/features/collection/collection_grid_tile.dart';
 import 'package:ygo_scanner/features/collection/collection_list_tile.dart';
 import 'package:ygo_scanner/models/collection_view_mode.dart';
+import 'package:ygo_scanner/shared/widgets/card_art_thumbnail.dart';
 import 'package:ygo_scanner/shared/widgets/card_thumbnail.dart';
 import 'package:ygo_scanner/shared/widgets/searchable_text_picker.dart';
 
@@ -286,6 +289,16 @@ void main() {
         find.byType(CardThumbnail),
         findsNWidgets(6), // one per seeded row
       );
+      // Not a redundant assertion, and not to be "tidied" into the one above:
+      // the rows render a [CardArtThumbnail], which renders a [CardThumbnail]
+      // internally — so the count alone would still pass if the lazy-fetching
+      // wrapper were swapped back out. That wrapper is the only thing that
+      // gives a CSV-imported card its artwork: an import writes through
+      // `CollectionDao.applyImport`, which never fires the download that
+      // `CollectionRepository.addOrIncrement` does, so those rows arrive with a
+      // NULL `local_image_path` and a plain thumbnail shows the placeholder
+      // forever.
+      expect(find.byType(CardArtThumbnail), findsNWidgets(6));
     });
   });
 
@@ -441,6 +454,219 @@ void main() {
 
       expect(find.text('${AppStrings.collectionFiltersButton} (1)'),
           findsOneWidget);
+    });
+  });
+
+  group('multi-select delete', () {
+    /// The grid modes only build their cells when there is room for them, and
+    /// the standard list is lazy — so every case here needs the tall viewport.
+    void useTallViewport(WidgetTester tester) {
+      tester.view.physicalSize = const Size(800, 2400);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+    }
+
+    Future<void> selectViewMode(
+      WidgetTester tester,
+      CollectionViewMode mode,
+    ) async {
+      await tester.tap(find.text(AppStrings.collectionMinifyButton));
+      await pumpUntilSettled(tester);
+      await tester.tap(find.text(mode.label).last);
+      await pumpUntilSettled(tester);
+    }
+
+    /// **`tester.longPress` does not work inside `tester.runAsync`**, and it
+    /// fails silently — no missed-hit warning, just a gesture that never
+    /// becomes a long press. `longPress` holds the pointer down and advances
+    /// the *fake* clock past `kLongPressTimeout`, but a recognizer armed inside
+    /// `runAsync` schedules its deadline as a **real** timer, which fake time
+    /// never reaches. So the wait here has to be real, like every other
+    /// db-backed step in this file.
+    Future<void> longPress(WidgetTester tester, Finder finder) async {
+      final gesture = await tester.startGesture(tester.getCenter(finder));
+      await Future<void>.delayed(const Duration(milliseconds: 700));
+      await tester.pump();
+      await gesture.up();
+      await pumpUntilSettled(tester);
+    }
+
+    testWidgets('a long press enters selection mode on the standard list', (
+      tester,
+    ) async {
+      useTallViewport(tester);
+      await tester.runAsync(() async {
+        await openCollection(tester);
+
+        await longPress(tester, find.text('Dark Magician'));
+
+        expect(
+          find.text('1 ${AppStrings.collectionSelectedSuffix}'),
+          findsOneWidget,
+        );
+        // The per-row controls are replaced, not merely disabled: three live
+        // buttons inside a multi-row mode are the worst place for a mis-tap.
+        expect(find.byIcon(Icons.delete_outline), findsOneWidget); // app bar
+        expect(find.byIcon(Icons.add_circle_outline), findsNothing);
+        expect(find.byIcon(Icons.remove_circle_outline), findsNothing);
+        expect(find.byIcon(Icons.check_circle), findsOneWidget);
+      });
+    });
+
+    testWidgets('tapping adds to the selection instead of opening the card', (
+      tester,
+    ) async {
+      useTallViewport(tester);
+      await tester.runAsync(() async {
+        await openCollection(tester);
+
+        await longPress(tester, find.text('Dark Magician'));
+        await tester.tap(find.text('Pot of Greed'));
+        await pumpUntilSettled(tester);
+
+        expect(
+          find.text('2 ${AppStrings.collectionSelectedSuffix}'),
+          findsOneWidget,
+        );
+        // Still on the list — a tap must not fall through to the detail screen.
+        expect(find.byType(CollectionListTile), findsWidgets);
+      });
+    });
+
+    testWidgets('deleting removes every selected row and nothing else', (
+      tester,
+    ) async {
+      useTallViewport(tester);
+      await tester.runAsync(() async {
+        await openCollection(tester);
+
+        await longPress(tester, find.text('Dark Magician'));
+        await tester.tap(find.text('Pot of Greed'));
+        await pumpUntilSettled(tester);
+
+        await tester.tap(find.byIcon(Icons.delete_outline));
+        await pumpUntilSettled(tester);
+
+        expect(
+          find.text(AppStrings.collectionDeleteManyDialogTitle),
+          findsOneWidget,
+        );
+        await tester.tap(find.text(AppStrings.collectionDeleteDialogConfirm));
+        await pumpUntilSettled(tester);
+
+        expect(find.text('Dark Magician'), findsNothing);
+        expect(find.text('Pot of Greed'), findsNothing);
+        expect(find.text('Blue-Eyes White Dragon'), findsOneWidget);
+        // …and the mode is over.
+        expect(find.text(AppStrings.homeTileMyCollection), findsOneWidget);
+      });
+    });
+
+    testWidgets('it works in the artwork-only grid too', (tester) async {
+      useTallViewport(tester);
+      await tester.runAsync(() async {
+        await openCollection(tester);
+        await selectViewMode(tester, CollectionViewMode.minifyFull);
+
+        await longPress(tester, find.byType(CollectionGridTile).first);
+        expect(
+          find.text('1 ${AppStrings.collectionSelectedSuffix}'),
+          findsOneWidget,
+        );
+
+        await tester.tap(find.byType(CollectionGridTile).at(1));
+        await pumpUntilSettled(tester);
+        expect(
+          find.text('2 ${AppStrings.collectionSelectedSuffix}'),
+          findsOneWidget,
+        );
+
+        await tester.tap(find.byIcon(Icons.delete_outline));
+        await pumpUntilSettled(tester);
+        await tester.tap(find.text(AppStrings.collectionDeleteDialogConfirm));
+        await pumpUntilSettled(tester);
+
+        expect(find.byType(CollectionGridTile), findsNWidgets(4));
+      });
+    });
+
+    // The Android half, and the only part a close-icon tap cannot cover: the
+    // system back button has to cancel the mode rather than leave the screen.
+    testWidgets('the back button exits the mode, not the route', (tester) async {
+      useTallViewport(tester);
+      await tester.runAsync(() async {
+        await openCollection(tester);
+
+        await longPress(tester, find.text('Dark Magician'));
+
+        await tester.binding.handlePopRoute();
+        await pumpUntilSettled(tester);
+
+        expect(find.text(AppStrings.homeTileMyCollection), findsOneWidget);
+        expect(find.text('Dark Magician'), findsOneWidget);
+        expect(
+          find.text('1 ${AppStrings.collectionSelectedSuffix}'),
+          findsNothing,
+        );
+      });
+    });
+
+    // Silent data loss is the one failure mode this feature has: a row filtered
+    // out of the list would otherwise stay selected invisibly and be swept up by
+    // a delete button whose count never showed it.
+    testWidgets('changing the filter clears the selection', (tester) async {
+      useTallViewport(tester);
+      await tester.runAsync(() async {
+        await openCollection(tester);
+
+        await longPress(tester, find.text('Dark Magician'));
+        expect(
+          find.text('1 ${AppStrings.collectionSelectedSuffix}'),
+          findsOneWidget,
+        );
+
+        // Selection mode hides the filter bar, so leave it first — which is the
+        // same route a user takes.
+        await tester.tap(find.byIcon(Icons.close));
+        await pumpUntilSettled(tester);
+        await applyFilterChip(tester, 'LP');
+
+        expect(find.byIcon(Icons.check_circle), findsNothing);
+        expect(find.text(AppStrings.homeTileMyCollection), findsOneWidget);
+      });
+    });
+
+    // The bulk path deliberately ignores the "Ask before deleting" setting:
+    // that toggle was written for a one-tap row delete, where a mis-tap costs a
+    // single card. Removing a whole selection is irreversible and can take
+    // dozens.
+    testWidgets('a bulk delete confirms even with the setting off', (
+      tester,
+    ) async {
+      useTallViewport(tester);
+      await tester.runAsync(() async {
+        await openCollection(tester);
+        final container = ProviderScope.containerOf(
+          tester.element(find.byType(CollectionListTile).first),
+        );
+        await container.read(settingsControllerProvider.future);
+        await container
+            .read(settingsControllerProvider.notifier)
+            .setConfirmBeforeDelete(false);
+        await pumpUntilSettled(tester);
+
+        await longPress(tester, find.text('Dark Magician'));
+        await tester.tap(find.byIcon(Icons.delete_outline));
+        await pumpUntilSettled(tester);
+
+        // Singular wording (one card is selected), but a dialog all the same —
+        // it is the *path* that always confirms, not the count.
+        expect(
+          find.text(AppStrings.collectionDeleteDialogTitle),
+          findsOneWidget,
+        );
+      });
     });
   });
 }

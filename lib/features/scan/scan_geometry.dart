@@ -65,7 +65,19 @@ Offset viewportToFrameFraction(Offset point, Size frame, Size viewport) {
 ///
 /// The single source of truth for the guide's geometry: `_ReticleOverlay` draws
 /// this rect and the detector searches it, so the box the user is asked to fill
-/// and the box actually searched can never drift apart.
+/// and the box actually searched can never drift apart. That is also why the
+/// vertical offset lives here rather than in the painting code — moving the box
+/// moves the searched region and the diagnostics search-ROI outline with it, by
+/// construction.
+///
+/// The box sits [ScanReticleTokens.verticalOffsetFraction] below the viewport's
+/// centre, to leave a readable band between the app bar and the guide. The
+/// offset is **clamped against the detection margin, not the box**:
+/// [detectionRoiInFrame] inflates this rect by
+/// [ScanDetectionTokens.reticleRoiMargin] on every side before mapping it into
+/// frame space, where it is clamped to `[0, 1]` — so an offset that pushed the
+/// *inflated* rect off the bottom would silently truncate the searched region
+/// on one edge only, with no visible symptom beyond worse recognition.
 Rect reticleRectInViewport(Size viewport) {
   var width = viewport.width * ScanReticleTokens.widthFraction;
   var height = width / ScanReticleTokens.cardAspectRatio;
@@ -74,8 +86,14 @@ Rect reticleRectInViewport(Size viewport) {
     height = maxHeight;
     width = height * ScanReticleTokens.cardAspectRatio;
   }
+  final slack =
+      (viewport.height - height) / 2 - height * ScanDetectionTokens.reticleRoiMargin;
+  final offset = slack <= 0
+      ? 0.0
+      : (viewport.height * ScanReticleTokens.verticalOffsetFraction)
+            .clamp(0.0, slack);
   return Rect.fromCenter(
-    center: Offset(viewport.width / 2, viewport.height / 2),
+    center: Offset(viewport.width / 2, viewport.height / 2 + offset),
     width: width,
     height: height,
   );

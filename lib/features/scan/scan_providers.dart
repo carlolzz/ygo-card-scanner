@@ -113,6 +113,23 @@ bool scanHelpEnabled(Ref ref) =>
 /// backed by a worker isolate still detecting and hashing. [PasscodeOcrRequested]
 /// survives as plain autoDispose only because `passcodeReadings` genuinely
 /// `ref.watch`es it.
+///
+/// **`keepAlive` means this outlives its only writer, so something has to own
+/// its reset.** That half was missing and cost the app its primary feature:
+/// [ScanController] is autoDispose, so leaving the scan screen with a review
+/// panel open (declining a card, then backing out) left this pinned `true` for
+/// the rest of the process. The camera restarted correctly on every re-entry and
+/// `artReadings` skipped every frame regardless — recognition dead until the app
+/// was relaunched, with every on-screen signal green.
+///
+/// Two things fixed it, and both are needed: the controller now releases the
+/// pause in a `finally` on every resolution path, and `_ScanScreenState`
+/// clears any residue from a post-frame callback when the screen opens. It is
+/// cleared on **entry** rather than exit because Riverpod asserts on provider
+/// writes from every widget life-cycle and from a provider's own `onDispose`,
+/// so there is no legal exit-time hook — and because a fresh [ScanController]
+/// always starts in `detecting`, which makes unpaused the only correct state
+/// there regardless of how the last session ended.
 @Riverpod(keepAlive: true)
 class ScanPaused extends _$ScanPaused {
   @override

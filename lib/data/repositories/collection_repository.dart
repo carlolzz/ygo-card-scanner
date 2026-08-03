@@ -31,6 +31,10 @@ class CollectionRepository {
 
   Future<void> delete(int id) => _dao.delete(id);
 
+  /// Removes several entries in one transaction, returning how many rows went.
+  /// See [CollectionDao.deleteMany].
+  Future<int> deleteMany(List<int> ids) => _dao.deleteMany(ids);
+
   /// Edits an entry's printing/condition/edition/language, merging into a
   /// matching entry when the change makes it a duplicate. See
   /// [CollectionDao.updateEntryDetails]. Returns the surviving entry's id.

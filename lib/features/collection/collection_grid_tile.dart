@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../core/theme/tokens.dart';
 import '../../models/collection_entry_with_card.dart';
-import '../../shared/widgets/card_thumbnail.dart';
+import '../../shared/widgets/card_art_thumbnail.dart';
 
 /// One cell in a minified collection grid: the artwork, optionally captioned
 /// with the card's name, and a quantity badge when more than one copy is held.
@@ -18,6 +18,9 @@ class CollectionGridTile extends StatelessWidget {
     required this.entryWithCard,
     required this.showName,
     required this.onTap,
+    required this.onLongPress,
+    this.selectionActive = false,
+    this.selected = false,
   });
 
   final CollectionEntryWithCard entryWithCard;
@@ -27,6 +30,12 @@ class CollectionGridTile extends StatelessWidget {
 
   final VoidCallback onTap;
 
+  /// Enters selection mode with this cell picked.
+  final VoidCallback onLongPress;
+
+  final bool selectionActive;
+  final bool selected;
+
   @override
   Widget build(BuildContext context) {
     final palette = AppPalette.of(context);
@@ -35,10 +44,25 @@ class CollectionGridTile extends StatelessWidget {
 
     return Material(
       color: palette.surfaceRaised,
-      borderRadius: BorderRadius.circular(AppRadius.sm),
+      // `shape` rather than `borderRadius` — [Material] asserts if given both,
+      // and the shape has to carry the radius so the selected outline follows
+      // the corners. An outline as well as the corner check mark: in
+      // `minifyFull` the cell is nothing but artwork, so a small badge is thin
+      // evidence that a card scrolled two rows up is still part of what Remove
+      // will take.
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(AppRadius.sm),
+        side: selected
+            ? BorderSide(
+                color: palette.accent,
+                width: CollectionGridTokens.selectedBorderWidth,
+              )
+            : BorderSide.none,
+      ),
       child: InkWell(
         borderRadius: BorderRadius.circular(AppRadius.sm),
         onTap: onTap,
+        onLongPress: onLongPress,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
@@ -46,8 +70,8 @@ class CollectionGridTile extends StatelessWidget {
               child: Stack(
                 fit: StackFit.expand,
                 children: [
-                  CardThumbnail(
-                    localImagePath: card.localImagePath,
+                  CardArtThumbnail(
+                    card: card,
                     // Null: the cell's width drives the size, which is the
                     // whole reason `CardThumbnail.size` became nullable.
                     size: null,
@@ -62,6 +86,14 @@ class CollectionGridTile extends StatelessWidget {
                       right: 2,
                       bottom: 2,
                       child: _QuantityBadge(quantity: entry.quantity),
+                    ),
+                  // Top-left, the opposite corner from the quantity badge, so
+                  // the two can never overlap however small the cell gets.
+                  if (selectionActive)
+                    Positioned(
+                      left: 2,
+                      top: 2,
+                      child: _SelectionCheck(selected: selected),
                     ),
                 ],
               ),
@@ -89,6 +121,33 @@ class CollectionGridTile extends StatelessWidget {
               ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// The selection check over a cell's artwork. Scrimmed like [_QuantityBadge],
+/// and for the same reason: it sits on card art, which is any colour at all, so
+/// a bare icon would vanish against half the collection.
+class _SelectionCheck extends StatelessWidget {
+  const _SelectionCheck({required this.selected});
+
+  final bool selected;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(2),
+      decoration: BoxDecoration(
+        color: AppPalette.dark.background.withValues(alpha: 0.85),
+        shape: BoxShape.circle,
+      ),
+      child: Icon(
+        selected ? Icons.check_circle : Icons.circle_outlined,
+        size: CollectionGridTokens.selectionCheckSize,
+        color: selected
+            ? AppPalette.dark.accent
+            : AppPalette.dark.onSurfaceMuted,
       ),
     );
   }

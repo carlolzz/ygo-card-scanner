@@ -122,8 +122,8 @@ usually tells you exactly what to run to fix it.
 If you have Git installed:
 
 ```
-git clone https://github.com/YOUR-USERNAME/ygo-scanner.git
-cd ygo-scanner
+git clone https://github.com/carlolzz/ygo-card-recognition.git
+cd ygo-card-recognition
 ```
 
 If you do not have Git, use the green **Code** button at the top of the

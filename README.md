@@ -7,6 +7,8 @@ the match, pick a condition, and it is saved to your collection. Everything is
 stored on the device in a local database, so the app works offline after the
 first setup.
 
+You can easily explore your personal collection through [this web app](https://github.com/carlolzz/ygo-collection-visualizer)
+
 > This is a personal hobby project. It is not affiliated with, endorsed by, or
 > connected to Konami. Card data and card images come from the public
 > [YGOPRODeck API](https://ygoprodeck.com/api-guide/).

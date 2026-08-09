@@ -63,3 +63,4 @@ android/key.properties
 *.jks
 *.keystore
 /android/local.properties
+assets/icon/past_icons/

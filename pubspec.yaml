@@ -5,7 +5,7 @@
 name: ygo_scanner
 description: "Catalogue a physical Yu-Gi-Oh card collection by camera."
 publish_to: 'none'
-version: 0.1.0+1
+version: 0.2.0+2
 
 environment:
   sdk: ^3.12.2
@@ -52,7 +52,11 @@ flutter:
     - assets/card_hashes.json
 
 # Launcher icon generation. Regenerate with `dart run flutter_launcher_icons`
-# after editing the source PNGs (built by `python tools/make_icon.py`).
+# after editing the source PNGs. Both must be square (this tool resizes to a
+# square target, so a landscape source is stretched, not letterboxed) — run
+# hand-drawn art through `py -3 tools/normalize_icon.py <icon> <foreground>`
+# first, which also flattens the opaque icon and fits the adaptive foreground
+# into its safe zone. `tools/make_icon.py` builds the original placeholder pair.
 flutter_launcher_icons:
   android: true
   ios: true

@@ -76,9 +76,18 @@ class AddCardSelectionController extends _$AddCardSelectionController {
   @override
   AddCardSelection build() => _initial();
 
-  /// Selects a card and fetches its printings. The printing step is skipped
-  /// (straight to condition, `printing` left null) when none are found —
-  /// consistent with existing null-printing collection entries.
+  /// Selects a card and fetches its printings, then goes to the printing step —
+  /// unless there is no choice to make there:
+  ///
+  /// - **no printings**: straight to condition with `printing` left null,
+  ///   consistent with existing null-printing collection entries;
+  /// - **exactly one**: straight to condition with that printing already
+  ///   picked. A step offering a single option is a decision with one answer,
+  ///   and the alternative (leaving it to the Skip button) silently logs a card
+  ///   with no set when there was only one it could have come from. The choice
+  ///   stays visible and reversible: `_ConditionStep` prints the set under the
+  ///   card name, and the back button routes to the printing step whenever
+  ///   `printings` is non-empty.
   Future<void> selectCard(YgoCard card) async {
     state = AddCardSelection(
       card: card,
@@ -97,10 +106,14 @@ class AddCardSelectionController extends _$AddCardSelectionController {
     // card while this fetch was in flight — drop a stale response.
     if (state.card?.passcode != card.passcode) return;
 
+    final sole = printings.length == 1 ? printings.single : null;
     state = AddCardSelection(
       card: state.card,
       printings: printings,
-      step: printings.isEmpty ? AddCardStep.condition : AddCardStep.printing,
+      printing: sole,
+      step: printings.isEmpty || sole != null
+          ? AddCardStep.condition
+          : AddCardStep.printing,
       condition: state.condition,
       edition: state.edition,
       language: state.language,

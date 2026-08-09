@@ -94,9 +94,12 @@ class _GatedArtMatcher implements ArtMatcher {
   ArtSample? get lastSample => null;
 }
 
-// Seeded fixture passcodes (see fake_collection_seed.dart).
+// Seeded fixture passcodes (see fake_collection_seed.dart). Their printing
+// counts are what the sole-printing preselection turns on: Dark Magician has
+// none, Blue-Eyes exactly one, Mirror Force two (the same card reprinted).
 const darkMagician = '46986414';
 const blueEyes = '89631139';
+const mirrorForce = '44095762';
 const unknownPasscode = '00000000';
 
 const dmCard =
@@ -105,6 +108,11 @@ const beCard = YgoCard(
   passcode: blueEyes,
   name: 'Blue-Eyes White Dragon',
   type: 'Normal Monster',
+);
+const mfCard = YgoCard(
+  passcode: mirrorForce,
+  name: 'Mirror Force',
+  type: 'Trap Card',
 );
 
 // The scan pipeline resolves through the sqflite_common_ffi background
@@ -350,7 +358,7 @@ void main() {
       expect(state().status, ScanStatus.candidates);
       expect(state().candidates, hasLength(2));
 
-      controller().selectCandidate(beCard);
+      await controller().selectCandidate(beCard);
       expect(state().status, ScanStatus.matched);
       expect(state().matchedCard?.passcode, blueEyes);
       expect(state().condition, CardCondition.nearMint);
@@ -627,7 +635,7 @@ void main() {
         await controller().showBestGuesses();
         await settle();
 
-        controller().selectCandidate(dmCard);
+        await controller().selectCandidate(dmCard);
         expect(state().status, ScanStatus.matched);
         expect(state().matchedCard, dmCard);
       });
@@ -769,23 +777,108 @@ void main() {
   });
 
   test('the set picked in the review gate is written to the entry', () async {
-    final printing = (await PrintingDao(db).getForPasscode(blueEyes)).first;
-    fakeCandidates = [const ArtCandidate(beCard, 2)];
-    await agreeArt(blueEyes);
+    // A reprinted card: two printings, so the camera genuinely cannot tell
+    // which one is in hand and the review gate starts on "no specific set".
+    // The Metal Raiders printing: seeded at Excellent, so a Near Mint scan
+    // against it is a new row rather than an increment of an existing one.
+    final printing = (await PrintingDao(db).getForPasscode(
+      mirrorForce,
+    )).firstWhere((p) => p.setCode == 'MRD-EN094');
+    fakeCandidates = [const ArtCandidate(mfCard, 2)];
+    await agreeArt(mirrorForce);
     expect(state().status, ScanStatus.matched);
-    // A scan starts on "no specific set" — the camera can't read the set code.
     expect(state().printingId, isNull);
 
     controller().setPrinting(printing.id);
     await controller().confirm();
     await settle();
 
-    final scanned = (await CollectionDao(db).getEntriesForPasscode(blueEyes))
-        .where((e) => e.edition == CardEdition.unlimited);
+    final scanned = (await CollectionDao(db).getEntriesForPasscode(mirrorForce))
+        .where(
+          (e) =>
+              e.condition == CardCondition.nearMint &&
+              e.edition == CardEdition.unlimited &&
+              e.printingId == printing.id,
+        );
     expect(scanned, hasLength(1));
     expect(scanned.first.printingId, printing.id);
     // And the next card starts from "no specific set" again.
     expect(state().printingId, isNull);
+  });
+
+  group('the sole printing is picked for you', () {
+    test('a card with exactly one known printing arrives with it selected',
+        () async {
+      final printing = (await PrintingDao(db).getForPasscode(blueEyes)).single;
+      fakeCandidates = [const ArtCandidate(beCard, 2)];
+      await agreeArt(blueEyes);
+
+      expect(state().status, ScanStatus.matched);
+      expect(state().printingId, printing.id);
+    });
+
+    test('and confirm writes it, so a scan no longer lands with no set at all',
+        () async {
+      final printing = (await PrintingDao(db).getForPasscode(blueEyes)).single;
+      fakeCandidates = [const ArtCandidate(beCard, 2)];
+      await agreeArt(blueEyes);
+      await controller().confirm();
+      await settle();
+
+      final scanned = (await CollectionDao(db).getEntriesForPasscode(blueEyes))
+          .where((e) => e.edition == CardEdition.unlimited);
+      expect(scanned, hasLength(1));
+      expect(scanned.first.printingId, printing.id);
+      // Cleared again, or it leaks onto whatever is logged next.
+      expect(state().printingId, isNull);
+    });
+
+    test('a reprinted card is left to the user — several sets, one card',
+        () async {
+      fakeCandidates = [const ArtCandidate(mfCard, 2)];
+      await agreeArt(mirrorForce);
+
+      expect(state().status, ScanStatus.matched);
+      expect(state().printingId, isNull);
+    });
+
+    test('a card with no known printings is unaffected', () async {
+      fakeCandidates = [const ArtCandidate(dmCard, 2)];
+      await agreeArt(darkMagician);
+
+      expect(state().status, ScanStatus.matched);
+      expect(state().printingId, isNull);
+    });
+
+    test('picking a candidate swaps in that card\'s own sole printing',
+        () async {
+      final printing = (await PrintingDao(db).getForPasscode(blueEyes)).single;
+      fakeCandidates = [
+        const ArtCandidate(dmCard, 2),
+        const ArtCandidate(beCard, 4),
+      ];
+      await agreeArt(darkMagician);
+      expect(state().printingId, isNull, reason: 'Dark Magician has none');
+
+      controller().showCandidates();
+      await controller().selectCandidate(beCard);
+      await settle();
+
+      expect(state().matchedCard?.passcode, blueEyes);
+      expect(state().printingId, printing.id);
+    });
+
+    test('the passcode-OCR path preselects it too', () async {
+      final printing = (await PrintingDao(db).getForPasscode(blueEyes)).single;
+      controller().requestPasscodeRead();
+      for (var i = 0; i < ScanTuning.agreementFrames; i++) {
+        await feedOcr(blueEyes);
+      }
+      await settle();
+
+      expect(state().status, ScanStatus.matched);
+      expect(state().printingId, printing.id);
+    });
   });
 
   test('setLanguage before confirm overrides the settings default', () async {
@@ -798,8 +891,10 @@ void main() {
     await controller().confirm();
     await settle();
 
+    // Keyed on the language, not on a null printing: Blue-Eyes has exactly one
+    // known printing, so a scan now arrives with that set already selected.
     final scanned = (await CollectionDao(db).getEntriesForPasscode(blueEyes))
-        .where((e) => e.printingId == null);
+        .where((e) => e.language == 'IT');
     expect(scanned, hasLength(1));
     expect(scanned.first.language, 'IT');
   });

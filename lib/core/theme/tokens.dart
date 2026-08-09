@@ -268,6 +268,12 @@ class CollectionGridTokens {
 
   static const double nameFontSize = 11;
 
+  /// Ink size for the badges overlaid on a cell's artwork — the grade chip and
+  /// the `xN` count. Smaller than [ConditionChipTokens.fontSize], which is
+  /// sized for a full-width row: an 84pt `minifyFull` cell has to carry the
+  /// grade and the language flag side by side along one edge.
+  static const double badgeFontSize = 10;
+
   /// The multi-select check over a cell's artwork, and the outline of a selected
   /// cell. Both are needed in `minifyFull`, where the cell has no text at all
   /// and a corner badge alone is thin evidence that a card scrolled two rows up

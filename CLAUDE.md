@@ -1734,6 +1734,88 @@ order):
     uncalibrated on device. The readout being fully legible for the first time is
     what makes calibrating them possible.
 
+22. Ninth on-device feedback pass — grade on minified cells, sole-printing
+    auto-select, square launcher icons ← done (verified: `flutter analyze`
+    clean, full `flutter test` green at **535 tests**, `pytest tools/` green).
+    **No DB migration, no schema change, no new dependency.** Nothing here
+    touches the descriptor, `assets/card_hashes.json`, the detection algorithm
+    or any scan/quality threshold.
+    **The grade is on minified cells now.** `CollectionGridTile` carried
+    artwork, a quantity badge, a language flag and a selection check — but no
+    condition, which is exactly what step 12 moved to the *front* of the
+    standard row on the grounds that it is what the eye scans for across
+    duplicates. Both grid modes now render it beside the flag along the bottom
+    edge, grade first, in the identical shape and colours as the row's chip
+    (`ConditionChipColors` fill, `ConditionChipTokens` padding/radius) — a grade
+    that reads differently in the two views is a grade the eye has to re-learn
+    on every switch. It is the one badge with **no scrim**: an opaque colour
+    fill is already legible on any artwork, and that is the same reason its
+    fixed dark ink is right in both themes.
+    Two consequences worth keeping. New `CollectionGridTokens.badgeFontSize`
+    (10) for the grade and the count — `ConditionChipTokens.fontSize` is 12,
+    sized for a full-width row, and `minifyFull`'s cell is 84pt wide. And the
+    **quantity badge moved to the top-right**: three overlays along one edge
+    collide at that width once the count reaches two digits. It stays in the
+    corner opposite the selection check, which is the invariant that comment
+    was protecting; the regression test sizes a cell to the real
+    `artworkOnlyExtent` and asserts non-overlap at `x12`, and was **verified to
+    fail** against the bottom-right original.
+    **A card with exactly one known printing now arrives with that set already
+    picked**, in both logging flows. Zero printings was already special-cased
+    everywhere (the wizard skips its step, `_SetPicker` hides itself); one is
+    the same situation with the answer known, and leaving it to a tap meant
+    scans silently landed with no set at all when there was only one they could
+    have come from. Several printings stays the user's call — the camera cannot
+    tell which reprint is in hand.
+    Scan side: one private `ScanController._solePrintingId(passcode)`, reusing
+    `cardPrintingsProvider` rather than the DAO (which also warms the cache
+    `_SetPicker` reads a frame later), called by **all three** paths that open
+    the review gate — `_resolveArtMatch`, `_lookup`, `selectCandidate` — so the
+    rule has one home. It swallows its own failures: a preselection is a
+    convenience and must not cost a match that is already resolved. Each caller
+    passes `printingId:`/`clearPrintingId: id == null` in place of the old
+    unconditional `clearPrintingId: true`; `confirm`/`dismiss` still clear, so a
+    pick cannot leak onto the next card.
+    Two structural notes, both about the new await. `selectCandidate` became
+    `Future<void>` (its only caller is an `onTap`), and re-checks `status`
+    afterwards. And `_lookup`'s `_setPaused(paused: true)` **moved below every
+    await and behind the last guard** — taking the pause before an await and
+    then returning early on a status change is precisely the step-21 leak, and
+    `ScanPaused` outliving the controller means a leaked pause kills recognition
+    until relaunch.
+    Wizard side: `AddCardSelectionController.selectCard` gains the third branch
+    (`sole != null` → condition step with it preselected). No screen change was
+    needed — `_ConditionStep` already prints the set under the card name and
+    `AddCardScreen`'s back button already routes to `backToPrinting()` whenever
+    `printings` is non-empty, so the auto-pick is visible and reversible,
+    Skip included.
+    **Test gotchas, both from the fixture's shape**: Blue-Eyes is the seed's
+    only single-printing card, so two existing tests were written against it
+    *assuming* a null printing — one asserted `printingId` was null at the
+    review gate (moved to Mirror Force, which has two printings and is where a
+    manual pick is the real subject), and one filtered saved rows by
+    `printingId == null` (now keyed on the language it was actually testing).
+    And Mirror Force's two seeded entries are both Unlimited, so filtering a
+    saved row by edition alone matches both — the assertion keys on the chosen
+    `printingId` and a condition the seed does not use for it.
+    **Launcher icons**: the new source art was 2360x1640 — landscape, so
+    `flutter_launcher_icons` would have *stretched* it to square, with the
+    opaque icon's transparent surround flattening to a white border under
+    `remove_alpha_ios: true`. `tools/normalize_icon.py` trims each input to its
+    own content box and emits the two 1024x1024 PNGs the config expects,
+    treating them differently because they are different things: the legacy/iOS
+    icon is padded to square with the palette background and flattened opaque;
+    the adaptive foreground stays transparent and is scaled into the central
+    66% safe zone, since the launcher mask crops the rest. Originals are kept in
+    `assets/icon/past_icons/`.
+    **Deliberately not built**: a first-launch "import an existing CSV?" prompt
+    was planned and then dropped by the user mid-implementation. Import stays
+    where it is, on the Statistics screen beside the export.
+    **Still open**, unchanged: `maxHammingDistance` at 72,
+    `CardDetectionTuning.innerQuadMinAreaRatio` at 0.78, the passcode ROI filter
+    off, `artAgreementFrames` at 2, and every `FrameQualityTuning` threshold
+    still uncalibrated on device.
+
 ## Standing rules
 
 - No ORM. Raw SQL in DAOs only. No SQL outside `lib/data/db/`.

@@ -85,6 +85,54 @@ void main() {
     });
   });
 
+  testWidgets('selecting a card with one printing skips the step with that '
+      'printing already picked', (tester) async {
+    await tester.runAsync(() async {
+      await openAddCard(tester);
+      // Blue-Eyes has exactly one seeded printing, so the step would offer a
+      // one-row list and a Skip button — a decision with a single answer.
+      await search(tester, 'Blue-Eyes');
+      await tapSearchResult(tester, 'Blue-Eyes White Dragon');
+
+      expect(find.text(AppStrings.addCardSaveButton), findsOneWidget);
+      // The set is shown, not silently applied.
+      expect(find.text('LOB-EN001'), findsOneWidget);
+      expect(find.text(AppStrings.addCardNoPrintingLabel), findsNothing);
+    });
+  });
+
+  testWidgets('that auto-pick is written, and back still reaches the step', (
+    tester,
+  ) async {
+    await tester.runAsync(() async {
+      final lobPrinting = (await PrintingDao(
+        testDb,
+      ).getForPasscode('89631139')).single;
+
+      await openAddCard(tester);
+      await search(tester, 'Blue-Eyes');
+      await tapSearchResult(tester, 'Blue-Eyes White Dragon');
+
+      // The escape hatch: the printing step is one tap away, Skip included.
+      await tester.tap(find.byTooltip(AppStrings.addCardBackTooltip));
+      await pumpUntilSettled(tester);
+      expect(find.text(AppStrings.addCardPrintingSkip), findsOneWidget);
+
+      await tester.tap(find.text('LOB-EN001'));
+      await pumpUntilSettled(tester);
+      await tester.tap(find.text(AppStrings.addCardSaveButton));
+      await pumpUntilSettled(tester);
+
+      // Seeded Blue-Eyes is 1st Edition; the wizard defaults to Unlimited.
+      final entries = await CollectionDao(
+        testDb,
+      ).getEntriesForPasscode('89631139');
+      final saved = entries.where((e) => e.edition == CardEdition.unlimited);
+      expect(saved, hasLength(1));
+      expect(saved.first.printingId, lobPrinting.id);
+    });
+  });
+
   testWidgets('saving with a chosen printing writes the right printing_id', (
     tester,
   ) async {

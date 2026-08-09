@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:ygo_scanner/core/theme/tokens.dart';
 import 'package:ygo_scanner/features/collection/collection_grid_tile.dart';
 import 'package:ygo_scanner/features/collection/collection_list_tile.dart';
 import 'package:ygo_scanner/models/card_condition.dart';
@@ -20,12 +21,17 @@ const _card = YgoCard(
   localImagePath: 'no-such-file.jpg',
 );
 
-CollectionEntryWithCard _entry(String language) => CollectionEntryWithCard(
+CollectionEntryWithCard _entry(
+  String language, {
+  CardCondition condition = CardCondition.nearMint,
+  int quantity = 1,
+}) => CollectionEntryWithCard(
   entry: CollectionEntry(
     id: 1,
     passcode: _card.passcode,
-    condition: CardCondition.nearMint,
+    condition: condition,
     language: language,
+    quantity: quantity,
     createdAt: 1,
     updatedAt: 1,
   ),
@@ -49,13 +55,17 @@ void main() {
     onDelete: () {},
   );
 
-  Widget gridTile(String language, {required bool showName}) =>
-      CollectionGridTile(
-        entryWithCard: _entry(language),
-        showName: showName,
-        onTap: () {},
-        onLongPress: () {},
-      );
+  Widget gridTile(
+    String language, {
+    required bool showName,
+    CardCondition condition = CardCondition.nearMint,
+    int quantity = 1,
+  }) => CollectionGridTile(
+    entryWithCard: _entry(language, condition: condition, quantity: quantity),
+    showName: showName,
+    onTap: () {},
+    onLongPress: () {},
+  );
 
   group('the standard row', () {
     testWidgets('flags the entry language', (tester) async {
@@ -140,6 +150,67 @@ void main() {
 
       expect(flag.left - cell.left, lessThan(cell.width / 2));
       expect(cell.bottom - flag.bottom, lessThan(cell.height / 2));
+    });
+
+    testWidgets('artwork + name cells carry the grade', (tester) async {
+      await pumpTile(
+        tester,
+        gridTile('EN', showName: true, condition: CardCondition.lightPlayed),
+      );
+
+      expect(find.text(CardCondition.lightPlayed.shortCode), findsOneWidget);
+    });
+
+    testWidgets('artwork-only cells carry it too — the mode with nothing '
+        'else to say what grade a copy is', (tester) async {
+      await pumpTile(
+        tester,
+        gridTile('EN', showName: false, condition: CardCondition.poor),
+      );
+
+      expect(find.text(CardCondition.poor.shortCode), findsOneWidget);
+    });
+
+    testWidgets('the grade leads the flag, as it leads the standard row', (
+      tester,
+    ) async {
+      await pumpTile(tester, gridTile('FR', showName: false));
+
+      final grade = tester.getRect(
+        find.text(CardCondition.nearMint.shortCode),
+      );
+      final flag = tester.getRect(find.byType(LanguageFlag));
+
+      // Beside, not stacked — a cell has width to spare and no height to.
+      expect(grade.right, lessThanOrEqualTo(flag.left));
+      expect(grade.center.dy, closeTo(flag.center.dy, 2));
+    });
+
+    testWidgets('a two-digit count clears the bottom badges, which is why it '
+        'moved to the top edge', (tester) async {
+      // The densest case: `minifyFull`'s narrow cell, the widest badge row and
+      // the widest count. Sized to the real `artworkOnlyExtent`, since the
+      // whole question is whether they fit across it.
+      await pumpTile(
+        tester,
+        SizedBox(
+          width: CollectionGridTokens.artworkOnlyExtent,
+          child: AspectRatio(
+            aspectRatio: ScanReticleTokens.cardAspectRatio,
+            child: gridTile('FR', showName: false, quantity: 12),
+          ),
+        ),
+      );
+
+      final grade = tester.getRect(
+        find.text(CardCondition.nearMint.shortCode),
+      );
+      final flag = tester.getRect(find.byType(LanguageFlag));
+      final count = tester.getRect(find.text('x12'));
+
+      expect(count.overlaps(grade), isFalse);
+      expect(count.overlaps(flag), isFalse);
+      expect(count.bottom, lessThanOrEqualTo(grade.top));
     });
   });
 }

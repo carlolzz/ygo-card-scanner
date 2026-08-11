@@ -1816,6 +1816,138 @@ order):
     off, `artAgreementFrames` at 2, and every `FrameQualityTuning` threshold
     still uncalibrated on device.
 
+23. Tenth on-device feedback pass — collapsible filter rows, camera readiness,
+    default rarity, fast-browse slider ← done (verified: `flutter analyze`
+    clean, full `flutter test` green at **598 tests**, `pytest tools/` green).
+    **No DB migration, no schema change, no new dependency.** Nothing here
+    touches the descriptor, `assets/card_hashes.json`, the detection algorithm
+    or any scan/matching/quality threshold.
+    **Long filter rows collapse behind a chip.** Card type, monster/spell/trap
+    type and archetype render one chip per distinct value held, which on a real
+    collection is a wall read one chip at a time. All of them — plus level,
+    frame, attribute, condition, edition and language — already went through the
+    single `_ChipRow<T>`, so the fix landed in one place and every row inherited
+    it; condition (7) and edition (3) sit under
+    `CollectionFilterTokens.chipCollapseThreshold` (10) by construction and are
+    untouched. The rule is the pure, host-tested `visibleFilterChoices` in
+    `lib/features/collection/filter_chip_collapse.dart`. It takes an
+    **`isSelected` predicate rather than a `T?`**, which is what lets `_RarityRow`
+    share it: that row's values are `List<String?>` where null is the meaningful
+    "no rarity" option while its selection is a `RarityFilter?`. **Keeping the
+    selected chip visible past the cut is the load-bearing part** — a collapsed
+    row hiding the active filter reads as an unset filter while the filter bar's
+    badge still counts it — and it is appended rather than substituted for a head
+    value, so the collapsed order still agrees with the expanded one. **Verified
+    to fail** with that branch removed. The control is an `ActionChip` inside the
+    same `Wrap` (a button below the row would look like it acted on the sheet),
+    and the count is measured against `values`, not the prepended "All".
+    **The scan banner says whether the camera is up.** With diagnostics off the
+    screen drew a dark scrim while the banner already read "Point at a card" —
+    advice about a camera that was not streaming yet — and the only readiness
+    signal in the app was the developer-only `cam: opening…` line. `_StatusBanner`
+    now carries `AppStrings.scanCameraOpening`/`scanCameraAvailable`. **No ticker
+    is needed**, unlike `_DiagnosticsBox`: `CameraService.preview` is a
+    `ValueListenable` and the controller is itself a `Listenable`, so readiness
+    pushes — the same pair `_CameraLayer` subscribes to, for the same reason
+    (sampling a getter latches the opening state forever). While opening, the
+    line **replaces** the hint and takes the existing busy spinner; once up it
+    sits above it, muted and a size down, so the answer stays on screen. Shown
+    **only when diagnostics is off** — the overlay's `describeCameraHealth` line
+    is richer and step 21 spent the entire band above the reticle getting that
+    readout to fit. A released camera also reads as "opening", which is correct:
+    the reticle is only drawn while the camera is meant to be live.
+    **Gotcha**: the geometry test asserting the banner sits inside the guide box
+    was matching on `AppStrings.scanDetecting`, so it broke the moment the label
+    became camera-dependent. It now uses a new `scanStatusBannerKey`, following
+    `scanReticleKey` — the assertion is about *where* the banner is, and coupling
+    it to *what it says* was always incidental.
+    **Default rarity, and it only ever picks a set the card actually has.**
+    `AppSettings.defaultRarity` is a **`String?`** in the existing `meta` table
+    (`settings.default_rarity`), no migration. Not an enum, unlike condition and
+    edition: rarity is free-form text straight from YGOPRODeck's `set_rarity` and
+    runs to roughly ninety open-ended values. `MetaDao` has no delete, so "no
+    preference" persists as `''` and `_parseOptionalText` reads it — and a
+    hand-edited `'   '` — back as null.
+    Options come from a new `PrintingDao.distinctRarities()` (repo passthrough,
+    `cardRaritiesProvider` beside `cardPrintings`), deliberately **not** a
+    `kCardLanguages`-style const list: there are nine language blocks but ninety
+    rarities, and a constant off by a word ("Secret" for "Secret Rare") would make
+    the preference silently never fire. Equally not
+    `CollectionDao.rarityFilterOptions()`, which is scoped to rarities already
+    owned — this is a default for cards *not yet logged*. The Settings control is
+    the existing `SearchableTextPicker`, since ninety chips is the very problem
+    the filter-sheet collapse above exists to fix.
+    The decision is one pure `preferredPrinting` in `lib/models/printing.dart`,
+    which **de-duplicates** the sole-printing rule both flows already carried
+    separately (`_solePrintingId`, now `_preferredPrintingId`, and
+    `selectCard`'s local). Order: no printings → null; **exactly one → that one,
+    whatever the preference says** (step 22 unchanged — the card came from
+    somewhere); several with exactly one matching the rarity → that one;
+    otherwise null. The last case is the user's own requirement — a card printed
+    only in Ultra and Secret Rare gets nothing when the preference is Common —
+    and two *matching* printings also yields null, because several is genuinely
+    the user's call and picking one would silently log the wrong set half the
+    time. Matching is case- and space-insensitive, since the stored value is free
+    text. `_settings` is already `ref.read` at controller build, so no new
+    plumbing.
+    **Test gotchas**: the fourth control pushed Appearance below the fold in the
+    600pt viewport and the theme test's tap started missing. The `ListView` is
+    **lazy**, so `ensureVisible` alone fails with "No element" — the widget is not
+    built at all. `scrollToDatabaseSection` was generalized to a `scrollTo` that
+    does `dragUntilVisible` (to build it) *then* `ensureVisible` (because
+    `dragUntilVisible` stops as soon as the target is built, which can still be
+    under the bottom edge — the step-12 trap). And a synthetic `CameraController`
+    for the readiness test needs `previewSize` set, not just `isInitialized`:
+    `CameraValue.aspectRatio` null-checks it and both `_FullBleedPreview` and
+    `_DetectionOutline` read it the moment a controller appears.
+    **Fast-browse slider**, in `lib/features/collection/collection_scroll_slider
+    .dart` with its arithmetic split into `..._math.dart` (host-tested, per
+    `card_quad.dart`'s reasoning: a wrong constant here does not crash, it puts
+    the thumb somewhere plausible and slightly wrong). **The gutter is its own
+    column on the right, never an overlay** (decided with the user): `minifyFull`
+    cells are 84pt wide and already carry a quantity badge in one top corner and
+    a selection check in the other. This is the app's **first `ScrollController`
+    and first scrollbar of any kind**.
+    Three things are load-bearing. **The widget takes a `builder`, not a child**,
+    so the scroll view lives inside its subtree and switching view modes rebuilds
+    only what is under the builder while the `State` — and the controller —
+    survives. **Metrics come from `ScrollMetricsNotification` +
+    `ScrollNotification`, never from `_controller.position`**: `maxScrollExtent`
+    asserts `hasContentDimensions`, so reading it before the first layout throws
+    in debug, which is exactly when the thumb wants to paint. They land in a
+    `ValueNotifier` read only inside the gutter, so a scroll never rebuilds the
+    list. **Gutter reservation is a function of `itemCount` alone**
+    (`collectionSliderReservesGutter`, threshold
+    `CollectionScrollSliderTokens.minItems` = 30): the gutter narrows the grid's
+    cross axis, which changes the column count, which changes the scroll extent,
+    so a layout-derived predicate would feed back into its own input.
+    `collectionSliderIsScrollable` is the separate, layout-dependent gate on what
+    is *painted* inside an already-reserved gutter, which starts no loop.
+    A list and a grid are different widget types, so a mode switch remounts the
+    scrollable at offset 0. Pixels are meaningless across that change (110pt rows
+    against grid rows of another height and column count), so `didUpdateWidget`
+    carries the **fraction** and reapplies it from the first metrics notification
+    — **verified to fail** (offset 0) with the restore disabled. The bubble names
+    the position under the active sort via `collectionScrollLabel`, whose every
+    branch reads the same field the DAO orders by, so it cannot disagree with the
+    ordering it describes; `sliderIndexForFraction` is deliberately linear rather
+    than trying to name the top *visible* row, which would need the grid delegate's
+    maths re-implemented and is wrong at the bottom end anyway.
+    **Gotchas**: `Positioned` must be a direct child of `Stack`, so the bubble's
+    `LayoutBuilder` needed its own `Stack` rather than positioning into the
+    slider's outer one; the bubble is wrapped in `IgnorePointer` since it overlays
+    the cards; the `ScrollController` is assigned in `initState`, not a
+    `late final` (step 13's dispose-time-initializer trap, twice over); and the
+    slider is tested **directly over a synthetic list**, not through the
+    collection screen, because that screen resolves providers through the sqflite
+    isolate and so must run inside `runAsync`, where gesture timing is unreliable.
+    Existing collection tests are untouched by construction — the fixture seed is
+    far under `minItems`, so no gutter is reserved and no padding changes.
+    **Still open**, unchanged: `maxHammingDistance` at 72,
+    `CardDetectionTuning.innerQuadMinAreaRatio` at 0.78, the passcode ROI filter
+    off, `artAgreementFrames` at 2, and every `FrameQualityTuning` threshold
+    still uncalibrated on device.
+
 ## Standing rules
 
 - No ORM. Raw SQL in DAOs only. No SQL outside `lib/data/db/`.

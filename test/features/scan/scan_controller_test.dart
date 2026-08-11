@@ -964,6 +964,77 @@ void main() {
     });
   });
 
+  // A default rarity only ever selects among the printings a card actually has
+  // — see `preferredPrinting`, where the rule itself is tested. These pin that
+  // the scan review gate reads the setting at all, and that the "no matching
+  // printing" case reaches the user as an unmade choice rather than a wrong one.
+  //
+  // Mirror Force is the fixture with two printings: Metal Raiders (Super Rare)
+  // and Dark Saviors (Ultra Rare).
+  group('default rarity', () {
+    Future<ProviderContainer> withDefaultRarity(String? rarity) async {
+      await SettingsRepository(MetaDao(db)).save(AppSettings(defaultRarity: rarity));
+      final configured = ProviderContainer(
+        overrides: [
+          appDatabaseProvider.overrideWith((ref) async => db),
+          artReadingsProvider.overrideWith((ref) => artReadings.stream),
+          passcodeReadingsProvider.overrideWith((ref) => readings.stream),
+          artMatcherProvider.overrideWith(
+            (ref) async => _FakeArtMatcher(const [ArtCandidate(mfCard, 2)]),
+          ),
+        ],
+      );
+      addTearDown(configured.dispose);
+      await configured.read(settingsControllerProvider.future);
+      configured.listen(scanControllerProvider, (previous, next) {});
+      await settle();
+
+      for (var i = 0; i < ScanTuning.artAgreementFrames; i++) {
+        artReadings.add(ArtReading(artSeq++, const HashMatch(mirrorForce, 2)));
+        await settle();
+      }
+      await settle();
+      return configured;
+    }
+
+    test('a reprinted card arrives on the printing of the preferred rarity',
+        () async {
+      final printings = await PrintingDao(db).getForPasscode(mirrorForce);
+      final ultra = printings.singleWhere((p) => p.rarity == 'Ultra Rare');
+
+      final configured = await withDefaultRarity('Ultra Rare');
+      final s = configured.read(scanControllerProvider);
+
+      expect(s.status, ScanStatus.matched);
+      expect(
+        s.printingId,
+        ultra.id,
+        reason: 'without a preference this card is left to the user, so this '
+            'is the setting doing the work',
+      );
+    });
+
+    // The user's own case: a preference for a rarity the card was never printed
+    // in leaves the choice alone rather than picking something arbitrary.
+    test('a rarity the card has no printing of leaves the pick to the user',
+        () async {
+      final configured = await withDefaultRarity('Common');
+      final s = configured.read(scanControllerProvider);
+
+      expect(s.status, ScanStatus.matched);
+      expect(s.printingId, isNull);
+    });
+
+    test('no preference is still no preselection on a reprinted card',
+        () async {
+      final configured = await withDefaultRarity(null);
+      final s = configured.read(scanControllerProvider);
+
+      expect(s.status, ScanStatus.matched);
+      expect(s.printingId, isNull);
+    });
+  });
+
   // Half of the "declining a card kills scanning" fix. [ScanPaused] is
   // `keepAlive` and this controller is its only writer, so a resolution that
   // exits without releasing the pause does not cost one frame — it stops

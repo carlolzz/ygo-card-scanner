@@ -22,6 +22,41 @@ class AppStrings {
   // (including cards logged without a printing at all) — otherwise that group
   // would only ever be reachable under "All".
   static const String collectionFilterNoRarity = 'No rarity';
+
+  /// The chip that expands a filter row collapsed past
+  /// `CollectionFilterTokens.chipCollapseThreshold`. Carries the total so the
+  /// user knows whether it is worth opening — "Show all (12)" and
+  /// "Show all (240)" are different decisions.
+  static String collectionFilterShowAll(int total) => 'Show all ($total)';
+  static const String collectionFilterShowLess = 'Show less';
+
+  // The fast-browse slider's bubble, which names where a drag has reached under
+  // whichever sort is active.
+  static const String collectionScrollSliderLabel = 'Scroll quickly';
+
+  /// Cards whose name starts with a digit or punctuation — "7 Colored Fish",
+  /// "8-Claws Scorpion" — which are common enough to need a bucket of their own.
+  static const String collectionScrollLabelOther = '#';
+  static const String collectionScrollLabelMonsters = 'Monsters';
+  static const String collectionScrollLabelSpells = 'Spells';
+  static const String collectionScrollLabelTraps = 'Traps';
+
+  /// Month names for the date-added bubble. Hand-written because `intl` is not
+  /// in the approved stack and one label does not justify adding it.
+  static const List<String> monthAbbreviations = [
+    'Jan',
+    'Feb',
+    'Mar',
+    'Apr',
+    'May',
+    'Jun',
+    'Jul',
+    'Aug',
+    'Sep',
+    'Oct',
+    'Nov',
+    'Dec',
+  ];
   static const String collectionSortByName = 'Name';
   static const String collectionSortByDateAdded = 'Date added';
   static const String collectionSortByQuantity = 'Quantity';
@@ -144,6 +179,14 @@ class AppStrings {
 
   static const String scanDetecting = 'Point at a card';
   static const String scanReading = 'Identifying…';
+
+  // Whether the camera is actually up. Until it is, the banner said "Point at a
+  // card" over a plain dark scrim — the app claiming to be looking while nothing
+  // was streaming yet, with no way to tell a slow start from a broken one. The
+  // richer `cam: streaming f=124` line exists only inside the diagnostics
+  // overlay, so with diagnostics off there was no signal at all.
+  static const String scanCameraOpening = 'Camera: opening…';
+  static const String scanCameraAvailable = 'Camera: available';
 
   // The status banner used to say `scanDetecting` for every unresolved frame,
   // including ones where the card had been found, rectified and hashed and only
@@ -268,11 +311,19 @@ class AppStrings {
   static const String settingsTitle = 'Settings';
   static const String settingsDefaultsSection = 'Defaults for new cards';
   static const String settingsDefaultsDescription =
-      'Pre-selected when you scan or add a card. Language can still be changed '
-      'per card as you log it.';
+      'Pre-selected when you scan or add a card. Language and grade can still '
+      'be changed per card as you log it.';
   static const String settingsConditionLabel = 'Condition';
   static const String settingsEditionLabel = 'Edition';
   static const String settingsLanguageLabel = 'Language';
+
+  static const String settingsRarityLabel = 'Rarity';
+
+  /// The null option. Named "no preference" rather than "any" because this
+  /// setting does not filter anything — it only picks a set for you when a card
+  /// has exactly one printing of that rarity.
+  static const String settingsRarityAny = 'No preference';
+  static const String settingsRarityHint = 'Pick a set of this rarity for me';
   static const String settingsAppearanceSection = 'Appearance';
   static const String settingsThemeLabel = 'Theme';
   static const String settingsCollectionSection = 'Collection';

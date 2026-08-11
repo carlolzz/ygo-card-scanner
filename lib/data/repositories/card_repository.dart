@@ -62,6 +62,10 @@ class CardRepository {
   Future<List<Printing>> getPrintingsForPasscode(String passcode) =>
       _printingDao.getForPasscode(passcode);
 
+  /// Every rarity the synced database knows, for the Settings default-rarity
+  /// picker. The whole universe from the sync, not just what the user owns.
+  Future<List<String>> distinctRarities() => _printingDao.distinctRarities();
+
   /// Downloads [passcode]'s art to local storage the first time it's
   /// needed, and never again — subsequent calls no-op once a local file
   /// exists. Never throws: a network/disk failure here must not surface

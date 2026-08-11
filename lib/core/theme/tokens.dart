@@ -282,6 +282,62 @@ class CollectionGridTokens {
   static const double selectedBorderWidth = 2;
 }
 
+/// The fast-browse slider's gutter down the right of the collection.
+class CollectionScrollSliderTokens {
+  const CollectionScrollSliderTokens._();
+
+  /// Below this many entries the gutter reserves no width at all.
+  ///
+  /// Compared against the *item count*, never a measured extent: the gutter
+  /// narrows the grid's cross axis, which changes the column count, which
+  /// changes the scroll extent — a layout-derived threshold would feed back
+  /// into its own input. See `collectionSliderReservesGutter`.
+  ///
+  /// 30 clears a screenful in every view mode (a 600pt viewport holds about
+  /// five standard rows and about twenty `minifyFull` cells), so the gutter only
+  /// appears once paging has actually become tedious.
+  static const int minItems = 30;
+
+  /// Reserved column width, taken out of the cards' own space.
+  ///
+  /// Deliberately below [AppTapTarget.minSize]: this is a drag target along its
+  /// long axis, backed against the screen edge where the thumb is easy to find,
+  /// not a tap target that has to be hit precisely.
+  static const double gutterWidth = 24;
+
+  static const double railWidth = 4;
+  static const double thumbWidth = 12;
+  static const double minThumbExtent = 40;
+
+  /// Top and bottom inset, so the thumb never sits against the list's own
+  /// vertical padding.
+  static const double trackInset = AppSpacing.sm;
+
+  static const double labelGap = AppSpacing.sm;
+  static const double labelMinWidth = 56;
+  static const double labelFontSize = 20;
+  static const double labelHorizontalPadding = AppSpacing.md;
+  static const double labelVerticalPadding = AppSpacing.sm;
+
+  /// The bubble's fade. Finite so `pumpAndSettle` terminates.
+  static const Duration labelFade = Duration(milliseconds: 120);
+}
+
+/// Geometry of the collection filter sheet.
+class CollectionFilterTokens {
+  const CollectionFilterTokens._();
+
+  /// How many chips a filter row shows before collapsing the rest behind a
+  /// button. Archetype, card type and the monster/spell/trap type are unbounded
+  /// in practice — one chip per distinct value held — and a real collection
+  /// turns those rows into a wall of chips that has to be read one at a time.
+  ///
+  /// Condition (7) and edition (3) sit under this by construction, so they are
+  /// never collapsed and the rows that do collapse are exactly the ones that
+  /// grow with the collection.
+  static const int chipCollapseThreshold = 10;
+}
+
 class PrintingPickerTokens {
   const PrintingPickerTokens._();
 
@@ -472,6 +528,20 @@ class ScanHelpTokens {
   static const double titleFontSize = 13;
   static const double lineFontSize = 12;
   static const double iconSize = 16;
+}
+
+/// The status banner inside the guide box.
+class ScanStatusBannerTokens {
+  const ScanStatusBannerTokens._();
+
+  /// The camera-readiness line above the hint. A step down from the hint's own
+  /// body size: it answers a question the user asks once ("is the camera up?"),
+  /// while the line below it changes every few frames and is what they read.
+  static const double cameraLineFontSize = 11;
+
+  /// The busy spinner beside the hint.
+  static const double spinnerSize = 16;
+  static const double spinnerStrokeWidth = 2;
 }
 
 /// How the on-screen guide box relates to the region the detector searches.

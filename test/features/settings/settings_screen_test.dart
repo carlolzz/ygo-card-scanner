@@ -16,6 +16,9 @@ import 'package:ygo_scanner/models/app_settings.dart';
 import 'package:ygo_scanner/models/app_theme_mode.dart';
 import 'package:ygo_scanner/models/card_condition.dart';
 import 'package:ygo_scanner/models/card_edition.dart';
+import 'package:ygo_scanner/models/printing.dart';
+import 'package:ygo_scanner/models/ygo_card.dart';
+import 'package:ygo_scanner/shared/widgets/searchable_text_picker.dart';
 
 import '../../data/db/test_db.dart';
 import '../../support/widget_test_harness.dart';
@@ -76,16 +79,28 @@ void main() {
     await pumpUntilSettled(tester);
   }
 
-  /// The card-database section is the last thing in the list and sits below
-  /// the fold in the default test viewport.
-  Future<void> scrollToDatabaseSection(WidgetTester tester) async {
+  /// Scrolls [target] into view and all the way onto the screen.
+  ///
+  /// Both steps are needed. The `ListView` is lazy, so a widget below the fold
+  /// has no element at all and finders simply miss it — hence `dragUntilVisible`
+  /// first. But that stops as soon as the target is *built*, which can still
+  /// leave it under the bottom edge where a tap misses, so `ensureVisible`
+  /// finishes the job.
+  Future<void> scrollTo(WidgetTester tester, Finder target) async {
     await tester.dragUntilVisible(
-      find.text(AppStrings.settingsResyncButton),
+      target,
       find.byType(ListView),
       const Offset(0, -100),
     );
     await pumpUntilSettled(tester);
+    await tester.ensureVisible(target);
+    await pumpUntilSettled(tester);
   }
+
+  /// The card-database section is the last thing in the list and sits below
+  /// the fold in the default test viewport.
+  Future<void> scrollToDatabaseSection(WidgetTester tester) =>
+      scrollTo(tester, find.text(AppStrings.settingsResyncButton));
 
   testWidgets('renders the stored defaults as the selected options', (
     tester,
@@ -150,9 +165,15 @@ void main() {
     await tester.runAsync(() async {
       await openSettings(tester);
 
-      await tester.tap(
-        find.widgetWithText(ChoiceChip, AppThemeMode.light.label),
+      // Appearance dropped below the fold in the 600pt test viewport when the
+      // defaults section gained a fourth control — the same trap
+      // `scrollToDatabaseSection` exists for, one section up.
+      final lightChip = find.widgetWithText(
+        ChoiceChip,
+        AppThemeMode.light.label,
       );
+      await scrollTo(tester, lightChip);
+      await tester.tap(lightChip);
       await pumpUntilSettled(tester);
 
       expect(
@@ -286,6 +307,70 @@ void main() {
       );
       expect(chip.selected, isTrue);
       expect(const AppSettings().defaultCondition, isNot(CardCondition.mint));
+    });
+  });
+
+  group('default rarity', () {
+    /// Rarities come from the synced `printings` table, not a const list —
+    /// there are roughly ninety of them and they are free-form text from
+    /// YGOPRODeck, so a hand-written constant subtly off by a word would make
+    /// the preference silently never match anything.
+    Future<void> seedRarities(List<String> rarities) async {
+      await CardDao(testDb).insertAll([
+        const YgoCard(passcode: '89631139', name: 'Blue-Eyes White Dragon'),
+      ]);
+      await PrintingDao(testDb).insertAll([
+        for (final (index, rarity) in rarities.indexed)
+          Printing(
+            passcode: '89631139',
+            setCode: 'SET-$index',
+            rarity: rarity,
+          ),
+      ]);
+    }
+
+    testWidgets('offers the synced rarities and persists a pick', (
+      tester,
+    ) async {
+      await tester.runAsync(() async {
+        await seedRarities(['Common', 'Secret Rare', 'Ultra Rare']);
+        await openSettings(tester);
+
+        final picker = find.byType(SearchableTextPicker);
+        expect(picker, findsOneWidget);
+        await tester.ensureVisible(picker);
+        await pumpUntilSettled(tester);
+
+        // Focusing clears the field into a search box, exactly like the set
+        // pickers in the logging flows.
+        await tester.tap(picker);
+        await pumpUntilSettled(tester);
+        await tester.enterText(find.byType(TextField), 'secret');
+        await pumpUntilSettled(tester);
+
+        await tester.tap(
+          find.descendant(of: picker, matching: find.text('Secret Rare')),
+        );
+        await pumpUntilSettled(tester);
+
+        expect(
+          await MetaDao(testDb).get('settings.default_rarity'),
+          'Secret Rare',
+        );
+      });
+    });
+
+    testWidgets('an unsynced database still renders, offering nothing', (
+      tester,
+    ) async {
+      await tester.runAsync(() async {
+        // A fresh install before the first sync. The picker must degrade to its
+        // "no preference" row rather than erroring or blanking the screen.
+        await openSettings(tester);
+
+        expect(find.byType(SearchableTextPicker), findsOneWidget);
+        expect(find.text(AppStrings.settingsRarityLabel), findsOneWidget);
+      });
     });
   });
 }

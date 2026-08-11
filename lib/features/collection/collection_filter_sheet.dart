@@ -10,6 +10,7 @@ import '../../models/card_language.dart';
 import '../../shared/widgets/labeled_choice_chip.dart';
 import '../../shared/widgets/searchable_text_picker.dart';
 import 'collection_providers.dart';
+import 'filter_chip_collapse.dart';
 
 /// Opens the collection filter sheet. Returns once it closes; applying is done
 /// by the sheet itself through [CollectionFilterController.apply].
@@ -356,7 +357,11 @@ class _Group extends StatelessWidget {
 
 /// "All" plus one chip per value, single-select. Tapping the selected chip
 /// clears it, so every filter can be turned off without hunting for "All".
-class _ChipRow<T> extends StatelessWidget {
+///
+/// Stateful only to remember whether the user expanded a long row — that is
+/// ephemeral view state, not part of the draft filter, so it deliberately does
+/// not survive closing the sheet.
+class _ChipRow<T> extends StatefulWidget {
   const _ChipRow({
     required this.values,
     required this.selected,
@@ -374,33 +379,91 @@ class _ChipRow<T> extends StatelessWidget {
   final ValueChanged<T?> onSelected;
 
   @override
+  State<_ChipRow<T>> createState() => _ChipRowState<T>();
+}
+
+class _ChipRowState<T> extends State<_ChipRow<T>> {
+  bool _expanded = false;
+
+  @override
   Widget build(BuildContext context) {
     final palette = AppPalette.of(context);
+    final visible = visibleFilterChoices<T>(
+      widget.values,
+      isSelected: (value) => widget.selected == value,
+      expanded: _expanded,
+    );
     return Wrap(
       spacing: AppSpacing.xs,
       runSpacing: AppSpacing.xs,
       children: [
         LabeledChoiceChip(
           label: AppStrings.collectionFilterAll,
-          selected: selected == null,
+          selected: widget.selected == null,
           selectedColor: palette.accent,
-          onSelected: () => onSelected(null),
+          onSelected: () => widget.onSelected(null),
         ),
-        for (final value in values)
+        for (final value in visible)
           LabeledChoiceChip(
-            label: labelOf(value),
-            selected: selected == value,
-            selectedColor: colorOf?.call(value) ?? palette.accent,
-            onSelected: () => onSelected(selected == value ? null : value),
+            label: widget.labelOf(value),
+            selected: widget.selected == value,
+            selectedColor: widget.colorOf?.call(value) ?? palette.accent,
+            onSelected: () =>
+                widget.onSelected(widget.selected == value ? null : value),
+          ),
+        // Measured against `values`, not the "All" chip prepended above it:
+        // "All" is not one of the choices being collapsed.
+        if (widget.values.length > CollectionFilterTokens.chipCollapseThreshold)
+          _ExpandChip(
+            expanded: _expanded,
+            total: widget.values.length,
+            onPressed: () => setState(() => _expanded = !_expanded),
           ),
       ],
     );
   }
 }
 
+/// The control that opens and closes a collapsed filter row.
+///
+/// An [ActionChip] rather than a text button so it flows inside the same [Wrap]
+/// as the chips and reads as part of the row — a button below the row looks like
+/// it acts on the whole sheet.
+class _ExpandChip extends StatelessWidget {
+  const _ExpandChip({
+    required this.expanded,
+    required this.total,
+    required this.onPressed,
+  });
+
+  final bool expanded;
+  final int total;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = AppPalette.of(context);
+    return ActionChip(
+      onPressed: onPressed,
+      backgroundColor: palette.surfaceRaised,
+      side: BorderSide(color: palette.accent),
+      avatar: Icon(
+        expanded ? Icons.expand_less : Icons.expand_more,
+        color: palette.accent,
+      ),
+      label: Text(
+        expanded
+            ? AppStrings.collectionFilterShowLess
+            : AppStrings.collectionFilterShowAll(total),
+        style: TextStyle(color: palette.accent),
+      ),
+    );
+  }
+}
+
 /// The rarity row, which needs its own widget because a null element means the
 /// distinct "no rarity" option rather than "All" — see [RarityFilter].
-class _RarityRow extends StatelessWidget {
+class _RarityRow extends StatefulWidget {
   const _RarityRow({
     required this.rarities,
     required this.selected,
@@ -412,32 +475,55 @@ class _RarityRow extends StatelessWidget {
   final ValueChanged<RarityFilter?> onSelected;
 
   @override
+  State<_RarityRow> createState() => _RarityRowState();
+}
+
+class _RarityRowState extends State<_RarityRow> {
+  bool _expanded = false;
+
+  /// The filter a rarity element stands for. `null` is the distinct "no rarity"
+  /// option rather than the absence of a choice — see [RarityFilter].
+  RarityFilter _filterFor(String? rarity) => rarity == null
+      ? const RarityFilter.noRarity()
+      : RarityFilter.value(rarity);
+
+  @override
   Widget build(BuildContext context) {
     final palette = AppPalette.of(context);
+    final visible = visibleFilterChoices<String?>(
+      widget.rarities,
+      isSelected: (rarity) => widget.selected == _filterFor(rarity),
+      expanded: _expanded,
+    );
     return Wrap(
       spacing: AppSpacing.xs,
       runSpacing: AppSpacing.xs,
       children: [
         LabeledChoiceChip(
           label: AppStrings.collectionFilterAll,
-          selected: selected == null,
+          selected: widget.selected == null,
           selectedColor: palette.accent,
-          onSelected: () => onSelected(null),
+          onSelected: () => widget.onSelected(null),
         ),
-        for (final rarity in rarities)
+        for (final rarity in visible)
           Builder(
             builder: (context) {
-              final value = rarity == null
-                  ? const RarityFilter.noRarity()
-                  : RarityFilter.value(rarity);
-              final isSelected = selected == value;
+              final value = _filterFor(rarity);
+              final isSelected = widget.selected == value;
               return LabeledChoiceChip(
                 label: rarity ?? AppStrings.collectionFilterNoRarity,
                 selected: isSelected,
                 selectedColor: palette.accent,
-                onSelected: () => onSelected(isSelected ? null : value),
+                onSelected: () => widget.onSelected(isSelected ? null : value),
               );
             },
+          ),
+        if (widget.rarities.length >
+            CollectionFilterTokens.chipCollapseThreshold)
+          _ExpandChip(
+            expanded: _expanded,
+            total: widget.rarities.length,
+            onPressed: () => setState(() => _expanded = !_expanded),
           ),
       ],
     );

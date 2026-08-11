@@ -15,6 +15,7 @@ part 'settings_repository.g.dart';
 const _conditionKey = 'settings.default_condition';
 const _editionKey = 'settings.default_edition';
 const _languageKey = 'settings.language';
+const _defaultRarityKey = 'settings.default_rarity';
 const _themeModeKey = 'settings.theme_mode';
 const _showScanDiagnosticsKey = 'settings.show_scan_diagnostics';
 const _showScanHelpKey = 'settings.show_scan_help';
@@ -43,6 +44,9 @@ class SettingsRepository {
         defaults.defaultEdition,
       ),
       language: await _metaDao.get(_languageKey) ?? defaults.language,
+      defaultRarity: _parseOptionalText(
+        await _metaDao.get(_defaultRarityKey),
+      ),
       themeMode: _parse(
         await _metaDao.get(_themeModeKey),
         AppThemeMode.fromDb,
@@ -72,6 +76,9 @@ class SettingsRepository {
     await _metaDao.set(_conditionKey, settings.defaultCondition.toDb());
     await _metaDao.set(_editionKey, settings.defaultEdition.toDb());
     await _metaDao.set(_languageKey, settings.language);
+    // The empty string *is* "no preference": `MetaDao` is a get/set pair with no
+    // delete, so clearing the setting has to be storable rather than absent.
+    await _metaDao.set(_defaultRarityKey, settings.defaultRarity ?? '');
     await _metaDao.set(_themeModeKey, settings.themeMode.toDb());
     await _metaDao.set(
       _showScanDiagnosticsKey,
@@ -100,6 +107,15 @@ class SettingsRepository {
     } on ArgumentError {
       return fallback;
     }
+  }
+
+  /// Free-form text whose absence is meaningful. A missing key and a stored
+  /// empty string both mean "not set", so clearing a preference round-trips
+  /// through a store that cannot delete, and a hand-edited `'   '` reads the
+  /// same as blank rather than becoming a rarity that matches nothing.
+  static String? _parseOptionalText(String? stored) {
+    final trimmed = stored?.trim();
+    return (trimmed == null || trimmed.isEmpty) ? null : trimmed;
   }
 
   /// Booleans are stored as `bool.toString()` (`'true'`/`'false'`). Anything

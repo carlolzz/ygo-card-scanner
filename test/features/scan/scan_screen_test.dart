@@ -295,8 +295,10 @@ void main() {
       expect(box.bottom, moreOrLessEquals(rect.bottom, epsilon: 0.5));
 
       // The status banner moved *inside* that box, which is what freed the band
-      // above it for the diagnostics readout.
-      final banner = find.text(AppStrings.scanDetecting);
+      // above it for the diagnostics readout. Found by key, not by its text:
+      // the label depends on the camera, the hint and the diagnostics setting,
+      // none of which this assertion is about.
+      final banner = find.byKey(scanStatusBannerKey);
       expect(banner, findsOneWidget);
       expect(box.contains(tester.getTopLeft(banner)), isTrue);
       expect(box.contains(tester.getBottomRight(banner)), isTrue);
@@ -661,6 +663,110 @@ void main() {
             'recognition for the whole process — the reported "declining a card '
             'stops the camera working" bug, which only relaunching cleared',
       );
+    });
+  });
+
+  // **The reported gap.** With diagnostics off there was no way to tell a camera
+  // still opening from one that had failed: the screen drew a plain dark scrim
+  // and the banner already said "Point at a card" — advice about a camera that
+  // was not streaming yet. The only readiness signal in the app was the
+  // developer-only `cam: opening…` line inside the diagnostics overlay.
+  group('camera readiness', () {
+    Future<void> pumpScan(WidgetTester tester, _InertCamera camera) async {
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            appDatabaseProvider.overrideWith((ref) async => testDb),
+            cameraServiceProvider.overrideWith((ref) => camera),
+            artReadingsProvider
+                .overrideWith((ref) => const Stream<ArtReading>.empty()),
+            passcodeReadingsProvider
+                .overrideWith((ref) => const Stream<PasscodeReading>.empty()),
+          ],
+          child: const MaterialApp(home: ScanScreen()),
+        ),
+      );
+      await pumpUntilSettled(tester);
+    }
+
+    /// A controller that reports itself initialized without touching hardware —
+    /// the constructor stores configuration only, and `value` is a plain
+    /// `ValueNotifier` field.
+    CameraController readyController() {
+      final controller = CameraController(
+        const CameraDescription(
+          name: 'test',
+          lensDirection: CameraLensDirection.back,
+          sensorOrientation: 0,
+        ),
+        ResolutionPreset.high,
+      );
+      // `previewSize` is not optional dressing: `CameraValue.aspectRatio`
+      // null-checks it, and both `_FullBleedPreview` and `_DetectionOutline`
+      // read that as soon as a controller becomes available.
+      controller.value = controller.value.copyWith(
+        isInitialized: true,
+        previewSize: const Size(1280, 720),
+      );
+      return controller;
+    }
+
+    testWidgets('an opening camera says so instead of giving advice', (
+      tester,
+    ) async {
+      await tester.runAsync(() async {
+        await pumpScan(tester, _InertCamera());
+
+        expect(find.text(AppStrings.scanCameraOpening), findsOneWidget);
+        expect(
+          find.text(AppStrings.scanDetecting),
+          findsNothing,
+          reason: '"Point at a card" is false while nothing is streaming — the '
+              'readiness line replaces the hint rather than sitting above it',
+        );
+      });
+    });
+
+    testWidgets('a ready camera says so above the usual hint', (tester) async {
+      await tester.runAsync(() async {
+        final camera = _InertCamera();
+        await pumpScan(tester, camera);
+
+        camera.previewNotifier.value = readyController();
+        await pumpUntilSettled(tester);
+
+        // Both: the readiness answer stays on screen, and the hint returns.
+        expect(find.text(AppStrings.scanCameraAvailable), findsOneWidget);
+        expect(find.text(AppStrings.scanDetecting), findsOneWidget);
+        expect(find.text(AppStrings.scanCameraOpening), findsNothing);
+      });
+    });
+
+    testWidgets('diagnostics carries the camera line instead, never both', (
+      tester,
+    ) async {
+      await tester.runAsync(() async {
+        await pumpScan(tester, _InertCamera());
+
+        final container = ProviderScope.containerOf(
+          tester.element(find.byType(ScanScreen)),
+        );
+        await container.read(settingsControllerProvider.future);
+        await container
+            .read(settingsControllerProvider.notifier)
+            .setShowScanDiagnostics(true);
+        await pumpUntilSettled(tester);
+
+        // The overlay's own `cam:` line is richer and the band above the
+        // reticle is tight — step 21 spent all of it getting that readout to
+        // fit, so the plain-language line is the alternative, not an addition.
+        expect(find.text(AppStrings.scanCameraOpening), findsNothing);
+        expect(find.text(AppStrings.scanCameraAvailable), findsNothing);
+        expect(
+          find.textContaining(AppStrings.scanDiagnosticsCamOpening),
+          findsOneWidget,
+        );
+      });
     });
   });
 }

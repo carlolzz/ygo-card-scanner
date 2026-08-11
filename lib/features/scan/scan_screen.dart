@@ -393,6 +393,14 @@ class _ReticleOverlay extends StatelessWidget {
 @visibleForTesting
 const Key scanReticleKey = Key('scan-reticle');
 
+/// Identifies the status banner for tests asserting *where* it sits — inside the
+/// guide box, which is what freed the band above it for the diagnostics readout.
+/// Keyed rather than found by its text, because which label it carries depends
+/// on the camera, the hint and the diagnostics setting, and none of those are
+/// what the geometry assertion is about.
+@visibleForTesting
+const Key scanStatusBannerKey = Key('scan-status-banner');
+
 /// The "lay the cards on a plain dark surface" note. Scrimmed like
 /// [_HelpPanel], since it sits on live camera imagery and has to stay legible
 /// over bright artwork; fixed to the dark palette for the same reason.
@@ -1233,21 +1241,69 @@ class _StatusBanner extends ConsumerWidget {
     if (status != ScanStatus.detecting && status != ScanStatus.reading) {
       return const SizedBox.shrink();
     }
-    final label = switch (hint) {
-      ScanHint.blurry => AppStrings.scanBlurry,
-      ScanHint.glare => AppStrings.scanGlare,
-      ScanHint.identifying => AppStrings.scanIdentifying,
-      ScanHint.unidentified => AppStrings.scanUnidentified,
-      ScanHint.none when status == ScanStatus.reading => AppStrings.scanReading,
-      ScanHint.none => AppStrings.scanDetecting,
-    };
+    // Diagnostics already carries `describeCameraHealth`'s richer
+    // `cam: streaming f=124 Δ=180ms` line, and step 21 spent the whole band
+    // above the reticle getting that readout to fit — a second camera line here
+    // would undo it. So the plain-language one is the *alternative* to the
+    // debug one, never an addition.
+    if (ref.watch(scanDiagnosticsEnabledProvider)) {
+      return _banner(context, ref, cameraReady: null);
+    }
+    // No ticker needed, unlike `_DiagnosticsBox`: `preview` is a
+    // `ValueListenable` and the controller is itself a `Listenable`, so
+    // readiness pushes. The same pair `_CameraLayer` subscribes to, and for the
+    // same reason — sampling a getter would latch the opening state forever.
+    return ValueListenableBuilder<CameraController?>(
+      valueListenable: ref.watch(cameraServiceProvider).preview,
+      builder: (context, controller, _) {
+        if (controller == null) {
+          // Also the state after `CameraService.stop()` released it. Correct
+          // here: the reticle is only drawn while the camera is meant to be up,
+          // so "opening" is what a released camera is about to do.
+          return _banner(context, ref, cameraReady: false);
+        }
+        return ListenableBuilder(
+          listenable: controller,
+          builder: (context, _) =>
+              _banner(context, ref, cameraReady: controller.value.isInitialized),
+        );
+      },
+    );
+  }
+
+  /// [cameraReady] null means "say nothing about the camera" — the diagnostics
+  /// overlay is on and already reporting it.
+  Widget _banner(
+    BuildContext context,
+    WidgetRef ref, {
+    required bool? cameraReady,
+  }) {
+    // While the camera is still coming up, "Point at a card" is simply false —
+    // nothing is streaming to point at. The readiness line replaces the hint
+    // rather than sitting above it, so the banner never gives advice that
+    // cannot be acted on yet.
+    final opening = cameraReady == false;
+    final label = opening
+        ? AppStrings.scanCameraOpening
+        : switch (hint) {
+            ScanHint.blurry => AppStrings.scanBlurry,
+            ScanHint.glare => AppStrings.scanGlare,
+            ScanHint.identifying => AppStrings.scanIdentifying,
+            ScanHint.unidentified => AppStrings.scanUnidentified,
+            ScanHint.none when status == ScanStatus.reading =>
+              AppStrings.scanReading,
+            ScanHint.none => AppStrings.scanDetecting,
+          };
     // A spinner means "working on it". Blur/glare advice is the opposite —
     // nothing progresses until the user changes something — so it gets none.
+    // An opening camera is working on it, and is the one case the user most
+    // wants to know is progressing rather than stuck.
     final busy =
-        status == ScanStatus.reading || hint == ScanHint.identifying;
-    final actionable = hint == ScanHint.unidentified;
+        opening || status == ScanStatus.reading || hint == ScanHint.identifying;
+    final actionable = !opening && hint == ScanHint.unidentified;
 
     final banner = Container(
+      key: scanStatusBannerKey,
       padding: const EdgeInsets.symmetric(
         horizontal: AppSpacing.md,
         vertical: AppSpacing.sm,
@@ -1259,15 +1315,27 @@ class _StatusBanner extends ConsumerWidget {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
+          // Once up, the answer stays on screen rather than flashing past: the
+          // question ("is the camera ready?") is asked again every time a scan
+          // feels unresponsive.
+          if (cameraReady == true)
+            Text(
+              AppStrings.scanCameraAvailable,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: AppPalette.dark.onSurfaceMuted,
+                fontSize: ScanStatusBannerTokens.cameraLineFontSize,
+              ),
+            ),
           Row(
             mainAxisSize: MainAxisSize.min,
             children: [
               if (busy) ...[
                 SizedBox(
-                  width: 16,
-                  height: 16,
+                  width: ScanStatusBannerTokens.spinnerSize,
+                  height: ScanStatusBannerTokens.spinnerSize,
                   child: CircularProgressIndicator(
-                    strokeWidth: 2,
+                    strokeWidth: ScanStatusBannerTokens.spinnerStrokeWidth,
                     color: AppPalette.dark.accent,
                   ),
                 ),

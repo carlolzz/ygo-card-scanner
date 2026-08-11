@@ -60,3 +60,47 @@ List<Printing> filterPrintings(List<Printing> printings, String query) => [
   for (final printing in printings)
     if (matchesSearchTerms(printing.displayLabel, query)) printing,
 ];
+
+/// The printing to preselect when a card is resolved, or null to leave the
+/// choice to the user.
+///
+/// Both logging flows ask this — the scan review gate and the manual add
+/// wizard — and they used to carry their own copies of the "only one printing"
+/// half. It lives here, pure and tested, because every way of getting it wrong
+/// is silent: a wrong preselection logs a real card against the wrong set, and
+/// the user has no reason to re-check a field that was already filled in.
+///
+/// The rules, in order:
+///
+/// 1. **No printings** — nothing to pick. Callers already special-case this
+///    (the wizard skips its printing step, the scan gate's picker hides itself).
+/// 2. **Exactly one printing** — that one, whatever [defaultRarity] says. The
+///    card came from somewhere, and making the user tap a decision with one
+///    option only risks them leaving it untapped and logging no set at all.
+/// 3. **Several printings and exactly one of them matches [defaultRarity]** —
+///    that one. A card printed only in Ultra and Secret Rare gets nothing when
+///    the preference is Common; the preference selects among what a card
+///    actually has, it never invents a printing.
+/// 4. **Anything else** — null. Two printings of the same rarity in different
+///    sets is genuinely the user's call, and the camera cannot tell which
+///    reprint is in hand; picking one arbitrarily would silently log the wrong
+///    set half the time.
+///
+/// Matching is case- and whitespace-insensitive because [defaultRarity] is
+/// persisted free-form text, not an enum.
+Printing? preferredPrinting(
+  List<Printing> printings, {
+  String? defaultRarity,
+}) {
+  if (printings.isEmpty) return null;
+  if (printings.length == 1) return printings.single;
+
+  final wanted = defaultRarity?.trim().toLowerCase();
+  if (wanted == null || wanted.isEmpty) return null;
+
+  final matching = [
+    for (final printing in printings)
+      if (printing.rarity?.trim().toLowerCase() == wanted) printing,
+  ];
+  return matching.length == 1 ? matching.single : null;
+}

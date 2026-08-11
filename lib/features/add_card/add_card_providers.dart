@@ -106,12 +106,20 @@ class AddCardSelectionController extends _$AddCardSelectionController {
     // card while this fetch was in flight — drop a stale response.
     if (state.card?.passcode != card.passcode) return;
 
-    final sole = printings.length == 1 ? printings.single : null;
+    // Shared with the scan review gate, so a card logged either way lands on the
+    // same set. Skipping straight to the condition step is safe because the step
+    // stays reachable: `AddCardScreen`'s back button routes to `backToPrinting`
+    // whenever `printings` is non-empty, and `_ConditionStep` prints the chosen
+    // set under the card name — so the pick is both visible and reversible.
+    final preferred = preferredPrinting(
+      printings,
+      defaultRarity: _settings.defaultRarity,
+    );
     state = AddCardSelection(
       card: state.card,
       printings: printings,
-      printing: sole,
-      step: printings.isEmpty || sole != null
+      printing: preferred,
+      step: printings.isEmpty || preferred != null
           ? AddCardStep.condition
           : AddCardStep.printing,
       condition: state.condition,

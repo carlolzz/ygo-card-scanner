@@ -15,6 +15,8 @@ import 'collection_filter_bar.dart';
 import 'collection_grid_tile.dart';
 import 'collection_list_tile.dart';
 import 'collection_providers.dart';
+import 'collection_scroll_slider.dart';
+import 'collection_scroll_slider_math.dart';
 
 class CollectionScreen extends ConsumerWidget {
   const CollectionScreen({super.key});
@@ -99,6 +101,7 @@ class CollectionScreen extends ConsumerWidget {
                 data: (entries) => _CollectionList(
                   entries: entries,
                   viewMode: viewMode,
+                  sortBy: filter.sortBy,
                   selection: selection,
                   onIncrement: (entry) => _incrementQuantity(ref, entry),
                   onDecrement: (entry) =>
@@ -254,6 +257,7 @@ class _CollectionList extends StatelessWidget {
   const _CollectionList({
     required this.entries,
     required this.viewMode,
+    required this.sortBy,
     required this.selection,
     required this.onIncrement,
     required this.onDecrement,
@@ -265,6 +269,10 @@ class _CollectionList extends StatelessWidget {
 
   final List<CollectionEntryWithCard> entries;
   final CollectionViewMode viewMode;
+
+  /// Only the fast-browse bubble reads this — it names where a drag has reached
+  /// in whatever terms the list is currently ordered by.
+  final CollectionSortBy sortBy;
   final CollectionSelection selection;
   final ValueChanged<CollectionEntryWithCard> onIncrement;
   final ValueChanged<CollectionEntryWithCard> onDecrement;
@@ -280,10 +288,17 @@ class _CollectionList extends StatelessWidget {
       ? () => onToggleSelect(entry)
       : () => onOpenDetail(entry);
 
-  static const _padding = EdgeInsets.symmetric(
-    horizontal: AppSpacing.md,
-    vertical: AppSpacing.sm,
+  /// The gutter *is* the right margin when the fast-browse slider is shown, so
+  /// both sides read the same pure predicate and cannot disagree about whether
+  /// one is there.
+  EdgeInsets get _padding => EdgeInsets.only(
+    left: AppSpacing.md,
+    right: collectionSliderReservesGutter(entries.length) ? 0 : AppSpacing.md,
+    top: AppSpacing.sm,
+    bottom: AppSpacing.sm,
   );
+
+  String _label(int index) => collectionScrollLabel(entries[index], sortBy);
 
   @override
   Widget build(BuildContext context) {
@@ -299,11 +314,21 @@ class _CollectionList extends StatelessWidget {
         ),
       );
     }
-    return viewMode.isGrid ? _buildGrid() : _buildList();
+    // The scroll view is built *inside* the slider rather than wrapped by it, so
+    // switching view modes rebuilds only what is under the builder and the
+    // slider's own State — and with it the ScrollController — survives.
+    return CollectionScrollSlider(
+      itemCount: entries.length,
+      layoutKey: viewMode,
+      labelForIndex: _label,
+      builder: (context, controller) =>
+          viewMode.isGrid ? _buildGrid(controller) : _buildList(controller),
+    );
   }
 
-  Widget _buildList() {
+  Widget _buildList(ScrollController controller) {
     return ListView.builder(
+      controller: controller,
       padding: _padding,
       itemCount: entries.length,
       itemBuilder: (context, index) {
@@ -325,7 +350,7 @@ class _CollectionList extends StatelessWidget {
     );
   }
 
-  Widget _buildGrid() {
+  Widget _buildGrid(ScrollController controller) {
     final showName = viewMode.showsName;
     final extent = showName
         ? CollectionGridTokens.artworkAndNameExtent
@@ -334,6 +359,7 @@ class _CollectionList extends StatelessWidget {
     // columns is a function of the viewport, and pinning it would be correct on
     // one device and wrong on the next.
     return GridView.builder(
+      controller: controller,
       padding: _padding,
       gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
         maxCrossAxisExtent: extent,

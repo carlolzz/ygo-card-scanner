@@ -88,4 +88,61 @@ void main() {
       expect(await dao.getForPasscodes(const []), isEmpty);
     });
   });
+
+  // Backs the Settings default-rarity picker.
+  group('distinctRarities', () {
+    test('deduplicates and sorts alphabetically', () async {
+      await dao.insertAll([
+        const Printing(
+          passcode: '89631139',
+          setCode: 'LOB-EN001',
+          rarity: 'Ultra Rare',
+        ),
+        const Printing(
+          passcode: '89631139',
+          setCode: 'SDK-001',
+          rarity: 'Ultra Rare',
+        ),
+        const Printing(
+          passcode: '89631139',
+          setCode: 'SKE-001',
+          rarity: 'Common',
+        ),
+        const Printing(
+          passcode: '89631139',
+          setCode: 'DPBC-EN001',
+          rarity: 'Secret Rare',
+        ),
+      ]);
+
+      expect(await dao.distinctRarities(), [
+        'Common',
+        'Secret Rare',
+        'Ultra Rare',
+      ]);
+    });
+
+    // Unlike the collection's rarity *filter*, where a null is the meaningful
+    // "no rarity" option, a null here is just a printing whose rarity the sync
+    // didn't carry — there is nothing to offer as a default.
+    test('drops printings with no rarity', () async {
+      await dao.insertAll([
+        const Printing(passcode: '89631139', setCode: 'LOB-EN001'),
+        const Printing(
+          passcode: '89631139',
+          setCode: 'SDK-001',
+          rarity: 'Common',
+        ),
+        const Printing(passcode: '89631139', setCode: 'MRD-001', rarity: ''),
+      ]);
+
+      expect(await dao.distinctRarities(), ['Common']);
+    });
+
+    // A fresh install before the first sync. The picker degrades to its "no
+    // preference" row rather than erroring.
+    test('an unsynced database offers nothing', () async {
+      expect(await dao.distinctRarities(), isEmpty);
+    });
+  });
 }

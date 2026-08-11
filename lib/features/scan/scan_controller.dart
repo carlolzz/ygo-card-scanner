@@ -7,6 +7,7 @@ import '../../models/app_settings.dart';
 import '../../models/card_condition.dart';
 import '../../models/card_edition.dart';
 import '../../models/collection_entry.dart';
+import '../../models/printing.dart';
 import '../../models/ygo_card.dart';
 import '../collection/collection_providers.dart';
 import '../settings/settings_providers.dart';
@@ -303,7 +304,7 @@ class ScanController extends _$ScanController {
         return;
       }
       final top = candidates.first;
-      final solePrintingId = await _solePrintingId(top.card.passcode);
+      final preferredPrintingId = await _preferredPrintingId(top.card.passcode);
       // Re-check after the second await, for the same reason as the first.
       if (state.status != ScanStatus.reading) return;
       state = state.copyWith(
@@ -316,8 +317,8 @@ class ScanController extends _$ScanController {
         condition: _settings.defaultCondition,
         edition: _settings.defaultEdition,
         language: _settings.language,
-        printingId: solePrintingId,
-        clearPrintingId: solePrintingId == null,
+        printingId: preferredPrintingId,
+        clearPrintingId: preferredPrintingId == null,
         quantity: 1,
         unmatchedStreak: 0,
         qualitySkipStreak: 0,
@@ -436,7 +437,7 @@ class ScanController extends _$ScanController {
     final picked = state.candidates
         .where((c) => c.card.passcode == card.passcode)
         .firstOrNull;
-    final solePrintingId = await _solePrintingId(card.passcode);
+    final preferredPrintingId = await _preferredPrintingId(card.passcode);
     // The pipeline is already paused behind the candidates panel, but the user
     // could have dismissed it while the lookup ran.
     if (state.status != ScanStatus.candidates) return;
@@ -451,8 +452,8 @@ class ScanController extends _$ScanController {
       language: _settings.language,
       // A different card has different printings, so any earlier pick is void —
       // replaced by this card's own sole printing, or nothing.
-      printingId: solePrintingId,
-      clearPrintingId: solePrintingId == null,
+      printingId: preferredPrintingId,
+      clearPrintingId: preferredPrintingId == null,
       quantity: 1,
     );
   }
@@ -546,9 +547,9 @@ class ScanController extends _$ScanController {
     final card = await repository.getByPasscode(passcode);
     if (state.status != ScanStatus.readingCode) return;
 
-    final solePrintingId = card == null
+    final preferredPrintingId = card == null
         ? null
-        : await _solePrintingId(card.passcode);
+        : await _preferredPrintingId(card.passcode);
     // The pause is taken *after* every await and behind the last guard, so an
     // `exitPasscodeMode` landing mid-lookup can't leave the pipeline paused
     // with nothing on screen to release it — [ScanPaused] outlives this
@@ -571,8 +572,8 @@ class ScanController extends _$ScanController {
         condition: _settings.defaultCondition,
         edition: _settings.defaultEdition,
         language: _settings.language,
-        printingId: solePrintingId,
-        clearPrintingId: solePrintingId == null,
+        printingId: preferredPrintingId,
+        clearPrintingId: preferredPrintingId == null,
         quantity: 1,
       );
     }
@@ -612,23 +613,25 @@ class ScanController extends _$ScanController {
   void setLanguage(String language) =>
       state = state.copyWith(language: language);
 
-  /// The printing to preselect for [passcode] in the review gate: the only one
-  /// the card has, or null when it has none or several.
+  /// The printing to preselect for [passcode] in the review gate — the only one
+  /// the card has, or the only one matching the user's default rarity.
   ///
-  /// One printing is the same situation the picker already special-cases at
-  /// zero (it hides itself) — the answer is known, so making the user tap it is
-  /// a decision with one option, and leaving it untapped silently logs a card
-  /// with no set when there was only one it could have come from. Several is
-  /// genuinely the user's call: the camera cannot tell which reprint is in hand.
+  /// The decision itself is [preferredPrinting], shared with the manual add
+  /// wizard and tested there: both flows have to agree, and a preselection that
+  /// differs between them logs the same card against different sets depending on
+  /// how it was entered.
   ///
   /// Called by every path that opens the review gate ([_resolveArtMatch],
-  /// [_lookup], [selectCandidate]), so the rule lives in exactly one place.
-  /// Reuses `cardPrintingsProvider`, which warms the same cache `_SetPicker`
-  /// reads a frame later.
-  Future<int?> _solePrintingId(String passcode) async {
+  /// [_lookup], [selectCandidate]), so the rule reaches the state from exactly
+  /// one place here too. Reuses `cardPrintingsProvider`, which warms the same
+  /// cache `_SetPicker` reads a frame later.
+  Future<int?> _preferredPrintingId(String passcode) async {
     try {
       final printings = await ref.read(cardPrintingsProvider(passcode).future);
-      return printings.length == 1 ? printings.single.id : null;
+      return preferredPrinting(
+        printings,
+        defaultRarity: _settings.defaultRarity,
+      )?.id;
     } catch (_) {
       // A preselection is a convenience; a failed lookup must not cost the
       // match itself, which is already resolved by the time we get here.

@@ -60,7 +60,6 @@ class CardArtThumbnail extends ConsumerWidget {
     this.size = CardThumbnailSizes.list,
     this.aspectRatio,
     this.fit = BoxFit.cover,
-    this.alignment = Alignment.center,
   });
 
   final YgoCard card;
@@ -72,10 +71,6 @@ class CardArtThumbnail extends ConsumerWidget {
   final double? aspectRatio;
   final BoxFit fit;
 
-  /// As [CardThumbnail.alignment]: which part of the image survives a
-  /// [BoxFit.cover] crop.
-  final Alignment alignment;
-
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     // Already on disk (an owned card that has been seen before) — render
@@ -86,7 +81,6 @@ class CardArtThumbnail extends ConsumerWidget {
         size: size,
         aspectRatio: aspectRatio,
         fit: fit,
-        alignment: alignment,
       );
     }
     // Not yet downloaded — pull it once. `.value` is null while it resolves (or
@@ -97,7 +91,6 @@ class CardArtThumbnail extends ConsumerWidget {
       size: size,
       aspectRatio: aspectRatio,
       fit: fit,
-      alignment: alignment,
     );
   }
 }

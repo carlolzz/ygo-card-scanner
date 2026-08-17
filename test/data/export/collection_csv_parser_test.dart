@@ -1,6 +1,8 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ygo_scanner/data/export/collection_csv.dart';
 import 'package:ygo_scanner/data/export/collection_csv_parser.dart';
+import 'package:ygo_scanner/data/export/collection_value_csv.dart';
+import 'package:ygo_scanner/data/repositories/price_repository.dart';
 import 'package:ygo_scanner/models/card_condition.dart';
 import 'package:ygo_scanner/models/card_edition.dart';
 import 'package:ygo_scanner/models/collection_entry.dart';
@@ -246,6 +248,43 @@ void main() {
       final result = parseCollectionCsv(collectionToCsv(const []));
       expect(result.rows, isEmpty);
       expect(result.errors, isEmpty);
+    });
+
+    // The other file this app writes. It shares a `passcode` column and nothing
+    // else that matters, so it must be refused outright rather than read
+    // half-way into rows with a defaulted grade — which is exactly what the
+    // required-column check buys, and why `condition` is on that list.
+    test('the value breakdown is rejected, not half-imported', () {
+      final valueCsv = collectionValueToCsv(
+        CollectionValue(
+          cardmarketEur: 1.2,
+          tcgplayerUsd: 2.5,
+          pricedCards: 1,
+          unpricedCards: 0,
+          asOf: DateTime.utc(2026, 8, 17),
+          lines: [
+            CollectionValueLine(
+              passcode: '46986414',
+              name: 'Dark Magician',
+              quantity: 2,
+              cardmarketEur: 1.2,
+              tcgplayerUsd: 2.5,
+              pricedAt: DateTime.utc(2026, 8, 17),
+            ),
+          ],
+        ),
+      );
+
+      expect(
+        () => parseCollectionCsv(valueCsv),
+        throwsA(
+          isA<CsvFormatException>().having(
+            (e) => e.message,
+            'message',
+            contains('condition'),
+          ),
+        ),
+      );
     });
   });
 }

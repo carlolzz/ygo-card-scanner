@@ -13,7 +13,6 @@ class CardThumbnail extends StatelessWidget {
     this.size = CardThumbnailSizes.list,
     this.aspectRatio,
     this.fit = BoxFit.cover,
-    this.alignment = Alignment.center,
   });
 
   final String? localImagePath;
@@ -37,16 +36,6 @@ class CardThumbnail extends StatelessWidget {
   /// overflow); use [BoxFit.contain] to show the entire image.
   final BoxFit fit;
 
-  /// Which part of the image survives a [BoxFit.cover] crop.
-  ///
-  /// Only meaningful with `cover`, and it matters for exactly one reason: a
-  /// card is 1.46x as tall as it is wide, so a square crop of one keeps about
-  /// two-thirds of its height. Centred, that window opens below the card's name
-  /// — so the collection row passes a negative Y to slide it up and keep the
-  /// name and the whole artwork in frame. See
-  /// [CollectionTileTokens.artAlignment].
-  final Alignment alignment;
-
   @override
   Widget build(BuildContext context) {
     final path = localImagePath;
@@ -57,7 +46,6 @@ class CardThumbnail extends StatelessWidget {
         : Image.file(
             File(path),
             fit: fit,
-            alignment: alignment,
             errorBuilder: (context, error, stackTrace) => _placeholder(context),
           );
     return ClipRRect(

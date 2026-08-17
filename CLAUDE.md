@@ -59,8 +59,10 @@ lib/
     repositories/settings_repository.dart
     repositories/price_repository.dart
     seed/fake_collection_seed.dart
+    export/csv_writer.dart            # escaping, shared by both writers
     export/collection_csv.dart        # writer  ┐ one format,
     export/collection_csv_parser.dart # reader  ┘ one directory
+    export/collection_value_csv.dart  # the value breakdown: write-only
     export/collection_exporter.dart
     import/collection_import_plan.dart  # the pure merge rule
     import/collection_importer.dart
@@ -2064,9 +2066,10 @@ order):
     size and `compact` subtracts a further 8pt, which left the first attempt at
     27 rather than 35). With that real, `actionButtonSize` 35 puts the row at
     `2*6 + 3*35 = 117`.
-    The artwork is now a **square crop** (`CardThumbnailSizes.collectionTile` 80,
+    The artwork became a **square crop** (`CardThumbnailSizes.collectionTile` 80,
     `BoxFit.cover`, `CollectionTileTokens.artAlignment` `(0, -0.55)`), the one
-    place in the app that does not draw the whole card. That is what makes
+    place in the app that did not draw the whole card — **reverted in step 25**,
+    where it turned out to read as a stretched card on device. That is what makes
     "bigger picture, shorter row" possible at all: a card is 1.46x as tall as it
     is wide, so its *height* is what competed with the action column, and every
     previous attempt to enlarge it grew the row. At 80x80 it is 39 % wider and
@@ -2091,6 +2094,93 @@ order):
     still uncalibrated on device. New and open: whether `kPriceTtl` at 24 h is
     right, and whether the per-set USD table is useful enough on its own given
     Cardmarket cannot appear beside it.
+
+25. Eleventh on-device feedback pass — row artwork reverted, value breakdown
+    export, one icon size on the home menu ← done (verified: `flutter analyze`
+    clean, full `flutter test` green at **668 tests**, `pytest tools/` green).
+    **No DB migration, no schema change, no new dependency.** Nothing here
+    touches the descriptor, `assets/card_hashes.json`, the detection algorithm
+    or any scan/matching/quality threshold.
+    **The collection row's square crop is reverted, apparatus and all.** Step
+    24's 80x80 `BoxFit.cover` window was not geometrically distorted, but a card
+    cropped to a square and enlarged 39 % reads as *stretched*, which is what it
+    was reported as. `CardThumbnailSizes.collectionTile` is `list * 1.2` again
+    (57.6 x 84, `aspectRatio: ScanReticleTokens.cardAspectRatio`,
+    `BoxFit.contain`). **The doc comment was not restored verbatim**: the old one
+    computed its ceiling as 61.7 against `actionButtonSize = 30`, a number step
+    24 proved was fiction — the real column is `3 * 35 = 105`, so a 59/86 card
+    fits up to ~72pt wide and 57.6 is comfortably inside. Step 24's other two
+    row changes (the honest button size, `secondaryFontSize`) are **kept**, so
+    the row stays 117pt rather than returning to 132.
+    The crop existed only for this row, so `CollectionTileTokens.artAlignment`
+    and the `alignment` parameter on **both** `CardThumbnail` and
+    `CardArtThumbnail` went with it — a widget API with no call site is dead
+    code by this file's own rule. The geometry test's crop case became a
+    whole-card case, and its "fits inside the action column" check now measures
+    **height** (`collectionTile / cardAspectRatio`), since with a portrait
+    thumbnail height is again what competes for the row.
+    **One icon size on the home menu.** The Card Search tile drew a 28pt glyph
+    against the grid's 40 — an explicit ternary in `home_menu_tile.dart`, not a
+    layout artifact. `HomeMenuTokens.wideIconSize` is replaced by a single
+    `iconSize = 40` used by both branches, which also retires the bare `40`
+    literal that let the two drift apart in the first place. The wide tile still
+    fits it: laid out in a row its content is `40 + 2 * AppSpacing.md` = 72pt
+    against a `wideTileFlex` share of ~140 at 360x640, and `wideTileFlex` keeps
+    its smaller share for the reason that actually holds — icon *beside* label
+    rather than above it. Nothing pinned icon size before, so
+    `home_screen_test` now compares the wide tile's against a grid tile's
+    (**verified to fail** against the old ternary).
+    **The collection value can be exported, one row per card.** That is the
+    granularity the prices have: YGOPRODeck's card-level figure is the lowest
+    across a card's printings, so condition, edition and set are invisible to
+    it, and a per-entry file would repeat one unit price across rows and read as
+    if a Near Mint 1st Edition were quoted separately from a Played one. Join it
+    to a collection export on `passcode` for that detail.
+    `CollectionValue` now **carries the rows it used to discard**: a
+    `List<CollectionValueLine>` (passcode, name, quantity, both unit prices,
+    `pricedAt`) built in the same pass that accumulates the totals. That is the
+    whole design — the exported numbers *are* the displayed numbers, with no
+    second fetch, no second pass over the price cache and no way for the file to
+    disagree with the screen. **Unpriced cards get a line too**, carrying nulls:
+    they are the detail behind the existing `unpricedCards` count, which says
+    how many the totals leave out but never which. Names come from the existing
+    `CardDao.getByPasscodes`, so `PriceRepository` gained a third DAO and one
+    round trip; lines are sorted by name, since `quantityByPasscode` groups in
+    whatever order SQLite returns.
+    The escaping moved to **`lib/data/export/csv_writer.dart`** (`csvRow`,
+    `csvEscape`, `csvGuardFormula`, `csvIsoUtc`), shared by both writers: the
+    quoting, the doubled quotes and the formula guard must not exist twice, and
+    `collection_csv_parser.dart` is written against exactly those rules.
+    `collection_value_csv.dart` is the second format. Numbers are raw
+    `toStringAsFixed(2)` — **not** `core/money.dart`'s `formatEur`/`formatUsd`,
+    which embed a currency symbol and render an em dash, both right on screen
+    and wrong in a column something else parses. **An unknown price is an empty
+    cell, never a zero**: the API's own "0.00" already means "no figure", and a
+    zero would let an unquoted card read as a worthless one. Currency lives in
+    the column *name* (`cardmarket_eur`, `tcgplayer_usd`), the two are never
+    summed, and there is no trailing totals row — this feeds pandas/DuckDB,
+    where a summary line inside the data is a nuisance.
+    **It cannot be imported back, by construction**: no `condition` column, so
+    `parseCollectionCsv` refuses it outright rather than reading it half-way
+    into rows with a defaulted grade. A parser test pins that, which is also the
+    live justification for `condition` being on the required-column list.
+    `CollectionExporter.exportValueToCsv` takes the value **as an argument**, so
+    it needs no `PriceRepository` and no new provider dependency, and writes
+    `ygo_collection_value_<date>.csv` — its own name, since it is its own
+    format and must not overwrite the collection export. The button lives in
+    `_ValueResult`, stacked under Refresh, **not** in `_Actions`: there is
+    nothing to export until a calculation has succeeded, and `_Actions` also
+    renders in the empty-collection branch where it would be live with nothing
+    behind it.
+    **Test gotcha**: the widget tests assert the export button's *presence*
+    only, before and after a calculation and after a failure. Tapping it reaches
+    the real OS share sheet — there is still no `share_plus` mock anywhere in
+    this repo, which is why the collection export's own test stops at the
+    returned path too.
+    **Still open**, unchanged: `maxHammingDistance` at 72,
+    `CardDetectionTuning.innerQuadMinAreaRatio` at 0.78, the passcode ROI filter
+    off, `artAgreementFrames` at 2, every `FrameQualityTuning` threshold still
+    uncalibrated on device, and whether `kPriceTtl` at 24 h is right.
 
 ## Standing rules
 

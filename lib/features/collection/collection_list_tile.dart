@@ -123,11 +123,9 @@ class CollectionListTile extends StatelessWidget {
                   ],
                 ),
                 const SizedBox(width: AppSpacing.md),
-                // A square crop of the card, aligned high so the name and the
-                // whole art box survive it — the one place in the app that does
-                // not draw the whole card, because a portrait thumbnail's
-                // height is what was keeping this row tall. See
-                // `CardThumbnailSizes.collectionTile` for the arithmetic.
+                // The whole card, uncropped — see
+                // `CardThumbnailSizes.collectionTile` for why its width is
+                // capped where it is.
                 //
                 // The *art* thumbnail, so a card imported from CSV — which
                 // never went through `addOrIncrement` and so never triggered a
@@ -136,7 +134,8 @@ class CollectionListTile extends StatelessWidget {
                 CardArtThumbnail(
                   card: card,
                   size: CardThumbnailSizes.collectionTile,
-                  alignment: CollectionTileTokens.artAlignment,
+                  aspectRatio: ScanReticleTokens.cardAspectRatio,
+                  fit: BoxFit.contain,
                 ),
                 const SizedBox(width: AppSpacing.md),
                 // Name (up to 2 lines), then the set and the rarity on one line

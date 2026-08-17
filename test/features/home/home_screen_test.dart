@@ -114,6 +114,32 @@ void main() {
     expect(find.text(AppStrings.comingSoonMessage), findsNothing);
   });
 
+  // The wide tile drew a 28pt glyph against the grid's 40, which read as a
+  // mistake on the menu. Nothing pinned the sizes, which is how they drifted
+  // apart — so this compares them rather than asserting a number, and it still
+  // fails if either one moves alone.
+  testWidgets('every tile icon is the same size', (tester) async {
+    tester.view.physicalSize = const Size(360, 640);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+
+    await pumpApp(tester);
+
+    Size iconOf(String label) => tester.getSize(
+      find.descendant(
+        of: find.ancestor(
+          of: find.text(label),
+          matching: find.byType(HomeMenuTile),
+        ),
+        matching: find.byType(Icon),
+      ),
+    );
+
+    final wide = iconOf(AppStrings.homeTileCardSearch);
+    expect(wide, iconOf(AppStrings.homeTileLogCards));
+    expect(wide, const Size.square(HomeMenuTokens.iconSize));
+  });
+
   testWidgets('home tiles meet the minimum tap target size', (tester) async {
     await pumpApp(tester);
 

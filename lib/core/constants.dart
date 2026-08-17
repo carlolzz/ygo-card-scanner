@@ -456,6 +456,11 @@ class AppStrings {
   static String statisticsValueProgress(int done, int total) =>
       'Priced $done / $total cards';
 
+  /// The breakdown behind the two totals: one row per card, with what each is
+  /// worth and what the copies of it are worth together.
+  static const String statisticsValueExportButton = 'Export value breakdown';
+  static const String statisticsValueExportSubject = 'YGO collection value';
+
   /// Says what the totals are, since a "lowest across printings" figure is very
   /// different from what a graded, first-edition copy would fetch.
   static const String statisticsValueNote =

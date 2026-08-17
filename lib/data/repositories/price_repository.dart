@@ -2,6 +2,7 @@ import 'package:riverpod_annotation/riverpod_annotation.dart';
 
 import '../../models/card_prices.dart';
 import '../api/ygoprodeck_client.dart';
+import '../db/dao/card_dao.dart';
 import '../db/dao/card_price_dao.dart';
 import '../db/dao/collection_dao.dart';
 import '../db/database.dart';
@@ -33,6 +34,7 @@ class CollectionValue {
     required this.pricedCards,
     required this.unpricedCards,
     required this.asOf,
+    required this.lines,
   });
 
   final double cardmarketEur;
@@ -48,6 +50,49 @@ class CollectionValue {
   /// The **oldest** price used, so the stamp shown beside the totals describes
   /// the whole of them rather than the most recently refreshed corner.
   final DateTime? asOf;
+
+  /// One line per distinct card owned, priced or not, sorted by name.
+  ///
+  /// Kept rather than discarded into the two totals because it is what the
+  /// value export writes, and building it here means the exported numbers *are*
+  /// the displayed numbers — no second fetch, no second pass over the cache,
+  /// and no way for the file to disagree with the screen.
+  ///
+  /// **Unpriced cards are present**, carrying nulls. They are the detail behind
+  /// [unpricedCards]: a total that admits it covers only part of a collection
+  /// should be able to say which part.
+  final List<CollectionValueLine> lines;
+}
+
+/// One card's contribution to a [CollectionValue].
+///
+/// Prices are per **card**, not per collection entry: YGOPRODeck's card-level
+/// figure is the lowest across a card's printings, so condition, edition and
+/// set are all invisible to it and a copy in any of them prices the same. Hence
+/// one line per passcode, with [quantity] summed over every entry holding it.
+class CollectionValueLine {
+  const CollectionValueLine({
+    required this.passcode,
+    required this.name,
+    required this.quantity,
+    required this.cardmarketEur,
+    required this.tcgplayerUsd,
+    required this.pricedAt,
+  });
+
+  final String passcode;
+  final String name;
+
+  /// Copies owned across every condition, edition and language.
+  final int quantity;
+
+  /// Unit prices, null when the API had no figure. Both null means this card
+  /// contributed nothing to either total.
+  final double? cardmarketEur;
+  final double? tcgplayerUsd;
+
+  /// When these figures were fetched, null when there are none.
+  final DateTime? pricedAt;
 }
 
 /// Market prices: fetched from YGOPRODeck, cached card-level in `card_prices`.
@@ -60,6 +105,7 @@ class PriceRepository {
   PriceRepository({
     required this._priceDao,
     required this._collectionDao,
+    required this._cardDao,
     YgoProdeckClient? client,
   })
     // Injectable so this repository's tests run offline against a fake, the
@@ -68,6 +114,10 @@ class PriceRepository {
 
   final CardPriceDao _priceDao;
   final CollectionDao _collectionDao;
+
+  /// Only for card *names*, which a value breakdown needs and neither of the
+  /// other two DAOs carries.
+  final CardDao _cardDao;
   final YgoProdeckClient _client;
 
   /// Everything known about one card's pricing, always live.
@@ -131,6 +181,7 @@ class PriceRepository {
         pricedCards: 0,
         unpricedCards: 0,
         asOf: null,
+        lines: [],
       );
     }
 
@@ -160,10 +211,19 @@ class PriceRepository {
       onProgress?.call(known.length, total);
     }
 
+    // Names for the breakdown. One round trip, and only the rows that exist —
+    // which for owned passcodes is all of them, since `collection_entries`
+    // carries a foreign key onto `cards`.
+    final names = {
+      for (final card in await _cardDao.getByPasscodes(passcodes))
+        card.passcode: card.name,
+    };
+
     var cardmarket = 0.0;
     var tcgplayer = 0.0;
     var priced = 0;
     DateTime? asOf;
+    final lines = <CollectionValueLine>[];
     for (final entry in owned.entries) {
       final prices = known[entry.key];
       // A card the API did not recognise, or recognised with no figure at all.
@@ -171,6 +231,17 @@ class PriceRepository {
       // so this is the single place that decides what "unpriced" means.
       if (prices == null ||
           (prices.cardmarket == null && prices.tcgplayer == null)) {
+        // Still a line: the breakdown names the cards the totals leave out.
+        lines.add(
+          CollectionValueLine(
+            passcode: entry.key,
+            name: names[entry.key] ?? '',
+            quantity: entry.value,
+            cardmarketEur: null,
+            tcgplayerUsd: null,
+            pricedAt: null,
+          ),
+        );
         continue;
       }
       priced++;
@@ -179,7 +250,24 @@ class PriceRepository {
       if (asOf == null || prices.updatedAt.isBefore(asOf)) {
         asOf = prices.updatedAt;
       }
+      lines.add(
+        CollectionValueLine(
+          passcode: entry.key,
+          name: names[entry.key] ?? '',
+          quantity: entry.value,
+          cardmarketEur: prices.cardmarket,
+          tcgplayerUsd: prices.tcgplayer,
+          pricedAt: prices.updatedAt,
+        ),
+      );
     }
+    // By name, then passcode: `quantityByPasscode` groups in whatever order
+    // SQLite returns, and an export is easier to read — and to diff against an
+    // earlier one — when it is ordered by the column a human reads.
+    lines.sort((a, b) {
+      final byName = a.name.compareTo(b.name);
+      return byName != 0 ? byName : a.passcode.compareTo(b.passcode);
+    });
 
     return CollectionValue(
       cardmarketEur: cardmarket,
@@ -187,6 +275,7 @@ class PriceRepository {
       pricedCards: priced,
       unpricedCards: total - priced,
       asOf: asOf,
+      lines: lines,
     );
   }
 
@@ -200,5 +289,6 @@ Future<PriceRepository> priceRepository(Ref ref) async {
   return PriceRepository(
     priceDao: CardPriceDao(db),
     collectionDao: CollectionDao(db),
+    cardDao: CardDao(db),
   );
 }

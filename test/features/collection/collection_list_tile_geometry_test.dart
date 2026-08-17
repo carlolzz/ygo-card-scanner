@@ -161,33 +161,36 @@ void main() {
   });
 
   // The artwork is free only while it stays under the column that sets the
-  // height. Above that, every row in the list grows.
+  // height. Above that, every row in the list grows — and since the card is
+  // drawn whole, at 59/86, it is its **height** that has to fit, not its width.
   test('the artwork fits inside the action column', () {
     expect(
-      CardThumbnailSizes.collectionTile,
+      CardThumbnailSizes.collectionTile / ScanReticleTokens.cardAspectRatio,
       lessThanOrEqualTo(3 * CollectionTileTokens.actionButtonSize),
     );
   });
 
-  // A square crop, not the portrait card the rest of the app draws — which is
-  // the only reason a bigger picture and a shorter row are compatible at all.
-  testWidgets('the artwork is a square crop aligned above centre', (
-    tester,
-  ) async {
+  // The whole card, uncropped, like every other surface in the app. A square
+  // `cover` crop was tried here and reverted: it reads as a stretched card.
+  testWidgets('the artwork is the whole card, uncropped', (tester) async {
     await pumpTile(tester, _entry());
 
     final thumbnail = tester.widget<CardThumbnail>(find.byType(CardThumbnail));
-    expect(thumbnail.aspectRatio, isNull, reason: 'square, not 59/86');
-    expect(thumbnail.fit, BoxFit.cover);
-    expect(thumbnail.alignment, CollectionTileTokens.artAlignment);
+    expect(thumbnail.aspectRatio, ScanReticleTokens.cardAspectRatio);
     expect(
-      CollectionTileTokens.artAlignment.y,
-      lessThan(0),
-      reason: 'a centred crop would cut the card name off the top',
+      thumbnail.fit,
+      BoxFit.contain,
+      reason: 'contain, or the card is cropped to its box',
     );
 
     final art = tester.getSize(find.byType(CardThumbnail));
-    expect(art.width, art.height);
     expect(art.width, CardThumbnailSizes.collectionTile);
+    expect(
+      art.height,
+      closeTo(
+        CardThumbnailSizes.collectionTile / ScanReticleTokens.cardAspectRatio,
+        0.01,
+      ),
+    );
   });
 }

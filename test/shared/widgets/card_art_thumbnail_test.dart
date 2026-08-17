@@ -82,7 +82,6 @@ void main() {
       required double? size,
       required double? aspectRatio,
       required BoxFit fit,
-      Alignment alignment = Alignment.center,
     }) async {
       await tester.pumpWidget(
         ProviderScope(
@@ -95,7 +94,6 @@ void main() {
                   size: size,
                   aspectRatio: aspectRatio,
                   fit: fit,
-                  alignment: alignment,
                 ),
               ),
             ),
@@ -117,21 +115,17 @@ void main() {
       expect(thumbnail.fit, BoxFit.contain);
     });
 
-    // The collection row: a square crop, aligned high. The alignment is the
-    // part worth pinning — without it reaching the image the crop opens below
-    // the card's name, which is the whole reason the parameter exists.
+    // The collection row: a fixed width, the whole card at its own aspect.
     testWidgets('a fixed-size list row', (tester) async {
       final thumbnail = await pump(
         tester,
         size: CardThumbnailSizes.collectionTile,
-        aspectRatio: null,
-        fit: BoxFit.cover,
-        alignment: CollectionTileTokens.artAlignment,
+        aspectRatio: ScanReticleTokens.cardAspectRatio,
+        fit: BoxFit.contain,
       );
       expect(thumbnail.size, CardThumbnailSizes.collectionTile);
-      expect(thumbnail.aspectRatio, isNull);
-      expect(thumbnail.fit, BoxFit.cover);
-      expect(thumbnail.alignment, CollectionTileTokens.artAlignment);
+      expect(thumbnail.aspectRatio, ScanReticleTokens.cardAspectRatio);
+      expect(thumbnail.fit, BoxFit.contain);
     });
 
     testWidgets('the historical square default', (tester) async {
@@ -146,7 +140,6 @@ void main() {
       expect(thumbnail.size, CardThumbnailSizes.list);
       expect(thumbnail.aspectRatio, isNull);
       expect(thumbnail.fit, BoxFit.cover);
-      expect(thumbnail.alignment, Alignment.center);
     });
   });
 }

@@ -53,6 +53,7 @@ void main() {
   late Database db;
   late CardPriceDao priceDao;
   late CollectionDao collectionDao;
+  late CardDao cardDao;
 
   Future<void> own(String passcode, int quantity, {String language = 'EN'}) =>
       collectionDao.addOrIncrement(
@@ -70,6 +71,7 @@ void main() {
   PriceRepository repositoryWith(_FakeClient client) => PriceRepository(
     priceDao: priceDao,
     collectionDao: collectionDao,
+    cardDao: cardDao,
     client: client,
   );
 
@@ -77,7 +79,8 @@ void main() {
     db = await openInMemoryTestDb();
     priceDao = CardPriceDao(db);
     collectionDao = CollectionDao(db);
-    await CardDao(db).insertAll([_blueEyes, _mirrorForce, _darkMagician]);
+    cardDao = CardDao(db);
+    await cardDao.insertAll([_blueEyes, _mirrorForce, _darkMagician]);
   });
 
   tearDown(() async {
@@ -170,6 +173,86 @@ void main() {
 
       expect(seen.first, (0, 2), reason: 'nothing cached yet');
       expect(seen.last, (2, 2));
+    });
+  });
+
+  // The per-card rows behind the two totals, which the value export writes.
+  // They are built in the same pass that accumulates the totals, so the file
+  // and the screen cannot disagree — these assertions are what pin that.
+  group('the value breakdown', () {
+    test('carries each card with its name and copies owned', () async {
+      await own('89631139', 3);
+      await own('89631139', 2, language: 'DE');
+      final client = _FakeClient({'89631139': (1.5, 10.0)});
+
+      final value = await repositoryWith(client).collectionValue();
+
+      final line = value.lines.single;
+      expect(line.passcode, '89631139');
+      expect(line.name, 'Blue-Eyes White Dragon');
+      expect(line.quantity, 5, reason: 'both languages, one card');
+      expect(line.cardmarketEur, 1.5);
+      expect(line.tcgplayerUsd, 10.0);
+      expect(line.pricedAt, isNotNull);
+    });
+
+    // The whole reason to keep the rows: `unpricedCards` says how many cards
+    // the totals leave out, and only the breakdown can say which.
+    test('includes unpriced cards, carrying nulls', () async {
+      await own('89631139', 1);
+      await own('46986414', 4);
+      final client = _FakeClient({'89631139': (1.0, 10.0)});
+
+      final value = await repositoryWith(client).collectionValue();
+
+      final unpriced = value.lines.singleWhere((l) => l.passcode == '46986414');
+      expect(unpriced.name, 'Dark Magician');
+      expect(unpriced.quantity, 4);
+      expect(unpriced.cardmarketEur, isNull);
+      expect(unpriced.tcgplayerUsd, isNull);
+      expect(unpriced.pricedAt, isNull);
+      expect(value.lines, hasLength(2), reason: 'priced or not, every card');
+    });
+
+    // If the lines and the totals could ever disagree, the exported file would
+    // quietly contradict the figures the user is looking at.
+    test('the lines add up to the totals', () async {
+      await own('89631139', 3);
+      await own('44095762', 2);
+      await own('46986414', 1);
+      final client = _FakeClient({
+        '89631139': (1.0, 10.0),
+        '44095762': (2.5, 20.0),
+      });
+
+      final value = await repositoryWith(client).collectionValue();
+
+      double sum(double? Function(CollectionValueLine) price) => value.lines
+          .map((l) => (price(l) ?? 0) * l.quantity)
+          .fold(0.0, (a, b) => a + b);
+
+      expect(sum((l) => l.cardmarketEur), value.cardmarketEur);
+      expect(sum((l) => l.tcgplayerUsd), value.tcgplayerUsd);
+    });
+
+    test('is sorted by name', () async {
+      await own('89631139', 1); // Blue-Eyes White Dragon
+      await own('44095762', 1); // Mirror Force
+      await own('46986414', 1); // Dark Magician
+      final client = _FakeClient(const {});
+
+      final value = await repositoryWith(client).collectionValue();
+
+      expect(value.lines.map((l) => l.name), [
+        'Blue-Eyes White Dragon',
+        'Dark Magician',
+        'Mirror Force',
+      ]);
+    });
+
+    test('an empty collection has no lines', () async {
+      final value = await repositoryWith(_FakeClient(const {})).collectionValue();
+      expect(value.lines, isEmpty);
     });
   });
 
@@ -317,6 +400,7 @@ void main() {
       final prices = await PriceRepository(
         priceDao: priceDao,
         collectionDao: collectionDao,
+        cardDao: cardDao,
         client: _ThrowingClient(),
       ).cachedOrFetch('89631139');
 

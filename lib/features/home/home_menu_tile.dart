@@ -23,6 +23,9 @@ class HomeMenuTile extends StatelessWidget {
   /// space either side of a centred column, and forces the tile to be taller
   /// than it needs to be to fit them. See [HomeMenuTokens] for why the fifth
   /// destination is shaped differently at all.
+  ///
+  /// Only the *layout* differs — the icon is [HomeMenuTokens.iconSize] here as
+  /// everywhere else, so all five tiles read as five of the same thing.
   final bool wide;
 
   @override
@@ -31,7 +34,7 @@ class HomeMenuTile extends StatelessWidget {
     final iconWidget = Icon(
       icon,
       color: palette.accent,
-      size: wide ? HomeMenuTokens.wideIconSize : 40,
+      size: HomeMenuTokens.iconSize,
     );
     final text = Text(
       label,

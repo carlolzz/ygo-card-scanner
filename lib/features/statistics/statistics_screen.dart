@@ -387,7 +387,75 @@ class _ValueResult extends StatelessWidget {
             onPressed: onRefresh,
           ),
         ),
+        const SizedBox(height: AppSpacing.sm),
+        // Stacked under Refresh rather than beside it: two labelled buttons
+        // crowd a 360pt row.
+        SizedBox(
+          width: double.infinity,
+          child: _ValueExportButton(value: value),
+        ),
       ],
+    );
+  }
+}
+
+/// Writes the per-card figures behind the totals to their own CSV.
+///
+/// Lives here, inside the result, rather than in [_Actions] beside the
+/// collection export: there is nothing to export until a calculation has
+/// succeeded, and [_Actions] also renders in the empty-collection branch, where
+/// this button would be live with nothing behind it. The [CollectionValue] it
+/// writes is the one on screen, passed straight through.
+///
+/// Stateful only to disable itself while a write is in flight, exactly like
+/// [_ExportButton].
+class _ValueExportButton extends ConsumerStatefulWidget {
+  const _ValueExportButton({required this.value});
+
+  final CollectionValue value;
+
+  @override
+  ConsumerState<_ValueExportButton> createState() => _ValueExportButtonState();
+}
+
+class _ValueExportButtonState extends ConsumerState<_ValueExportButton> {
+  bool _running = false;
+
+  Future<void> _export() async {
+    setState(() => _running = true);
+    String? path;
+    String message;
+    try {
+      final exporter = await ref.read(collectionExporterProvider.future);
+      path = await exporter.exportValueToCsv(widget.value);
+      message = AppStrings.statisticsExportDoneMessage;
+    } catch (_) {
+      message = AppStrings.statisticsExportFailedMessage;
+    }
+    if (!mounted) return;
+    setState(() => _running = false);
+    if (path != null) {
+      await SharePlus.instance.share(
+        ShareParams(
+          files: [XFile(path)],
+          subject: AppStrings.statisticsValueExportSubject,
+        ),
+      );
+    }
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return OutlinedButton.icon(
+      icon: const Icon(Icons.download),
+      onPressed: _running ? null : _export,
+      label: Text(
+        _running
+            ? AppStrings.statisticsExportRunningMessage
+            : AppStrings.statisticsValueExportButton,
+      ),
     );
   }
 }

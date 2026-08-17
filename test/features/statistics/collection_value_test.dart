@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:ygo_scanner/core/constants.dart';
 import 'package:ygo_scanner/data/api/ygoprodeck_client.dart';
+import 'package:ygo_scanner/data/db/dao/card_dao.dart';
 import 'package:ygo_scanner/data/db/dao/card_price_dao.dart';
 import 'package:ygo_scanner/data/db/dao/collection_dao.dart';
 import 'package:ygo_scanner/data/db/database.dart';
@@ -90,6 +91,7 @@ void main() {
             (ref) async => PriceRepository(
               priceDao: CardPriceDao(testDb),
               collectionDao: CollectionDao(testDb),
+              cardDao: CardDao(testDb),
               client: client,
             ),
           ),
@@ -200,6 +202,45 @@ void main() {
       final copies = await CollectionDao(testDb).totalCardCount();
       expect(find.text('€${copies.toStringAsFixed(2)}'), findsOneWidget);
       expect(find.text(AppStrings.statisticsValueErrorMessage), findsNothing);
+    });
+  });
+
+  // The breakdown export writes the figures already on screen, so it only
+  // exists once there are some. Presence is all that is asserted: tapping it
+  // reaches the real OS share sheet, which nothing here mocks.
+  group('the value export button', () {
+    testWidgets('is absent until a calculation succeeds', (tester) async {
+      await tester.runAsync(() async {
+        useTallViewport(tester);
+        await openStatistics(tester, client: _FlatClient());
+
+        expect(find.text(AppStrings.statisticsValueExportButton), findsNothing);
+      });
+    });
+
+    testWidgets('appears beside the totals', (tester) async {
+      await tester.runAsync(() async {
+        useTallViewport(tester);
+        await openStatistics(tester, client: _FlatClient());
+        await tapCalculate(tester);
+
+        expect(
+          find.text(AppStrings.statisticsValueExportButton),
+          findsOneWidget,
+        );
+      });
+    });
+
+    // A failed calculation has no figures to write, so the button must not be
+    // offered there either — the error branch replaces the result entirely.
+    testWidgets('is absent after a failure', (tester) async {
+      await tester.runAsync(() async {
+        useTallViewport(tester);
+        await openStatistics(tester, client: _OfflineClient());
+        await tapCalculate(tester);
+
+        expect(find.text(AppStrings.statisticsValueExportButton), findsNothing);
+      });
     });
   });
 }

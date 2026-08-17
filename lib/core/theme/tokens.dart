@@ -205,15 +205,18 @@ class HomeMenuTokens {
   static const double tileSpacing = AppSpacing.md;
 
   /// Flex of each of the two square rows against [wideTileFlex]. The wide tile
-  /// lays its icon and label out in a row rather than a column, so it needs
-  /// less height than a square tile and taking the same share would waste it.
+  /// lays its icon and label out in a row rather than a column — the two sit
+  /// side by side instead of stacking — so it needs less height than a square
+  /// tile and taking the same share would waste it.
   static const int gridRowFlex = 3;
   static const int wideTileFlex = 2;
 
-  /// The wide tile's icon. Smaller than the square tiles' 40 because it sits
-  /// beside its label rather than above it, where a 40pt glyph sets the whole
-  /// tile's height.
-  static const double wideIconSize = 28;
+  /// One size for every tile's icon, wide and square alike: five destinations
+  /// on one menu read as five of the same thing, and a glyph a third smaller
+  /// than its neighbours reads as a mistake. The wide tile still fits it —
+  /// laid out in a row its content is `iconSize + 2 * AppSpacing.md` = 72pt
+  /// tall, well inside the [wideTileFlex] share even on a short viewport.
+  static const double iconSize = 40;
 }
 
 /// Geometry shared by the screens that show one card: the collection detail
@@ -254,26 +257,21 @@ class CardThumbnailSizes {
 
   static const double list = 48;
 
-  /// The collection row's artwork — a **square crop**, unlike everywhere else
-  /// the app draws a card. Its own token rather than a bump to [list]: the scan
-  /// review and candidate panels keep the smaller whole-card thumbnail.
+  /// The collection row's artwork: 20% larger than [list], and the **whole
+  /// card**, uncropped. Deliberately its own token rather than a bump to
+  /// [list] — the scan review and candidate panels keep the smaller size.
   ///
-  /// **Square is what makes "bigger picture, shorter row" possible at all.** A
-  /// whole card is drawn at the 59/86 aspect, i.e. 1.46x as tall as it is wide,
-  /// so its height — not its width — is what competes with the action column
-  /// for the row, and growing the picture had always grown the row. Cropping to
-  /// a square decouples the two: at 80x80 the artwork is 39% wider and 32%
-  /// larger in area than the 57.6x84 portrait it replaces, while the row
-  /// *shrank* from 132pt to 117.
+  /// A square `BoxFit.cover` crop was tried here and reverted: it bought a
+  /// wider picture, but a card cropped to a square and enlarged reads as
+  /// stretched, which is not worth the width.
   ///
-  /// The ceiling is now `3 * CollectionTileTokens.actionButtonSize` = 105,
-  /// which is what still sets the row's height; 80 is comfortably inside it, so
-  /// this is free.
-  ///
-  /// The crop keeps the card's name and the whole art box — see
-  /// [CollectionTileTokens.artAlignment], which is what makes it a fair trade
-  /// rather than a picture of the middle of a card.
-  static const double collectionTile = 80;
+  /// **The ceiling is 72, and it is worth knowing why.** The row's height is
+  /// set by its tallest child, which is the three-button action column at
+  /// `3 * CollectionTileTokens.actionButtonSize` = 105. The artwork is drawn at
+  /// the 59/86 card aspect, so it reaches 105pt tall at a width of ~72 — below
+  /// that the row's height is unchanged, above it every row in the list grows.
+  /// At 57.6 (84pt tall) this is comfortably inside that budget.
+  static const double collectionTile = list * 1.2;
 
   static const double detail = 200;
 }
@@ -318,16 +316,6 @@ class CollectionTileTokens {
   /// around 88pt and becomes the row's tallest child, holding it at ~100 and
   /// undoing the shrink; at 12 it is ~80, level with the artwork.
   static const double secondaryFontSize = 12;
-
-  /// Which slice of the card survives the row's square crop.
-  ///
-  /// A square window over a 59/86 card keeps 68.6% of its height, and the
-  /// remaining 31.4% is what the alignment slides. Centred (`0`) the window
-  /// runs 15.7%-84.3% and cuts the name off the top; at `-0.55` it runs
-  /// 7.1%-75.7%, which holds the name *and* the whole art box (roughly
-  /// 18%-70%), losing only the stat line at the bottom — which the row already
-  /// does not show.
-  static const Alignment artAlignment = Alignment(0, -0.55);
 }
 
 /// Geometry of the shared set/expansion search box.

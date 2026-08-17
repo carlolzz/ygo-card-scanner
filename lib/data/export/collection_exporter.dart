@@ -6,7 +6,9 @@ import 'package:riverpod_annotation/riverpod_annotation.dart';
 
 import '../db/dao/collection_dao.dart';
 import '../repositories/collection_repository.dart';
+import '../repositories/price_repository.dart';
 import 'collection_csv.dart';
+import 'collection_value_csv.dart';
 
 part 'collection_exporter.g.dart';
 
@@ -29,6 +31,31 @@ class CollectionExporter {
     final dir = await getApplicationDocumentsDirectory();
     final file = File(
       p.join(dir.path, 'ygo_collection_${_dateStamp(now ?? DateTime.now())}.csv'),
+    );
+    await file.writeAsString(csv);
+    return file.path;
+  }
+
+  /// Writes an already-computed [CollectionValue] as its own CSV.
+  ///
+  /// The value is **passed in**, not fetched: it has just been calculated and
+  /// is on screen, so exporting it needs no [PriceRepository] here, no second
+  /// pass over the price cache and — the point — no way for the file to hold
+  /// different numbers from the ones the user is looking at.
+  ///
+  /// A separate file from the collection export, with its own name, because it
+  /// is a separate format: it cannot be imported back (see
+  /// `collection_value_csv.dart`), and overwriting one with the other would be
+  /// a bad surprise.
+  Future<String> exportValueToCsv(CollectionValue value, {DateTime? now}) async {
+    final csv = collectionValueToCsv(value);
+
+    final dir = await getApplicationDocumentsDirectory();
+    final file = File(
+      p.join(
+        dir.path,
+        'ygo_collection_value_${_dateStamp(now ?? DateTime.now())}.csv',
+      ),
     );
     await file.writeAsString(csv);
     return file.path;

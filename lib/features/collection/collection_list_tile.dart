@@ -81,10 +81,9 @@ class CollectionListTile extends StatelessWidget {
               vertical: CollectionTileTokens.verticalPadding,
             ),
             child: Row(
-              // Everything is centred against the (tallest) action column, so
-              // the chip, the art, the name block and the quantity all sit on
-              // the row's midline — which is also where the middle action
-              // button (remove) lands.
+              // Everything is centred, so the chip, the art, the name block and
+              // the quantity all sit on the row's midline — which is also where
+              // the middle action button (remove) lands.
               crossAxisAlignment: CrossAxisAlignment.center,
               children: [
                 // Grade first, then the art: the chip is what the eye scans a
@@ -94,8 +93,8 @@ class CollectionListTile extends StatelessWidget {
                 // the chip rises by half the flag's height and the two end up
                 // equidistant from the tile's edges without any padding maths.
                 //
-                // Free, height-wise: the row is as tall as the 3*30 action
-                // column, and chip + gap + flag is under half of that.
+                // Free, height-wise: chip + gap + flag is well under the 80pt
+                // artwork that now sets the row's height.
                 Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
@@ -124,23 +123,28 @@ class CollectionListTile extends StatelessWidget {
                   ],
                 ),
                 const SizedBox(width: AppSpacing.md),
-                // The whole card, uncropped (a portrait card box + contain),
-                // rather than the default square centre-crop. The *art*
-                // thumbnail, so a card imported from CSV — which never went
-                // through `addOrIncrement` and so never triggered a download —
-                // fetches its picture the first time this row is built.
+                // A square crop of the card, aligned high so the name and the
+                // whole art box survive it — the one place in the app that does
+                // not draw the whole card, because a portrait thumbnail's
+                // height is what was keeping this row tall. See
+                // `CardThumbnailSizes.collectionTile` for the arithmetic.
+                //
+                // The *art* thumbnail, so a card imported from CSV — which
+                // never went through `addOrIncrement` and so never triggered a
+                // download — fetches its picture the first time this row is
+                // built.
                 CardArtThumbnail(
                   card: card,
                   size: CardThumbnailSizes.collectionTile,
-                  aspectRatio: ScanReticleTokens.cardAspectRatio,
-                  fit: BoxFit.contain,
+                  alignment: CollectionTileTokens.artAlignment,
                 ),
                 const SizedBox(width: AppSpacing.md),
                 // Name (up to 2 lines), then the set and the rarity on one line
                 // each — sitting to the right of the artwork and centred in the
-                // space left between it and the quantity. Even with a wrapped
-                // name this block stays inside the action column's height, so
-                // the third line costs the row nothing.
+                // space left between it and the quantity. The secondary lines
+                // are a step down in size so that even with a wrapped name this
+                // block stays inside the artwork's height and costs the row
+                // nothing; see `CollectionTileTokens.secondaryFontSize`.
                 Expanded(
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
@@ -161,7 +165,10 @@ class CollectionListTile extends StatelessWidget {
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             textAlign: TextAlign.center,
-                            style: TextStyle(color: palette.onSurfaceMuted),
+                            style: TextStyle(
+                              color: palette.onSurfaceMuted,
+                              fontSize: CollectionTileTokens.secondaryFontSize,
+                            ),
                           ),
                         ],
                     ],
@@ -181,13 +188,11 @@ class CollectionListTile extends StatelessWidget {
                 ),
                 const SizedBox(width: AppSpacing.xs),
                 // While selecting, the action column is **replaced**, not
-                // hidden, and the slot keeps its exact size. Two reasons: three
+                // hidden, and the slot keeps its exact size — three
                 // live-looking per-row buttons inside a multi-row mode invite
-                // the worst possible mis-tap, and `CollectionTileTokens`
-                // documents that this column is what sets the row's height — so
-                // removing it would reflow the whole list the instant the mode
-                // is entered, moving rows under the finger that just
-                // long-pressed. The check is an indicator; the whole-row
+                // the worst possible mis-tap, while a column that vanished
+                // would shift the row's other contents under the finger that
+                // just long-pressed. The check is an indicator; the whole-row
                 // `InkWell` is the target, which is the bigger one-handed hit
                 // area anyway.
                 if (selectionActive)
@@ -237,6 +242,20 @@ class CollectionListTile extends StatelessWidget {
 /// a 48pt minimum on every side, which makes three of them taller than the row
 /// they sit in — this trims the box to [CollectionTileTokens.actionButtonSize]
 /// while keeping the icon, colour and ripple.
+///
+/// **`constraints` alone does not do it, and the difference was invisible.**
+/// Material 3 builds [IconButton] through a [ButtonStyle], and that style's
+/// `minimumSize` and `tapTargetSize` are applied *outside* `constraints` — so
+/// the box obeyed `visualDensity: compact`'s 40pt floor and silently ignored
+/// the token, whatever it said. Every row was 40pt taller than
+/// [CollectionTileTokens] claimed.
+///
+/// Three things together are what make the token real, and removing any one
+/// puts the button back off-size: `tapTargetSize: shrinkWrap` (drops the 48pt
+/// tap-target padding), a pinned `minimumSize`/`maximumSize`, and
+/// `VisualDensity.standard` — density is applied *after* those and
+/// `compact` subtracts a further 8pt on each axis, which is what left the
+/// button at 27 rather than 35 on the first attempt at this.
 class _TileAction extends StatelessWidget {
   const _TileAction({
     required this.icon,
@@ -250,16 +269,20 @@ class _TileAction extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    const size = CollectionTileTokens.actionButtonSize;
     return IconButton(
       icon: Icon(icon),
       color: color,
       onPressed: onPressed,
       iconSize: CollectionTileTokens.actionIconSize,
       padding: EdgeInsets.zero,
-      visualDensity: VisualDensity.compact,
-      constraints: const BoxConstraints.tightFor(
-        width: CollectionTileTokens.actionButtonSize,
-        height: CollectionTileTokens.actionButtonSize,
+      visualDensity: VisualDensity.standard,
+      constraints: const BoxConstraints.tightFor(width: size, height: size),
+      style: IconButton.styleFrom(
+        minimumSize: const Size.square(size),
+        maximumSize: const Size.square(size),
+        padding: EdgeInsets.zero,
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
       ),
     );
   }

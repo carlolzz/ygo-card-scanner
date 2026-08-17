@@ -41,6 +41,7 @@ lib/
     theme/app_theme.dart
     theme/tokens.dart
     constants.dart
+    money.dart
     result.dart
   data/
     db/
@@ -49,12 +50,14 @@ lib/
       dao/card_dao.dart
       dao/printing_dao.dart
       dao/collection_dao.dart
+      dao/card_price_dao.dart
       dao/meta_dao.dart
     api/ygoprodeck_client.dart
     api/card_image_downloader.dart
     repositories/card_repository.dart
     repositories/collection_repository.dart
     repositories/settings_repository.dart
+    repositories/price_repository.dart
     seed/fake_collection_seed.dart
     export/collection_csv.dart        # writer  ┐ one format,
     export/collection_csv_parser.dart # reader  ┘ one directory
@@ -70,6 +73,7 @@ lib/
     card_condition.dart
     card_edition.dart
     card_language.dart
+    card_prices.dart
     app_settings.dart
     app_theme_mode.dart
   features/
@@ -77,10 +81,14 @@ lib/
     scan/
     collection/
     add_card/
+    card_search/
+    pricing/
+    statistics/
     sync/
     settings/
   shared/widgets/
     card_thumbnail.dart
+    card_details_view.dart
 test/
   data/db/
   data/repositories/
@@ -93,7 +101,7 @@ tools/
 assets/
 ```
 
-## Database schema (version 2)
+## Database schema (version 3)
 
 ```sql
 CREATE TABLE cards (
@@ -138,6 +146,16 @@ CREATE TABLE collection_entries (
 );
 CREATE INDEX idx_entries_passcode ON collection_entries(passcode);
 
+CREATE TABLE card_prices (          -- v3
+  passcode      TEXT PRIMARY KEY REFERENCES cards(passcode) ON DELETE CASCADE,
+  cardmarket    REAL,               -- EUR; every other column is USD
+  tcgplayer     REAL,
+  ebay          REAL,
+  amazon        REAL,
+  coolstuffinc  REAL,
+  updated_at    INTEGER NOT NULL
+);
+
 CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
 ```
 
@@ -162,7 +180,17 @@ Notes:
   `lib/data/db/migrations.dart`, so v2+ can be appended later. `schema_version`
   is mirrored into the `meta` table alongside sqflite's own `user_version`.
   v2 added `cards.local_image_path` (see `lib/data/db/dao/meta_dao.dart` for
-  the DAO — a plain get/set(key, value), REPLACE semantics).
+  the DAO — a plain get/set(key, value), REPLACE semantics); v3 added the
+  `card_prices` cache.
+- **`card_prices` is a cache, and a re-sync deliberately empties it.**
+  `CardDao.insertAll` uses `ConflictAlgorithm.replace`, i.e. `INSERT OR
+  REPLACE`, which *deletes and re-inserts* each `cards` row — so every child row
+  with an `ON DELETE CASCADE` goes with it, exactly as already happens to
+  `printings` and to `cards.local_image_path`. That is wanted here: prices from
+  before a re-sync are the most stale ones. Every row is re-fetchable, so
+  nothing in this table is user data. **Per-set prices are not stored** —
+  YGOPRODeck reports `card_sets[].set_price` (USD only) alongside the card-level
+  figures, and those are read live on a card's Prices tab rather than persisted.
 - `meta` also carries a `last_sync` key (epoch ms), written at the end of
   `CardRepository.sync()`'s transaction. `CardRepository.needsSync()`
   treats a missing `last_sync` OR an empty `cards` table as "needs sync" —
@@ -1861,35 +1889,19 @@ order):
     became camera-dependent. It now uses a new `scanStatusBannerKey`, following
     `scanReticleKey` — the assertion is about *where* the banner is, and coupling
     it to *what it says* was always incidental.
-    **Default rarity, and it only ever picks a set the card actually has.**
-    `AppSettings.defaultRarity` is a **`String?`** in the existing `meta` table
-    (`settings.default_rarity`), no migration. Not an enum, unlike condition and
-    edition: rarity is free-form text straight from YGOPRODeck's `set_rarity` and
-    runs to roughly ninety open-ended values. `MetaDao` has no delete, so "no
-    preference" persists as `''` and `_parseOptionalText` reads it — and a
-    hand-edited `'   '` — back as null.
-    Options come from a new `PrintingDao.distinctRarities()` (repo passthrough,
-    `cardRaritiesProvider` beside `cardPrintings`), deliberately **not** a
-    `kCardLanguages`-style const list: there are nine language blocks but ninety
-    rarities, and a constant off by a word ("Secret" for "Secret Rare") would make
-    the preference silently never fire. Equally not
-    `CollectionDao.rarityFilterOptions()`, which is scoped to rarities already
-    owned — this is a default for cards *not yet logged*. The Settings control is
-    the existing `SearchableTextPicker`, since ninety chips is the very problem
-    the filter-sheet collapse above exists to fix.
-    The decision is one pure `preferredPrinting` in `lib/models/printing.dart`,
-    which **de-duplicates** the sole-printing rule both flows already carried
-    separately (`_solePrintingId`, now `_preferredPrintingId`, and
-    `selectCard`'s local). Order: no printings → null; **exactly one → that one,
-    whatever the preference says** (step 22 unchanged — the card came from
-    somewhere); several with exactly one matching the rarity → that one;
-    otherwise null. The last case is the user's own requirement — a card printed
-    only in Ultra and Secret Rare gets nothing when the preference is Common —
-    and two *matching* printings also yields null, because several is genuinely
-    the user's call and picking one would silently log the wrong set half the
-    time. Matching is case- and space-insensitive, since the stored value is free
-    text. `_settings` is already `ref.read` at controller build, so no new
-    plumbing.
+    **Default rarity** was added here and **removed again in step 24** — the
+    option list came from `PrintingDao.distinctRarities()` over the whole synced
+    database, which is ~90 open-ended YGOPRODeck `set_rarity` strings
+    (`10000 Secret Rare`, `Duel Terminal Normal Parallel Rare`, the bare values
+    `2` and `3`), so the control was unusable on device. `AppSettings
+    .defaultRarity`, its `meta` key, `cardRaritiesProvider`,
+    `CardRepository.distinctRarities` and the DAO method behind it are all gone;
+    a leftover `settings.default_rarity` row is inert. What survives is
+    `preferredPrinting` in `lib/models/printing.dart`, which this step created to
+    **de-duplicate** the sole-printing rule both logging flows carried separately
+    (`_solePrintingId`, now `_preferredPrintingId`, and `selectCard`'s local) —
+    it just no longer takes a rarity: no printings → null, exactly one → that
+    one, several → the user's call.
     **Test gotchas**: the fourth control pushed Appearance below the fold in the
     600pt viewport and the theme test's tap started missing. The `ListView` is
     **lazy**, so `ensureVisible` alone fails with "No element" — the widget is not
@@ -1947,6 +1959,138 @@ order):
     `CardDetectionTuning.innerQuadMinAreaRatio` at 0.78, the passcode ROI filter
     off, `artAgreementFrames` at 2, and every `FrameQualityTuning` threshold
     still uncalibrated on device.
+
+24. Card pricing, global card search, collection value — and the default-rarity
+    removal ← done (verified: `flutter analyze` clean, full `flutter test` green
+    at **649 tests**, `pytest tools/` green). **One DB migration (v2 → v3), no
+    new dependency.** Nothing here touches the descriptor,
+    `assets/card_hashes.json`, the detection algorithm or any scan/quality
+    threshold.
+    **Default rarity is gone** (see step 23's entry, amended). The picker's
+    options came from the whole synced database's `set_rarity` values — ~90
+    open-ended strings including `10000 Secret Rare` and the bare `2` and `3` —
+    so the control was unusable. Removed end to end: the `AppSettings` field and
+    its `copyWith` clear flag, the `meta` key and `SettingsRepository
+    ._parseOptionalText`, `SettingsController.setDefaultRarity`, the Settings
+    control, `cardRaritiesProvider`, `CardRepository.distinctRarities` and
+    `PrintingDao.distinctRarities` (a DAO method with no feature behind it is
+    dead code by this file's own rule). `preferredPrinting` keeps the
+    sole-printing rule and loses its parameter. `SearchableTextPicker` **stays**
+    — the collection filter sheet's Set box uses it.
+    **The pricing constraint, and it is not negotiable.** YGOPRODeck reports
+    prices at two granularities that do not line up: `card_prices[0]` is
+    *card-level* (`cardmarket_price` in **EUR**, `tcgplayer`/`ebay`/`amazon`/
+    `coolstuffinc` in **USD**), documented as "the lowest price found across
+    multiple versions of that card"; `card_sets[].set_price` is per set+rarity
+    and is **a single USD figure**. So there is no per-set Cardmarket price and
+    there never will be from this API. The UI says so in both halves rather than
+    implying one exists, and the collection total is reported as **two separate
+    figures**, never summed — this app carries no exchange rate, and inventing
+    one turns a stated estimate into a wrong number.
+    **Data layer.** Migration v3 adds `card_prices` (card-level only; see the
+    schema section for why its cascade means a re-sync empties it). New
+    `CardPriceDao` follows step 17's dynamic-`IN` convention; new
+    `CollectionDao.quantityByPasscode()` groups by passcode rather than per entry
+    because pricing is a property of the *card* — a card held in two languages is
+    two rows and one lookup — and that key set is exactly what bounds the request
+    count. `YgoProdeckClient` gained `fetchPrices` over `cardinfo.php?id=` with
+    the parsing extracted to top-level `parsePricingEntry`/`parsePrice`, pure and
+    host-tested (a wrong parse here does not crash, it reports a plausible wrong
+    valuation — the `card_quad.dart` argument). Two behaviours worth keeping:
+    prices arrive as **strings** (`"0.29"`), and `parsePrice` folds `"0.00"` into
+    **null**, because that value means "no figure" rather than "free" — which is
+    what lets every display site and the total share one rule. `?id=` with no
+    match answers **HTTP 400**, caught per chunk and returned as empty rather
+    than failing a whole valuation. `BaseOptions` finally has timeouts
+    (15s connect / 30s receive — Dio's receive timeout is the gap *between*
+    chunks, so the 15 MB bulk sync is unaffected); there were none anywhere
+    before.
+    `PriceRepository` chunks at `kPriceChunkSize` (50) — 18 sequential requests
+    for a 900-card collection, trivially inside the 20/second limit — writes each
+    chunk as it lands so an interrupted run keeps its progress, and reuses cached
+    rows under `kPriceTtl` (24 h). `asOf` is the **oldest** price in the total, so
+    the stamp describes all of it. `lib/core/money.dart` formats both currencies
+    by hand (`intl` is not in the stack and two fixed-decimal symbols need no
+    locale machinery) and renders an em dash, never `0.00`, for an unknown.
+    **Riverpod 3 retries failed providers by default, and that is a UI bug here.**
+    A provider that throws is re-run on a doubling backoff and stays
+    `AsyncLoading` *carrying* the error while it waits — so `.when(error:)` never
+    fires and an offline device sits on a spinner forever instead of seeing
+    "could not load prices" and a Retry. Both pricing providers therefore set
+    `retry: _noRetry`. Found by a test that could not reach its own error branch;
+    `card_prices_view_test` documents the symptom so a "tidy-up" cannot silently
+    restore it.
+    **UI.** Home is five destinations: the 2x2 grid is unchanged and Card Search
+    is a **full-width tile beneath it** (`HomeMenuTokens.gridRowFlex` /
+    `wideTileFlex`, `HomeMenuTile(wide: true)` laying icon and label out in a row).
+    A sixth empty slot would have shortened every tile by a third to show
+    nothing, and the fixed non-scrolling layout is not negotiable — a scrolling
+    grid once pushed tiles off short viewports. New `lib/features/card_search/`
+    (search screen + `CardDetailScreen`) and `lib/features/pricing/`
+    (`CardPricesView`, `CardPriceEstimate`, providers). Both card screens are
+    `DefaultTabController(length: 2)` — **Details / Prices** — and the split is
+    not cosmetic: Details is answered entirely from the local database while
+    Prices needs the network, so folding them together would make reading a
+    card's effect text depend on being online. The card's own facts moved to
+    `lib/shared/widgets/card_details_view.dart` (`CardDetailsView` +
+    `CardDetailRow`, the old private `_DetailRow`), shared verbatim by both
+    screens: the Spell/Trap label switch, the hidden redundant attribute and the
+    flavour-vs-effect heading are *rules*, and a second copy would drift.
+    `CollectionDetailScreen` keeps everything entry-specific (grade pill,
+    quantity ±, set/rarity/edition/language, `_LanguageBreakdown`) on its Details
+    tab and passes it through `CardDetailsView`'s new `leading` slot. The
+    "button to see the pricing" is `CardPriceEstimate` — a tappable row showing
+    one *stack's* worth (priced by quantity) that calls
+    `DefaultTabController.of(context).animateTo(1)`, i.e. a link to the tab
+    beside it rather than a second destination. It renders **nothing** while
+    unresolved or unpriced, so a card's effect text is never pushed down or made
+    to look broken by a missing price.
+    Statistics gained `_CollectionValueSection` + `CollectionValueController`,
+    shaped like `ResyncController` (nullable state, inline progress, non-blocking
+    failure). **On demand, never on open** — it is a burst of network requests,
+    which is why it is a controller starting at null and not a `FutureProvider`
+    the screen watches into existence. Progress is real counts ("Priced 120 / 340
+    cards") because this can be a dozen sequential requests. Rendered only in the
+    populated branch, unlike the import button beside it.
+    **The collection row: 32 % more artwork in an 11 % shorter row — and the
+    tokens had been lying.** `_TileAction` sized its buttons through
+    `constraints`, but Material 3 builds `IconButton` through a `ButtonStyle`
+    whose `minimumSize`/`tapTargetSize` apply *outside* those — so every button
+    rendered at `visualDensity: compact`'s 40pt floor whatever `actionButtonSize`
+    said, and the row was **132pt while `CollectionTileTokens` documented 102**.
+    Nothing caught it because nothing measured the row. Fixing it needs three
+    things together (`tapTargetSize: shrinkWrap`, a pinned `minimumSize`/
+    `maximumSize`, and `VisualDensity.standard` — density is applied *after* the
+    size and `compact` subtracts a further 8pt, which left the first attempt at
+    27 rather than 35). With that real, `actionButtonSize` 35 puts the row at
+    `2*6 + 3*35 = 117`.
+    The artwork is now a **square crop** (`CardThumbnailSizes.collectionTile` 80,
+    `BoxFit.cover`, `CollectionTileTokens.artAlignment` `(0, -0.55)`), the one
+    place in the app that does not draw the whole card. That is what makes
+    "bigger picture, shorter row" possible at all: a card is 1.46x as tall as it
+    is wide, so its *height* is what competed with the action column, and every
+    previous attempt to enlarge it grew the row. At 80x80 it is 39 % wider and
+    32 % larger in area than the 57.6x84 portrait, and still inside the 105pt
+    column. The alignment is load-bearing — a centred square crop of a card opens
+    below its name; at -0.55 the window runs 7.1 %-75.7 % and keeps the name and
+    the whole art box. `CardThumbnail`/`CardArtThumbnail` gained an `alignment`
+    parameter for it. `CollectionTileTokens.secondaryFontSize` (12) is arithmetic
+    rather than taste: at the inherited body size a wrapped name plus set and
+    rarity lands ~88pt and becomes the tallest child, holding the row at ~100.
+    `collection_list_tile_geometry_test.dart` measures the row, the buttons and
+    the crop, because the failure mode here is a silent green.
+    **Test gotchas**: `flutter_riverpod` does not re-export Riverpod's `Override`
+    type, so a helper cannot be parameterized by it — pass the *value* and build
+    the override inside. And `tester.pumpWidget` reuses the `ProviderScope`
+    element between two pumps in one test, so the container survives and a
+    controller keeps its state; a distinct `ValueKey` is what forces a genuinely
+    fresh scope (`collection_value_test`'s cache-reuse case needs one).
+    **Still open**, unchanged: `maxHammingDistance` at 72,
+    `CardDetectionTuning.innerQuadMinAreaRatio` at 0.78, the passcode ROI filter
+    off, `artAgreementFrames` at 2, and every `FrameQualityTuning` threshold
+    still uncalibrated on device. New and open: whether `kPriceTtl` at 24 h is
+    right, and whether the per-set USD table is useful enough on its own given
+    Cardmarket cannot appear beside it.
 
 ## Standing rules
 

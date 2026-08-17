@@ -31,11 +31,18 @@ const List<_HomeTileSpec> _tiles = [
     label: AppStrings.homeTileSettings,
     route: AppRoutes.settings,
   ),
+  // The odd one out, rendered full width under the grid — see [HomeMenuTokens].
+  (
+    icon: Icons.search,
+    label: AppStrings.homeTileCardSearch,
+    route: AppRoutes.cardSearch,
+  ),
 ];
 
-/// Four tiles filling the screen in a fixed 2x2 layout — deliberately not a
-/// scrolling GridView. All four must be visible and reachable at a glance,
-/// without scrolling, on any device.
+/// Five tiles filling the screen in a fixed layout — a 2x2 grid with Card
+/// Search full-width beneath it, and deliberately not a scrolling GridView.
+/// All five must be visible and reachable at a glance, without scrolling, on
+/// any device.
 class HomeScreen extends StatelessWidget {
   const HomeScreen({super.key});
 
@@ -49,9 +56,25 @@ class HomeScreen extends StatelessWidget {
           child: Column(
             children: [
               const _ScanPrewarm(),
-              Expanded(child: _HomeTileRow(left: _tiles[0], right: _tiles[1])),
+              Expanded(
+                flex: HomeMenuTokens.gridRowFlex,
+                child: _HomeTileRow(left: _tiles[0], right: _tiles[1]),
+              ),
               const SizedBox(height: HomeMenuTokens.tileSpacing),
-              Expanded(child: _HomeTileRow(left: _tiles[2], right: _tiles[3])),
+              Expanded(
+                flex: HomeMenuTokens.gridRowFlex,
+                child: _HomeTileRow(left: _tiles[2], right: _tiles[3]),
+              ),
+              const SizedBox(height: HomeMenuTokens.tileSpacing),
+              Expanded(
+                flex: HomeMenuTokens.wideTileFlex,
+                child: HomeMenuTile(
+                  icon: _tiles[4].icon,
+                  label: _tiles[4].label,
+                  wide: true,
+                  onTap: () => context.push(_tiles[4].route),
+                ),
+              ),
             ],
           ),
         ),

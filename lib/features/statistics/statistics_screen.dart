@@ -3,15 +3,18 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:share_plus/share_plus.dart';
 
 import '../../core/constants.dart';
+import '../../core/money.dart';
 import '../../core/theme/tokens.dart';
 import '../../data/export/collection_csv_parser.dart';
 import '../../data/export/collection_exporter.dart';
 import '../../data/import/collection_import_plan.dart';
 import '../../data/import/collection_importer.dart';
 import '../../data/import/csv_file_source.dart';
+import '../../data/repositories/price_repository.dart';
 import '../../models/card_condition.dart';
 import '../../models/card_language.dart';
 import '../collection/collection_providers.dart';
+import '../pricing/card_prices_view.dart';
 import 'statistics_providers.dart';
 
 /// Collection statistics: totals and breakdowns by condition, language, and
@@ -106,6 +109,8 @@ class _StatisticsBody extends StatelessWidget {
           title: AppStrings.statisticsByTypeSection,
           rows: _typeRows(stats.byCardType),
         ),
+        const SizedBox(height: AppSpacing.md),
+        const _CollectionValueSection(),
         const SizedBox(height: AppSpacing.md),
         const _Actions(),
       ],
@@ -235,6 +240,153 @@ class _BreakdownSection extends StatelessWidget {
             ),
           ),
         const SizedBox(height: AppSpacing.md),
+      ],
+    );
+  }
+}
+
+/// What the collection is worth, on demand.
+///
+/// **On demand, never on open.** Valuing a collection is a burst of network
+/// requests — one per 50 distinct cards — so it happens when the user asks for
+/// it, which is why `CollectionValueController` starts null rather than being a
+/// `FutureProvider` the screen watches into existence.
+///
+/// Only rendered in the populated branch: there is nothing to value in an empty
+/// collection, unlike the import button beside it, which is most useful exactly
+/// there.
+class _CollectionValueSection extends ConsumerWidget {
+  const _CollectionValueSection();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final state = ref.watch(collectionValueControllerProvider);
+    final controller = ref.read(collectionValueControllerProvider.notifier);
+    final palette = AppPalette.of(context);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          AppStrings.statisticsValueSection,
+          style: TextStyle(
+            color: palette.onSurface,
+            fontWeight: FontWeight.bold,
+            fontSize: CardDetailTokens.sectionFontSize,
+          ),
+        ),
+        const SizedBox(height: AppSpacing.sm),
+        switch (state?.status) {
+          null => SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              icon: const Icon(Icons.payments_outlined),
+              label: const Text(AppStrings.statisticsValueButton),
+              onPressed: controller.calculate,
+            ),
+          ),
+          CollectionValueStatus.running => Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const LinearProgressIndicator(),
+              const SizedBox(height: AppSpacing.xs),
+              Text(
+                AppStrings.statisticsValueProgress(state!.done, state.total),
+                style: TextStyle(color: palette.onSurfaceMuted),
+              ),
+            ],
+          ),
+          CollectionValueStatus.failure => Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                AppStrings.statisticsValueErrorMessage,
+                style: TextStyle(color: palette.onSurfaceMuted),
+              ),
+              const SizedBox(height: AppSpacing.sm),
+              OutlinedButton(
+                onPressed: controller.calculate,
+                child: const Text(AppStrings.pricesRetryButton),
+              ),
+            ],
+          ),
+          CollectionValueStatus.success => _ValueResult(
+            value: state!.value!,
+            onRefresh: () => controller.calculate(forceRefresh: true),
+          ),
+        },
+      ],
+    );
+  }
+}
+
+class _ValueResult extends StatelessWidget {
+  const _ValueResult({required this.value, required this.onRefresh});
+
+  final CollectionValue value;
+  final VoidCallback onRefresh;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = AppPalette.of(context);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Two tiles, never one sum: Cardmarket is euros and TCGplayer is
+        // dollars, and this app carries no exchange rate.
+        Row(
+          children: [
+            Expanded(
+              child: _StatTile(
+                label: AppStrings.statisticsValueCardmarketLabel,
+                value: formatEur(value.cardmarketEur),
+              ),
+            ),
+            const SizedBox(width: AppSpacing.md),
+            Expanded(
+              child: _StatTile(
+                label: AppStrings.statisticsValueTcgplayerLabel,
+                value: formatUsd(value.tcgplayerUsd),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: AppSpacing.sm),
+        // Hidden at zero, like the import dialog's counts: a total assembled
+        // from a whole collection should not warn about a problem that does not
+        // exist.
+        if (value.unpricedCards > 0)
+          Text(
+            AppStrings.statisticsValueUnpriced(value.unpricedCards),
+            style: TextStyle(
+              color: palette.onSurfaceMuted,
+              fontSize: PriceTokens.footnoteFontSize,
+            ),
+          ),
+        Text(
+          AppStrings.statisticsValueNote,
+          style: TextStyle(
+            color: palette.onSurfaceMuted,
+            fontSize: PriceTokens.footnoteFontSize,
+          ),
+        ),
+        if (value.asOf != null)
+          Text(
+            AppStrings.pricesFetchedAt(formatFetchedAt(value.asOf!)),
+            style: TextStyle(
+              color: palette.onSurfaceMuted,
+              fontSize: PriceTokens.footnoteFontSize,
+            ),
+          ),
+        const SizedBox(height: AppSpacing.sm),
+        SizedBox(
+          width: double.infinity,
+          child: OutlinedButton.icon(
+            icon: const Icon(Icons.refresh),
+            label: const Text(AppStrings.statisticsValueRefreshButton),
+            onPressed: onRefresh,
+          ),
+        ),
       ],
     );
   }

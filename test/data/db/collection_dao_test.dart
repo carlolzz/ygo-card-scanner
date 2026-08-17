@@ -819,6 +819,21 @@ void main() {
         'Effect Monster': 5,
       });
     });
+
+    // Backs valuing the collection. Grouped by passcode because pricing is a
+    // property of the card, not the entry: Blue-Eyes' two language rows price
+    // identically, so they must arrive as one lookup of five copies rather than
+    // two of three and two.
+    test('quantityByPasscode folds every entry of a card into one', () async {
+      expect(await collectionDao.quantityByPasscode(), {
+        _blueEyes.passcode: 5,
+        _redEyes.passcode: 5,
+      });
+    });
+  });
+
+  test('quantityByPasscode on an empty collection is empty', () async {
+    expect(await collectionDao.quantityByPasscode(), isEmpty);
   });
 
   group('getAll printing join', () {

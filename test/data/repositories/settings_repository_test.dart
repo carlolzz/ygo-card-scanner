@@ -36,9 +36,6 @@ void main() {
     expect(settings.showScanHelp, isTrue);
     expect(settings.confirmBeforeDelete, isTrue);
     expect(settings.collectionViewMode, CollectionViewMode.standard);
-    // No preference is the default: most collections are mixed, and a wrong
-    // preselection fills a field the user then has no reason to re-check.
-    expect(settings.defaultRarity, isNull);
   });
 
   test('save then load round-trips every field', () async {
@@ -47,7 +44,6 @@ void main() {
         defaultCondition: CardCondition.lightPlayed,
         defaultEdition: CardEdition.first,
         language: 'DE',
-        defaultRarity: 'Secret Rare',
         themeMode: AppThemeMode.light,
         showScanDiagnostics: true,
         showScanHelp: false,
@@ -61,7 +57,6 @@ void main() {
     expect(settings.defaultCondition, CardCondition.lightPlayed);
     expect(settings.defaultEdition, CardEdition.first);
     expect(settings.language, 'DE');
-    expect(settings.defaultRarity, 'Secret Rare');
     expect(settings.themeMode, AppThemeMode.light);
     expect(settings.showScanDiagnostics, isTrue);
     expect(settings.showScanHelp, isFalse);
@@ -69,23 +64,16 @@ void main() {
     expect(settings.collectionViewMode, CollectionViewMode.minifyFull);
   });
 
-  // `MetaDao` is a get/set pair with no delete, so "no preference" has to be
-  // storable rather than absent — clearing the setting writes an empty string,
-  // and it has to read back as null or the preference could never be turned off.
-  test('clearing the rarity preference round-trips as no preference', () async {
-    await repository.save(const AppSettings(defaultRarity: 'Common'));
-    expect((await repository.load()).defaultRarity, 'Common');
+  // Step 24 removed the default-rarity preference. Rows written by an earlier
+  // build are simply never read again — `meta` is an open key/value table, so a
+  // leftover key is inert rather than something to migrate away.
+  test('a leftover default_rarity row is ignored', () async {
+    await metaDao.set('settings.default_rarity', 'Secret Rare');
 
-    await repository.save(const AppSettings());
-    expect((await repository.load()).defaultRarity, isNull);
-    expect(await metaDao.get('settings.default_rarity'), '');
-  });
+    final settings = await repository.load();
 
-  test('a blank stored rarity reads as no preference', () async {
-    // A hand-edited value of pure whitespace would otherwise become a rarity
-    // that matches nothing, which looks exactly like the feature being broken.
-    await metaDao.set('settings.default_rarity', '   ');
-    expect((await repository.load()).defaultRarity, isNull);
+    expect(settings.defaultCondition, CardCondition.nearMint);
+    expect(settings.language, 'EN');
   });
 
   test('a malformed boolean falls back to its default', () async {

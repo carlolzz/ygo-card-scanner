@@ -10,8 +10,6 @@ import '../../models/card_condition.dart';
 import '../../models/card_edition.dart';
 import '../../models/card_language.dart';
 import '../../shared/widgets/labeled_choice_chip.dart';
-import '../../shared/widgets/searchable_text_picker.dart';
-import '../collection/collection_providers.dart';
 import '../sync/initial_sync_providers.dart';
 import 'settings_providers.dart';
 
@@ -109,19 +107,6 @@ class _SettingsBody extends ConsumerWidget {
           onChanged: (language) {
             if (language != null) controller.setLanguage(language);
           },
-        ),
-        const SizedBox(height: AppSpacing.md),
-        const _FieldLabel(label: AppStrings.settingsRarityLabel),
-        // A search box rather than a chip row: rarity runs to roughly ninety
-        // open-ended values from YGOPRODeck, which is the very wall of chips the
-        // collection filter sheet's collapse rule exists to avoid. This is the
-        // widget built for exactly that shape.
-        SearchableTextPicker(
-          values: ref.watch(cardRaritiesProvider).value ?? const [],
-          selected: settings.defaultRarity,
-          anyLabel: AppStrings.settingsRarityAny,
-          hintText: AppStrings.settingsRarityHint,
-          onSelected: controller.setDefaultRarity,
         ),
         const Divider(height: AppSpacing.xl),
         const _SectionHeader(title: AppStrings.settingsAppearanceSection),

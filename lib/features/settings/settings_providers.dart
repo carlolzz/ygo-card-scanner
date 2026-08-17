@@ -33,12 +33,6 @@ class SettingsController extends _$SettingsController {
   Future<void> setLanguage(String language) =>
       _update((s) => s.copyWith(language: language));
 
-  /// Null clears the preference, which is why this goes through the explicit
-  /// clear flag rather than passing null to `copyWith`.
-  Future<void> setDefaultRarity(String? rarity) => _update(
-    (s) => s.copyWith(defaultRarity: rarity, clearDefaultRarity: rarity == null),
-  );
-
   Future<void> setThemeMode(AppThemeMode themeMode) =>
       _update((s) => s.copyWith(themeMode: themeMode));
 

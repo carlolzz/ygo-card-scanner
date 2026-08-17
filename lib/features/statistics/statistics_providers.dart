@@ -1,6 +1,7 @@
 import 'package:riverpod_annotation/riverpod_annotation.dart';
 
 import '../../data/repositories/collection_repository.dart';
+import '../../data/repositories/price_repository.dart';
 import '../../data/seed/fake_collection_seed.dart';
 
 part 'statistics_providers.g.dart';
@@ -47,4 +48,71 @@ Future<CollectionStats> collectionStats(Ref ref) async {
     byLanguage: results[3] as Map<String, int>,
     byCardType: results[4] as Map<String, int>,
   );
+}
+
+enum CollectionValueStatus { running, success, failure }
+
+/// What the collection-value section is showing. Null state means "not asked
+/// yet" — the button, not a total of zero.
+class CollectionValueState {
+  const CollectionValueState({
+    required this.status,
+    this.done = 0,
+    this.total = 0,
+    this.value,
+    this.error,
+  });
+
+  final CollectionValueStatus status;
+
+  /// Distinct passcodes priced so far, and how many there are. Real counts
+  /// rather than a fraction because this can be a dozen sequential requests,
+  /// and "Priced 120 / 340 cards" tells the user whether to wait.
+  final int done;
+  final int total;
+
+  final CollectionValue? value;
+  final Object? error;
+}
+
+/// Values the collection on demand, reporting progress inline.
+///
+/// Shaped like `ResyncController` and for the same reasons: a nullable state so
+/// "not run yet" is distinct from "ran and produced nothing", progress on the
+/// state rather than a stream, and a **non-blocking** failure — the user can
+/// simply walk away from a price fetch, unlike the first-launch sync gate.
+///
+/// Deliberately not a plain `FutureProvider`: this must never run because a
+/// screen was opened. It is a burst of network requests, and it happens when
+/// the user asks for it.
+@riverpod
+class CollectionValueController extends _$CollectionValueController {
+  @override
+  CollectionValueState? build() => null;
+
+  Future<void> calculate({bool forceRefresh = false}) async {
+    state = const CollectionValueState(status: CollectionValueStatus.running);
+    try {
+      final repository = await ref.read(priceRepositoryProvider.future);
+      final value = await repository.collectionValue(
+        forceRefresh: forceRefresh,
+        onProgress: (done, total) => state = CollectionValueState(
+          status: CollectionValueStatus.running,
+          done: done,
+          total: total,
+        ),
+      );
+      state = CollectionValueState(
+        status: CollectionValueStatus.success,
+        done: value.pricedCards + value.unpricedCards,
+        total: value.pricedCards + value.unpricedCards,
+        value: value,
+      );
+    } catch (e) {
+      state = CollectionValueState(
+        status: CollectionValueStatus.failure,
+        error: e,
+      );
+    }
+  }
 }

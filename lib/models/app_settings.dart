@@ -18,7 +18,6 @@ class AppSettings {
     this.defaultCondition = CardCondition.nearMint,
     this.defaultEdition = CardEdition.unlimited,
     this.language = kDefaultCardLanguage,
-    this.defaultRarity,
     // Dark-first, per the project's design direction.
     this.themeMode = AppThemeMode.dark,
     this.showScanDiagnostics = false,
@@ -36,18 +35,6 @@ class AppSettings {
   /// gate and the manual add wizard. It is only the default — each card's
   /// language is editable per entry at log time (the camera can't read it).
   final String language;
-
-  /// Preferred rarity when a card has several printings to choose between.
-  ///
-  /// Null means no preference, and that is the default: most collections are
-  /// mixed, and a wrong preselection is worse than none — it fills a field the
-  /// user then has no reason to re-check. Unlike condition and edition this is
-  /// **not** an enum: rarity is free-form text straight from YGOPRODeck's
-  /// `set_rarity` and runs to roughly ninety open-ended values.
-  ///
-  /// It only ever selects among the printings a card actually has — see
-  /// `preferredPrinting` for the rule and why a lone printing outranks it.
-  final String? defaultRarity;
 
   final AppThemeMode themeMode;
 
@@ -78,11 +65,6 @@ class AppSettings {
     CardCondition? defaultCondition,
     CardEdition? defaultEdition,
     String? language,
-    String? defaultRarity,
-    // [defaultRarity] is meaningfully nullable, so `null` cannot mean "leave
-    // alone" — clearing the preference needs its own flag, the same convention
-    // `CollectionFilter` and `ScanState` use for their nullable fields.
-    bool clearDefaultRarity = false,
     AppThemeMode? themeMode,
     bool? showScanDiagnostics,
     bool? showScanHelp,
@@ -93,9 +75,6 @@ class AppSettings {
       defaultCondition: defaultCondition ?? this.defaultCondition,
       defaultEdition: defaultEdition ?? this.defaultEdition,
       language: language ?? this.language,
-      defaultRarity: clearDefaultRarity
-          ? null
-          : (defaultRarity ?? this.defaultRarity),
       themeMode: themeMode ?? this.themeMode,
       showScanDiagnostics: showScanDiagnostics ?? this.showScanDiagnostics,
       showScanHelp: showScanHelp ?? this.showScanHelp,

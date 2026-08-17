@@ -29,6 +29,7 @@ void main() {
         'cards',
         'printings',
         'collection_entries',
+        'card_prices',
         'meta',
         'idx_cards_name',
         'idx_printings_passcode',
@@ -39,14 +40,14 @@ void main() {
 
   test('schema version is recorded via sqflite and in meta', () async {
     final versionResult = await db.rawQuery('PRAGMA user_version');
-    expect(versionResult.first['user_version'], 2);
+    expect(versionResult.first['user_version'], 3);
 
     final metaResult = await db.query(
       'meta',
       where: 'key = ?',
       whereArgs: ['schema_version'],
     );
-    expect(metaResult.single['value'], '2');
+    expect(metaResult.single['value'], '3');
   });
 
   test('foreign keys are enforced on this connection', () async {
@@ -57,9 +58,20 @@ void main() {
   test('v2 adds cards.local_image_path', () async {
     final columns = await db.rawQuery('PRAGMA table_info(cards)');
     expect(columns.map((c) => c['name']), contains('local_image_path'));
+  });
 
-    final versionResult = await db.rawQuery('PRAGMA user_version');
-    expect(versionResult.first['user_version'], 2);
+  test('v3 adds the card_prices cache', () async {
+    final columns = await db.rawQuery('PRAGMA table_info(card_prices)');
+
+    expect(columns.map((c) => c['name']), <String>[
+      'passcode',
+      'cardmarket',
+      'tcgplayer',
+      'ebay',
+      'amazon',
+      'coolstuffinc',
+      'updated_at',
+    ]);
   });
 
   test('upgrading from v1 to v2 preserves existing rows', () async {
@@ -91,5 +103,34 @@ void main() {
     expect(columns.map((c) => c['name']), contains('local_image_path'));
 
     await v1Db.close();
+  });
+
+  test('upgrading from v2 to v3 preserves existing rows', () async {
+    final v2Db = await databaseFactoryFfi.openDatabase(
+      inMemoryDatabasePath,
+      options: OpenDatabaseOptions(
+        version: 2,
+        onConfigure: AppDatabase.onConfigure,
+        onCreate: AppDatabase.onCreate,
+        singleInstance: false,
+      ),
+    );
+    await v2Db.insert('cards', {
+      'passcode': '89631139',
+      'name': 'Blue-Eyes White Dragon',
+      'local_image_path': '/cards/89631139.jpg',
+    });
+
+    await AppDatabase.onUpgrade(v2Db, 2, 3);
+
+    final rows = await v2Db.query('cards');
+    expect(rows, hasLength(1));
+    expect(rows.single['local_image_path'], '/cards/89631139.jpg');
+
+    // The new table starts empty — prices are fetched on demand, never
+    // backfilled by the migration.
+    expect(await v2Db.query('card_prices'), isEmpty);
+
+    await v2Db.close();
   });
 }

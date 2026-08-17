@@ -52,22 +52,4 @@ class PrintingDao {
 
   /// Every rarity the synced card database knows about, alphabetically.
   ///
-  /// Backs the Settings default-rarity picker, so it is deliberately the whole
-  /// universe from the sync rather than
-  /// `CollectionDao.rarityFilterOptions`'s collection-scoped list: this is a
-  /// default for cards *not yet logged*, and offering only rarities already
-  /// owned would make it useless on a fresh install.
-  ///
-  /// A hand-written const list was the alternative (the `kCardLanguages`
-  /// convention) and is wrong here: there are nine language blocks but roughly
-  /// ninety rarity strings, free-form text straight from YGOPRODeck's
-  /// `set_rarity`. A constant subtly off by a word ("Secret" for "Secret Rare")
-  /// would make the preference silently never match anything.
-  Future<List<String>> distinctRarities() async {
-    final rows = await _db.rawQuery(
-      'SELECT DISTINCT rarity FROM printings '
-      "WHERE rarity IS NOT NULL AND rarity <> '' ORDER BY rarity",
-    );
-    return [for (final row in rows) row['rarity'] as String];
-  }
 }

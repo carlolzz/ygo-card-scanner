@@ -120,76 +120,24 @@ void main() {
       setCode: 'DPBC-EN001',
       rarity: 'Secret Rare',
     );
-    const otherCommon = Printing(
-      id: 4,
-      passcode: '89631139',
-      setCode: 'SDK-001',
-      rarity: 'Common',
-    );
 
     test('a card with no printings gets nothing', () {
-      expect(preferredPrinting(const [], defaultRarity: 'Common'), isNull);
+      expect(preferredPrinting(const []), isNull);
     });
 
     // Step 22's behaviour, unchanged: the card came from somewhere, and making
     // the user tap a decision with one option risks them leaving it untapped.
-    test('a lone printing wins whatever the preference says', () {
+    test('a lone printing is picked', () {
       expect(preferredPrinting(const [ultra]), ultra);
-      expect(preferredPrinting(const [ultra], defaultRarity: 'Common'), ultra);
     });
 
-    test('several printings and no preference is the user\'s call', () {
+    // The camera cannot tell which reprint is in hand, and picking one would
+    // silently log the wrong set. Step 24 removed the default-rarity preference
+    // that used to narrow this case, so several printings is always the user's
+    // call now.
+    test('several printings is the user\'s call', () {
       expect(preferredPrinting(const [common, ultra]), isNull);
-      expect(preferredPrinting(const [common, ultra], defaultRarity: ''), isNull);
-      expect(
-        preferredPrinting(const [common, ultra], defaultRarity: '   '),
-        isNull,
-      );
-    });
-
-    test('exactly one printing of the preferred rarity is picked', () {
-      expect(
-        preferredPrinting(const [common, ultra, secret], defaultRarity: 'Ultra Rare'),
-        ultra,
-      );
-    });
-
-    // The user's own example: a card printed only in Ultra and Secret Rare with
-    // a Common preference gets nothing. The preference selects among what a card
-    // actually has; it never invents a printing.
-    test('a preference the card has no printing of does not apply', () {
-      expect(
-        preferredPrinting(const [ultra, secret], defaultRarity: 'Common'),
-        isNull,
-      );
-    });
-
-    // Two Commons in different sets: the camera cannot tell which reprint is in
-    // hand, and picking one would silently log the wrong set half the time.
-    test('two printings of the preferred rarity is still the user\'s call', () {
-      expect(
-        preferredPrinting(
-          const [common, otherCommon, ultra],
-          defaultRarity: 'Common',
-        ),
-        isNull,
-      );
-    });
-
-    test('matching ignores case and surrounding space', () {
-      // The preference is persisted free-form text, not an enum.
-      expect(
-        preferredPrinting(const [common, ultra], defaultRarity: '  ultra rare '),
-        ultra,
-      );
-    });
-
-    test('printings with no rarity never match a preference', () {
-      const noRarity = Printing(id: 5, passcode: '89631139', setCode: 'X-001');
-      expect(
-        preferredPrinting(const [noRarity, ultra], defaultRarity: 'Common'),
-        isNull,
-      );
+      expect(preferredPrinting(const [common, ultra, secret]), isNull);
     });
   });
 }

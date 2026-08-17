@@ -29,13 +29,54 @@ void main() {
     );
   }
 
-  testWidgets('renders all four home tile labels', (tester) async {
+  testWidgets('renders all five home tile labels', (tester) async {
     await pumpApp(tester);
 
     expect(find.text(AppStrings.homeTileLogCards), findsOneWidget);
     expect(find.text(AppStrings.homeTileMyCollection), findsOneWidget);
     expect(find.text(AppStrings.homeTileStatistics), findsOneWidget);
     expect(find.text(AppStrings.homeTileSettings), findsOneWidget);
+    expect(find.text(AppStrings.homeTileCardSearch), findsOneWidget);
+  });
+
+  // The menu is a fixed, non-scrolling layout — a scrolling grid once pushed
+  // tiles off short viewports, which is the whole reason `home_screen.dart`
+  // builds its rows by hand. Five destinations do not divide into a square
+  // grid, so this pins that the odd one out is full width and below the rest,
+  // and that nothing overflows the shortest viewport worth supporting.
+  testWidgets('card search is a full-width tile under the 2x2 grid', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(360, 640);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+
+    await pumpApp(tester);
+
+    final tiles = find.byType(HomeMenuTile);
+    expect(tiles, findsNWidgets(HomeMenuTokens.tileCount));
+
+    final search = tester.getRect(
+      find.ancestor(
+        of: find.text(AppStrings.homeTileCardSearch),
+        matching: tiles,
+      ),
+    );
+    final logCards = tester.getRect(
+      find.ancestor(
+        of: find.text(AppStrings.homeTileLogCards),
+        matching: tiles,
+      ),
+    );
+    final settings = tester.getRect(
+      find.ancestor(of: find.text(AppStrings.homeTileSettings), matching: tiles),
+    );
+
+    expect(search.top, greaterThanOrEqualTo(settings.bottom));
+    // Full width: as wide as a whole grid row, not one of its two columns.
+    expect(search.width, greaterThan(logCards.width * 1.5));
+    // And still on screen, which is the property the fixed layout exists for.
+    expect(search.bottom, lessThanOrEqualTo(640));
   });
 
   // Every home destination now navigates to a real screen. This asserts only

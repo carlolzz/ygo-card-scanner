@@ -51,6 +51,34 @@ const Map<int, List<String>> kMigrations = {
     'CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT)',
   ],
   2: ['ALTER TABLE cards ADD COLUMN local_image_path TEXT'],
+  3: [
+    // Card-level market prices from YGOPRODeck's `card_prices`, cached so the
+    // collection-value total is instant on reopen and readable offline. One row
+    // per card, not per printing: the API only reports per-set prices as a
+    // single USD `set_price`, and those are read live on the card's Prices tab
+    // rather than stored.
+    //
+    // `cardmarket` is EUR; every other column is USD. They are never summed
+    // together — the collection total is reported as two separate figures.
+    //
+    // **The cascade is load-bearing, and it means a re-sync clears this cache.**
+    // `CardDao.insertAll` uses `ConflictAlgorithm.replace`, i.e. `INSERT OR
+    // REPLACE`, which deletes and re-inserts each `cards` row, so every child
+    // row with an `ON DELETE CASCADE` goes with it — exactly what already
+    // happens to `printings` and `cards.local_image_path`. That is the wanted
+    // behaviour here: prices from before a re-sync are the most stale ones.
+    '''
+    CREATE TABLE card_prices (
+      passcode      TEXT PRIMARY KEY REFERENCES cards(passcode) ON DELETE CASCADE,
+      cardmarket    REAL,
+      tcgplayer     REAL,
+      ebay          REAL,
+      amazon        REAL,
+      coolstuffinc  REAL,
+      updated_at    INTEGER NOT NULL
+    )
+    ''',
+  ],
 };
 
 int get kSchemaVersion => kMigrations.keys.reduce((a, b) => a > b ? a : b);

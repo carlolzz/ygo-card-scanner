@@ -160,19 +160,3 @@ Future<List<Printing>> cardPrintings(Ref ref, String passcode) async {
   final repository = await ref.watch(cardRepositoryProvider.future);
   return repository.getPrintingsForPasscode(passcode);
 }
-
-/// Every rarity the synced card database knows, for the Settings screen's
-/// default-rarity picker.
-///
-/// Lives here beside [cardPrintings] rather than in `settings_providers.dart`:
-/// this file is already the home for card-metadata providers shared across
-/// features, and this one reads the same repository through the same shape.
-///
-/// Deliberately **not** [collectionFilterOptions]'s rarity list, which is scoped
-/// to rarities already owned — this is a default for cards not yet logged, and
-/// on a fresh install that list is empty.
-@riverpod
-Future<List<String>> cardRarities(Ref ref) async {
-  final repository = await ref.watch(cardRepositoryProvider.future);
-  return repository.distinctRarities();
-}

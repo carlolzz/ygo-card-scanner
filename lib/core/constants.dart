@@ -11,8 +11,55 @@ class AppStrings {
   static const String homeTileMyCollection = 'My Collection';
   static const String homeTileStatistics = 'Statistics';
   static const String homeTileSettings = 'Settings';
+  static const String homeTileCardSearch = 'Card Search';
 
   static const String comingSoonMessage = 'Coming soon.';
+
+  // Card search: browsing the whole synced database, owned or not. Distinct
+  // from the add-card wizard's search, which exists to log a card.
+  static const String cardSearchTitle = 'Card Search';
+  static const String cardSearchHint = 'Search every card by name';
+  static const String cardSearchPrompt =
+      'Search the card database to read a card and check its price.';
+  static const String cardSearchEmptyMessage = 'No cards match that name.';
+
+  // The two tabs both card screens carry.
+  static const String cardTabDetails = 'Details';
+  static const String cardTabPrices = 'Prices';
+
+  static const String pricesMarketSection = 'Market prices';
+  static const String pricesBySetSection = 'By set';
+  static const String pricesCardmarket = 'Cardmarket';
+  static const String pricesTcgplayer = 'TCGplayer';
+  static const String pricesEbay = 'eBay';
+  static const String pricesAmazon = 'Amazon';
+  static const String pricesCoolStuffInc = 'CoolStuffInc';
+
+  /// Says what these figures are, because "lowest across printings" is a very
+  /// different number from what a particular copy is worth, and the difference
+  /// is invisible without being told.
+  static const String pricesCardLevelNote =
+      'The lowest price found across every version of this card. Cardmarket is '
+      'in euros; every other figure is in US dollars.';
+
+  /// Per-set prices come from `card_sets[].set_price`, which is USD only —
+  /// YGOPRODeck reports Cardmarket at the card level and nowhere else.
+  static const String pricesBySetNote =
+      'Per-set prices are in US dollars. Cardmarket does not publish a price '
+      'per printing.';
+  static const String pricesNoSets = 'No set prices for this card.';
+  static const String pricesUnknownCard =
+      'YGOPRODeck has no pricing for this card.';
+  static const String pricesErrorMessage =
+      'Could not load prices. Check your connection and try again.';
+  static const String pricesRetryButton = 'Retry';
+  static const String pricesRefreshTooltip = 'Refresh prices';
+  static const String pricesEstimateLabel = 'Value';
+
+  /// The estimate row on the Details tab, which is a link to the Prices tab
+  /// rather than a fact on its own.
+  static const String pricesSeeAll = 'See all prices';
+  static String pricesFetchedAt(String when) => 'Prices as of $when';
 
   static const String collectionSearchHint = 'Search by name';
   static const String collectionEmptyMessage =
@@ -317,13 +364,6 @@ class AppStrings {
   static const String settingsEditionLabel = 'Edition';
   static const String settingsLanguageLabel = 'Language';
 
-  static const String settingsRarityLabel = 'Rarity';
-
-  /// The null option. Named "no preference" rather than "any" because this
-  /// setting does not filter anything — it only picks a set for you when a card
-  /// has exactly one printing of that rarity.
-  static const String settingsRarityAny = 'No preference';
-  static const String settingsRarityHint = 'Pick a set of this rarity for me';
   static const String settingsAppearanceSection = 'Appearance';
   static const String settingsThemeLabel = 'Theme';
   static const String settingsCollectionSection = 'Collection';
@@ -397,6 +437,30 @@ class AppStrings {
   static const String statisticsImportFailedMessage =
       'Could not read that file. Pick a collection CSV exported from this app.';
   static const String statisticsImportDoneMessage = 'Collection updated.';
+
+  // Collection value. Two totals, never one: Cardmarket is euros and TCGplayer
+  // is dollars, and this app carries no exchange rate.
+  static const String statisticsValueSection = 'Collection value';
+  static const String statisticsValueButton = 'Calculate collection value';
+  static const String statisticsValueRefreshButton = 'Refresh prices';
+  static const String statisticsValueCardmarketLabel = 'Cardmarket';
+  static const String statisticsValueTcgplayerLabel = 'TCGplayer';
+  static const String statisticsValueErrorMessage =
+      'Could not fetch prices. Check your connection and try again.';
+
+  /// The honesty line beside the totals. Hidden at zero, like the import
+  /// dialog's counts — a total assembled from a whole collection should not
+  /// warn about a problem that does not exist.
+  static String statisticsValueUnpriced(int count) =>
+      '$count ${count == 1 ? 'card has' : 'cards have'} no price';
+  static String statisticsValueProgress(int done, int total) =>
+      'Priced $done / $total cards';
+
+  /// Says what the totals are, since a "lowest across printings" figure is very
+  /// different from what a graded, first-edition copy would fetch.
+  static const String statisticsValueNote =
+      'A floor, not a valuation: each card is priced at the lowest figure '
+      'across its printings, ignoring condition, edition and set.';
 
   static const String syncFetchingMessage = 'Downloading card database…';
   static const String syncWritingMessage = 'Saving to your device…';

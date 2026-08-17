@@ -614,7 +614,7 @@ class ScanController extends _$ScanController {
       state = state.copyWith(language: language);
 
   /// The printing to preselect for [passcode] in the review gate — the only one
-  /// the card has, or the only one matching the user's default rarity.
+  /// the card has, if it has exactly one.
   ///
   /// The decision itself is [preferredPrinting], shared with the manual add
   /// wizard and tested there: both flows have to agree, and a preselection that
@@ -628,10 +628,7 @@ class ScanController extends _$ScanController {
   Future<int?> _preferredPrintingId(String passcode) async {
     try {
       final printings = await ref.read(cardPrintingsProvider(passcode).future);
-      return preferredPrinting(
-        printings,
-        defaultRarity: _settings.defaultRarity,
-      )?.id;
+      return preferredPrinting(printings)?.id;
     } catch (_) {
       // A preselection is a convenience; a failed lookup must not cost the
       // match itself, which is already resolved by the time we get here.

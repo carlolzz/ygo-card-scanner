@@ -9,10 +9,11 @@ import '../../models/card_edition.dart';
 import '../../models/card_language.dart';
 import '../../models/collection_entry_with_card.dart';
 import '../../models/printing.dart';
-import '../../shared/widgets/card_art_thumbnail.dart';
+import '../../shared/widgets/card_details_view.dart';
 import '../../shared/widgets/labeled_choice_chip.dart';
 import '../../shared/widgets/language_flag.dart';
 import '../../shared/widgets/printing_picker.dart';
+import '../pricing/card_prices_view.dart';
 import 'collection_delete_confirm.dart';
 import 'collection_providers.dart';
 
@@ -44,164 +45,136 @@ class _CollectionDetailScreenState
         ConditionChipColors.byShortCode[entry.condition.shortCode]!;
 
     final palette = AppPalette.of(context);
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(card.name),
-        actions: [
-          IconButton(
-            tooltip: AppStrings.collectionEditTooltip,
-            icon: const Icon(Icons.edit_outlined),
-            onPressed: _openEdit,
-          ),
-          IconButton(
-            tooltip: AppStrings.collectionDeleteTooltip,
-            icon: const Icon(Icons.delete_outline),
-            onPressed: () => _confirmDelete(entry.id!),
-          ),
-        ],
-      ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(AppSpacing.lg),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Center(
-              // The whole card, uncropped (portrait card box + contain) rather
-              // than a square centre-crop.
-              child: CardArtThumbnail(
-                card: card,
-                size: CardThumbnailSizes.detail,
-                aspectRatio: ScanReticleTokens.cardAspectRatio,
-                fit: BoxFit.contain,
-              ),
+    return DefaultTabController(
+      length: 2,
+      child: Scaffold(
+        appBar: AppBar(
+          title: Text(card.name),
+          actions: [
+            IconButton(
+              tooltip: AppStrings.collectionEditTooltip,
+              icon: const Icon(Icons.edit_outlined),
+              onPressed: _openEdit,
             ),
-            const SizedBox(height: AppSpacing.md),
-            Container(
-              padding: const EdgeInsets.symmetric(
-                horizontal: AppSpacing.sm,
-                vertical: AppSpacing.xs,
-              ),
-              decoration: BoxDecoration(
-                color: conditionColor,
-                borderRadius: BorderRadius.circular(AppRadius.sm),
-              ),
-              child: Text(
-                entry.condition.label,
-                style: const TextStyle(
-                  color: ConditionChipColors.onSelected,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
+            IconButton(
+              tooltip: AppStrings.collectionDeleteTooltip,
+              icon: const Icon(Icons.delete_outline),
+              onPressed: () => _confirmDelete(entry.id!),
             ),
-            const SizedBox(height: AppSpacing.md),
-            if (card.type != null)
-              _DetailRow(
-                label: AppStrings.collectionCardTypeLabel,
-                value: card.type!,
-              ),
-            // A Spell/Trap's `attribute` is just "SPELL"/"TRAP" (redundant with
-            // the type row above), so it's only shown for monsters.
-            if (card.attribute != null && !card.isSpellOrTrap)
-              _DetailRow(
-                label: AppStrings.collectionCardAttributeLabel,
-                value: card.attribute!,
-              ),
-            if (card.race != null)
-              _DetailRow(
-                // For Spell/Trap, `race` is the card's own kind, not a monster
-                // type — and naming the frame ("Spell Type"/"Trap Type") is
-                // what players call it, so it beats a generic "Property".
-                label: switch (card) {
-                  _ when card.isSpell =>
-                    AppStrings.collectionCardSpellTypeLabel,
-                  _ when card.isTrap => AppStrings.collectionCardTrapTypeLabel,
-                  _ => AppStrings.collectionCardRaceLabel,
-                },
-                value: card.race!,
-              ),
-            if (card.level != null)
-              _DetailRow(
-                label: AppStrings.collectionCardLevelLabel,
-                value: '${card.level}',
-              ),
-            if (card.atk != null || card.def != null)
-              _DetailRow(
-                label: AppStrings.collectionCardAtkDefLabel,
-                value: '${card.atk ?? '-'} / ${card.def ?? '-'}',
-              ),
-            if (card.archetype != null)
-              _DetailRow(
-                label: AppStrings.collectionCardArchetypeLabel,
-                value: card.archetype!,
-              ),
-            // Set and rarity are separate rows: `displayLabel` trails the
-            // rarity onto the set code for the pickers (which search over it),
-            // but here rarity is a field in its own right.
-            if (widget.entryWithCard.printing != null)
-              _DetailRow(
-                label: AppStrings.collectionSetLabel,
-                value: widget.entryWithCard.printing!.setLabel,
-              ),
-            if (widget.entryWithCard.printing?.rarity != null)
-              _DetailRow(
-                label: AppStrings.collectionRarityLabel,
-                value: widget.entryWithCard.printing!.rarity!,
-              ),
-            _DetailRow(
-              label: AppStrings.collectionEditionLabel,
-              value: entry.edition.label,
-            ),
-            _DetailRow(
-              label: AppStrings.collectionLanguageLabel,
-              valueLeading: LanguageFlag(language: entry.language),
-              value: languageLabel(entry.language),
-            ),
-            if (card.description != null) ...[
-              const SizedBox(height: AppSpacing.md),
-              Text(
-                card.isNormalMonster
-                    ? AppStrings.collectionFlavorTextLabel
-                    : AppStrings.collectionCardEffectLabel,
-                style: TextStyle(
-                  color: palette.onSurface,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              const SizedBox(height: AppSpacing.xs),
-              Text(
-                card.description!,
-                style: TextStyle(
-                  color: palette.onSurfaceMuted),
-              ),
+          ],
+          bottom: const TabBar(
+            tabs: [
+              Tab(text: AppStrings.cardTabDetails),
+              Tab(text: AppStrings.cardTabPrices),
             ],
-            const SizedBox(height: AppSpacing.lg),
-            Row(
-              children: [
-                Text(
-                  AppStrings.collectionQuantityLabel,
-                  style: TextStyle(
-                  color: palette.onSurface),
-                ),
-                const Spacer(),
-                IconButton(
-                  icon: const Icon(Icons.remove_circle_outline),
-                  onPressed: () => _decrement(entry.id!),
-                ),
-                Text(
-                  '$_quantity',
-                  style: TextStyle(
-                  color: palette.onSurface,
-                    fontSize: 18,
+          ),
+        ),
+        body: TabBarView(
+          children: [
+            SingleChildScrollView(
+              padding: const EdgeInsets.all(AppSpacing.lg),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // The card's own facts, shared verbatim with the card-search
+                  // detail screen — the Spell/Trap label switch and the
+                  // flavour-vs-effect heading are rules, not formatting, and a
+                  // second copy of them would drift.
+                  Builder(
+                    // Its own context so `DefaultTabController.of` finds the
+                    // controller above.
+                    builder: (context) => CardDetailsView(
+                      card: card,
+                      leading: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: AppSpacing.sm,
+                              vertical: AppSpacing.xs,
+                            ),
+                            decoration: BoxDecoration(
+                              color: conditionColor,
+                              borderRadius: BorderRadius.circular(AppRadius.sm),
+                            ),
+                            child: Text(
+                              entry.condition.label,
+                              style: const TextStyle(
+                                color: ConditionChipColors.onSelected,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: AppSpacing.md),
+                          // Priced for the copies actually held, so the number
+                          // answers "what is this stack worth" rather than
+                          // "what is one of these worth".
+                          CardPriceEstimate(
+                            passcode: entry.passcode,
+                            quantity: _quantity,
+                            onTap: () =>
+                                DefaultTabController.of(context).animateTo(1),
+                          ),
+                        ],
+                      ),
+                    ),
                   ),
-                ),
-                IconButton(
-                  icon: const Icon(Icons.add_circle_outline),
-                  color: palette.accent,
-                  onPressed: () => _increment(entry.id!),
-                ),
-              ],
+                  // Everything below is about *this entry* rather than the
+                  // card, which is why it stays here and not in the shared view.
+                  //
+                  // Set and rarity are separate rows: `displayLabel` trails the
+                  // rarity onto the set code for the pickers (which search over
+                  // it), but here rarity is a field in its own right.
+                  if (widget.entryWithCard.printing != null)
+                    CardDetailRow(
+                      label: AppStrings.collectionSetLabel,
+                      value: widget.entryWithCard.printing!.setLabel,
+                    ),
+                  if (widget.entryWithCard.printing?.rarity != null)
+                    CardDetailRow(
+                      label: AppStrings.collectionRarityLabel,
+                      value: widget.entryWithCard.printing!.rarity!,
+                    ),
+                  CardDetailRow(
+                    label: AppStrings.collectionEditionLabel,
+                    value: entry.edition.label,
+                  ),
+                  CardDetailRow(
+                    label: AppStrings.collectionLanguageLabel,
+                    valueLeading: LanguageFlag(language: entry.language),
+                    value: languageLabel(entry.language),
+                  ),
+                  const SizedBox(height: AppSpacing.lg),
+                  Row(
+                    children: [
+                      Text(
+                        AppStrings.collectionQuantityLabel,
+                        style: TextStyle(color: palette.onSurface),
+                      ),
+                      const Spacer(),
+                      IconButton(
+                        icon: const Icon(Icons.remove_circle_outline),
+                        onPressed: () => _decrement(entry.id!),
+                      ),
+                      Text(
+                        '$_quantity',
+                        style: TextStyle(
+                          color: palette.onSurface,
+                          fontSize: 18,
+                        ),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.add_circle_outline),
+                        color: palette.accent,
+                        onPressed: () => _increment(entry.id!),
+                      ),
+                    ],
+                  ),
+                  _LanguageBreakdown(passcode: entry.passcode),
+                ],
+              ),
             ),
-            _LanguageBreakdown(passcode: entry.passcode),
+            CardPricesView(passcode: entry.passcode),
           ],
         ),
       ),
@@ -310,7 +283,7 @@ class _LanguageBreakdown extends ConsumerWidget {
         ),
         const SizedBox(height: AppSpacing.xs),
         for (final language in languages)
-          _DetailRow(
+          CardDetailRow(
             label: languageLabel(language),
             valueLeading: LanguageFlag(language: language),
             value: '×${byLanguage[language]}',
@@ -320,45 +293,6 @@ class _LanguageBreakdown extends ConsumerWidget {
   }
 }
 
-class _DetailRow extends StatelessWidget {
-  const _DetailRow({
-    required this.label,
-    required this.value,
-    this.valueLeading,
-  });
-
-  final String label;
-  final String value;
-
-  /// Rendered immediately before [value]. A widget rather than something folded
-  /// into the value string: the language rows put a flag here, and prefixing the
-  /// glyph onto the text would change what every exact-text matcher over this
-  /// screen sees while adding nothing.
-  final Widget? valueLeading;
-
-  @override
-  Widget build(BuildContext context) {
-    final palette = AppPalette.of(context);
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
-      child: Row(
-        children: [
-          SizedBox(
-            width: 100,
-            child: Text(label, style: TextStyle(color: palette.onSurfaceMuted)),
-          ),
-          if (valueLeading != null) ...[
-            valueLeading!,
-            const SizedBox(width: AppSpacing.sm),
-          ],
-          Expanded(
-            child: Text(value, style: TextStyle(color: palette.onSurface)),
-          ),
-        ],
-      ),
-    );
-  }
-}
 
 /// The outcome of the edit sheet, popped back to the detail screen: whether the
 /// edit merged this entry into a pre-existing matching one (vs. a plain update),

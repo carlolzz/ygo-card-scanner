@@ -718,6 +718,24 @@ class CollectionDao {
     return {for (final row in rows) row['k']! as String: row['n']! as int};
   }
 
+  /// Total copies owned per passcode, for valuing the collection.
+  ///
+  /// Grouped by passcode rather than returned per entry because pricing is a
+  /// property of the *card*: YGOPRODeck reports one figure per passcode, so the
+  /// four rows of a card held in two conditions and two languages all price the
+  /// same and there is nothing to gain from four lookups. This is also what
+  /// bounds the number of API requests — the key set is exactly what has to be
+  /// fetched.
+  Future<Map<String, int>> quantityByPasscode() async {
+    final rows = await _db.rawQuery(
+      'SELECT passcode, SUM(quantity) AS n '
+      'FROM collection_entries GROUP BY passcode',
+    );
+    return {
+      for (final row in rows) row['passcode']! as String: row['n']! as int,
+    };
+  }
+
   Future<List<CollectionEntry>> getEntriesForPasscode(String passcode) async {
     final rows = await _db.query(
       'collection_entries',

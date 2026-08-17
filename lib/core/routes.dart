@@ -12,6 +12,11 @@ class AppRoutes {
   static const String addCard = '/add-card';
   static const String collection = '/collection';
   static const String collectionDetail = '/collection/detail';
+
+  /// Browsing the whole synced card database, owned or not — a reading
+  /// destination, unlike [addCard], which exists to log a card.
+  static const String cardSearch = '/cards';
+  static const String cardDetail = '/cards/detail';
   static const String statistics = '/statistics';
   static const String settings = '/settings';
 }

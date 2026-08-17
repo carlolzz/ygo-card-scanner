@@ -111,10 +111,7 @@ class AddCardSelectionController extends _$AddCardSelectionController {
     // stays reachable: `AddCardScreen`'s back button routes to `backToPrinting`
     // whenever `printings` is non-empty, and `_ConditionStep` prints the chosen
     // set under the card name — so the pick is both visible and reversible.
-    final preferred = preferredPrinting(
-      printings,
-      defaultRarity: _settings.defaultRarity,
-    );
+    final preferred = preferredPrinting(printings);
     state = AddCardSelection(
       card: state.card,
       printings: printings,

@@ -964,16 +964,16 @@ void main() {
     });
   });
 
-  // A default rarity only ever selects among the printings a card actually has
-  // — see `preferredPrinting`, where the rule itself is tested. These pin that
-  // the scan review gate reads the setting at all, and that the "no matching
-  // printing" case reaches the user as an unmade choice rather than a wrong one.
+  // A set is preselected only when the card has exactly one printing — see
+  // `preferredPrinting`, where the rule itself is tested. Step 24 removed the
+  // default-rarity preference that used to narrow the several-printings case,
+  // so this pins the surviving half: a reprint reaches the user as an unmade
+  // choice rather than an arbitrary one.
   //
   // Mirror Force is the fixture with two printings: Metal Raiders (Super Rare)
   // and Dark Saviors (Ultra Rare).
-  group('default rarity', () {
-    Future<ProviderContainer> withDefaultRarity(String? rarity) async {
-      await SettingsRepository(MetaDao(db)).save(AppSettings(defaultRarity: rarity));
+  group('set preselection', () {
+    test('a reprinted card leaves the pick to the user', () async {
       final configured = ProviderContainer(
         overrides: [
           appDatabaseProvider.overrideWith((ref) async => db),
@@ -994,42 +994,8 @@ void main() {
         await settle();
       }
       await settle();
-      return configured;
-    }
 
-    test('a reprinted card arrives on the printing of the preferred rarity',
-        () async {
-      final printings = await PrintingDao(db).getForPasscode(mirrorForce);
-      final ultra = printings.singleWhere((p) => p.rarity == 'Ultra Rare');
-
-      final configured = await withDefaultRarity('Ultra Rare');
       final s = configured.read(scanControllerProvider);
-
-      expect(s.status, ScanStatus.matched);
-      expect(
-        s.printingId,
-        ultra.id,
-        reason: 'without a preference this card is left to the user, so this '
-            'is the setting doing the work',
-      );
-    });
-
-    // The user's own case: a preference for a rarity the card was never printed
-    // in leaves the choice alone rather than picking something arbitrary.
-    test('a rarity the card has no printing of leaves the pick to the user',
-        () async {
-      final configured = await withDefaultRarity('Common');
-      final s = configured.read(scanControllerProvider);
-
-      expect(s.status, ScanStatus.matched);
-      expect(s.printingId, isNull);
-    });
-
-    test('no preference is still no preselection on a reprinted card',
-        () async {
-      final configured = await withDefaultRarity(null);
-      final s = configured.read(scanControllerProvider);
-
       expect(s.status, ScanStatus.matched);
       expect(s.printingId, isNull);
     });

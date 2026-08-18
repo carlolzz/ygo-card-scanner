@@ -1,5 +1,6 @@
 import 'package:go_router/go_router.dart';
 
+import '../data/repositories/price_repository.dart';
 import '../features/add_card/add_card_screen.dart';
 import '../features/card_search/card_detail_screen.dart';
 import '../features/card_search/card_search_screen.dart';
@@ -8,6 +9,7 @@ import '../features/collection/collection_screen.dart';
 import '../features/home/home_screen.dart';
 import '../features/scan/scan_screen.dart';
 import '../features/settings/settings_screen.dart';
+import '../features/statistics/collection_value_screen.dart';
 import '../features/statistics/statistics_screen.dart';
 import '../models/collection_entry_with_card.dart';
 import '../models/ygo_card.dart';
@@ -51,6 +53,11 @@ GoRouter buildAppRouter() {
       GoRoute(
         path: AppRoutes.statistics,
         builder: (context, state) => const StatisticsScreen(),
+      ),
+      GoRoute(
+        path: AppRoutes.collectionValue,
+        builder: (context, state) =>
+            CollectionValueScreen(value: state.extra! as CollectionValue),
       ),
       GoRoute(
         path: AppRoutes.settings,

@@ -27,7 +27,6 @@ final _pricing = CardPricing(
     passcode: _card.passcode,
     cardmarket: 0.29,
     tcgplayer: 1.15,
-    ebay: 2.99,
     updatedAt: DateTime.fromMillisecondsSinceEpoch(1700000000000),
   ),
   sets: const [
@@ -69,14 +68,32 @@ void main() {
     await tester.pump();
   }
 
-  testWidgets('shows every vendor, each in its own currency', (tester) async {
+  // The two the app still reads. eBay, Amazon and CoolStuffInc were shown here
+  // and fed nothing else, so step 26 dropped them along with their columns.
+  testWidgets('shows both vendors, each in its own currency', (tester) async {
     await pumpPrices(tester, pricing: _pricing);
 
     expect(find.text(AppStrings.pricesCardmarket), findsOneWidget);
+    expect(find.text(AppStrings.pricesTcgplayer), findsOneWidget);
     expect(find.text('€0.29'), findsOneWidget);
     expect(find.text(r'$1.15'), findsOneWidget);
-    expect(find.text(r'$2.99'), findsOneWidget);
-    // Amazon and CoolStuffInc carried nothing — a dash, never a zero.
+  });
+
+  // A dash, never a zero: `parsePrice` folds the API's "0.00" into null, which
+  // means "no figure" rather than "free".
+  testWidgets('a vendor with no figure shows a dash', (tester) async {
+    await pumpPrices(
+      tester,
+      pricing: CardPricing(
+        card: CardPrices(
+          passcode: _card.passcode,
+          cardmarket: 0.29,
+          updatedAt: DateTime.fromMillisecondsSinceEpoch(1700000000000),
+        ),
+        sets: const [],
+      ),
+    );
+
     expect(find.text(kNoPrice), findsWidgets);
   });
 

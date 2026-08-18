@@ -145,6 +145,13 @@ const int kPriceChunkSize = 50;
 /// `card_quad.dart` and `frame_quality.dart` keep their decisions out of the
 /// classes that cannot be tested. A silently wrong parse here does not crash:
 /// it reports a plausible, wrong valuation.
+///
+/// **The `sets:` half is the valuable one.** `card_prices` is documented as the
+/// lowest figure across every version of a card and is €0.02 for most of them;
+/// `card_sets[].set_price` is per set and rarity and is what the collection
+/// valuation prices a copy at. Both arrive in the same response, so reading the
+/// per-set figures costs nothing extra. `ebay_price`, `amazon_price` and
+/// `coolstuffinc_price` are deliberately not read — see [CardPrices].
 CardPricing parsePricingEntry(
   Map<String, Object?> json, {
   DateTime? fetchedAt,
@@ -164,9 +171,6 @@ CardPricing parsePricingEntry(
       passcode: passcode,
       cardmarket: parsePrice(p['cardmarket_price']),
       tcgplayer: parsePrice(p['tcgplayer_price']),
-      ebay: parsePrice(p['ebay_price']),
-      amazon: parsePrice(p['amazon_price']),
-      coolstuffinc: parsePrice(p['coolstuffinc_price']),
       updatedAt: fetchedAt ?? DateTime.now(),
     ),
     sets: [

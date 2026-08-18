@@ -18,5 +18,10 @@ class AppRoutes {
   static const String cardSearch = '/cards';
   static const String cardDetail = '/cards/detail';
   static const String statistics = '/statistics';
+
+  /// The per-printing rows behind the two collection-value totals. Reached only
+  /// from a succeeded valuation, which is passed as `extra` — the same idiom as
+  /// [collectionDetail] and [cardDetail].
+  static const String collectionValue = '/statistics/value';
   static const String settings = '/settings';
 }

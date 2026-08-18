@@ -64,3 +64,7 @@ android/key.properties
 *.keystore
 /android/local.properties
 assets/icon/past_icons/
+
+# Notes about what a built APK discloses about this machine and account —
+# local reference only, deliberately not published in the repo it describes.
+docs/apk-sharing-privacy.md

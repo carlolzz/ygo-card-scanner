@@ -89,9 +89,14 @@ void main() {
           CollectionValueLine(
             passcode: '89631139',
             name: 'Blue-Eyes White Dragon',
+            printingId: null,
+            setCode: null,
+            setName: null,
+            rarity: null,
             quantity: 3,
             cardmarketEur: 1.2,
             tcgplayerUsd: 2.5,
+            usdBasis: PriceBasis.cardFloor,
             pricedAt: DateTime.utc(2026, 8, 17),
           ),
         ],
@@ -107,6 +112,11 @@ void main() {
 
     expect(lines.first, collectionValueCsvHeader.join(','));
     expect(lines, hasLength(2));
-    expect(lines[1], startsWith('89631139,Blue-Eyes White Dragon,3,1.20,'));
+    // Empty set columns: this line carries no printing, which is also why its
+    // dollars are the card floor.
+    expect(
+      lines[1],
+      startsWith('89631139,Blue-Eyes White Dragon,,,,3,1.20,2.50,card_floor,'),
+    );
   });
 }

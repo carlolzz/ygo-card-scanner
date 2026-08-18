@@ -79,6 +79,60 @@ const Map<int, List<String>> kMigrations = {
     )
     ''',
   ],
+  4: [
+    // Two changes, both about the same discovery: YGOPRODeck's card-level
+    // figures are near-useless as a valuation. The API documents each one as
+    // "the lowest price found across multiple versions of that card", and in
+    // practice `cardmarket_price` is €0.02 for Blue-Eyes White Dragon, Dark
+    // Magician and Mirror Force alike. The per-set `card_sets[].set_price` is
+    // the real figure ($74.49 for a CT13-EN008 Blue-Eyes), it arrives in the
+    // same response, and it was being thrown away.
+    //
+    // **1. `card_prices` loses three vendors.** eBay, Amazon and CoolStuffInc
+    // were displayed on a card's Prices tab and fed nothing else; with the
+    // valuation now built on TCGplayer and Cardmarket they are dead weight.
+    // Dropped and recreated rather than `ALTER TABLE ... DROP COLUMN`, which
+    // needs SQLite 3.35 — sqflite uses Android's *system* SQLite, and API 30
+    // ships 3.28. Safe to drop outright because this table is a pure cache: a
+    // re-sync already empties it through the cascade below, and every row is
+    // re-fetchable.
+    'DROP TABLE IF EXISTS card_prices',
+    '''
+    CREATE TABLE card_prices (
+      passcode      TEXT PRIMARY KEY REFERENCES cards(passcode) ON DELETE CASCADE,
+      cardmarket    REAL,
+      tcgplayer     REAL,
+      updated_at    INTEGER NOT NULL
+    )
+    ''',
+    // **2. Per-set prices are now stored**, reversing the v3 decision. One row
+    // per printing, USD only — there is no per-set Cardmarket figure and there
+    // never will be, so the euro total stays a card-level floor.
+    //
+    // **The cascade is load-bearing for correctness, not just hygiene.**
+    // `printings.id` is AUTOINCREMENT and `printings.passcode` cascades from
+    // `cards`, which `CardDao.insertAll` replaces wholesale on every re-sync —
+    // so a re-sync *re-keys* every printing. A price row that outlived its
+    // printing would then quietly describe a different one, at a different set
+    // and rarity. The cascade is what makes that impossible.
+    //
+    // **A NULL `price` is not the same as a missing row, and both are written.**
+    // `parsePrice` folds the API's very common "0.00" into null, so a great many
+    // printings genuinely have no figure; the row records that we asked, and
+    // when. Without it the freshness check could never be satisfied for those
+    // printings and their card would be re-fetched on every single valuation,
+    // forever.
+    //
+    // No index: `printing_id INTEGER PRIMARY KEY` is a rowid alias, which is
+    // already the fastest lookup SQLite has.
+    '''
+    CREATE TABLE printing_prices (
+      printing_id   INTEGER PRIMARY KEY REFERENCES printings(id) ON DELETE CASCADE,
+      price         REAL,
+      updated_at    INTEGER NOT NULL
+    )
+    ''',
+  ],
 };
 
 int get kSchemaVersion => kMigrations.keys.reduce((a, b) => a > b ? a : b);

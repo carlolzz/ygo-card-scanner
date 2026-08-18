@@ -4,11 +4,14 @@ import 'package:ygo_scanner/data/api/ygoprodeck_client.dart';
 import 'package:ygo_scanner/data/db/dao/card_dao.dart';
 import 'package:ygo_scanner/data/db/dao/card_price_dao.dart';
 import 'package:ygo_scanner/data/db/dao/collection_dao.dart';
+import 'package:ygo_scanner/data/db/dao/printing_dao.dart';
+import 'package:ygo_scanner/data/db/dao/printing_price_dao.dart';
 import 'package:ygo_scanner/data/repositories/price_repository.dart';
 import 'package:ygo_scanner/models/card_condition.dart';
 import 'package:ygo_scanner/models/card_edition.dart';
 import 'package:ygo_scanner/models/card_prices.dart';
 import 'package:ygo_scanner/models/collection_entry.dart';
+import 'package:ygo_scanner/models/printing.dart';
 import 'package:ygo_scanner/models/ygo_card.dart';
 
 import '../db/test_db.dart';
@@ -21,11 +24,17 @@ const _darkMagician = YgoCard(passcode: '46986414', name: 'Dark Magician');
 /// stale" rule can both be asserted from outside. Subclassing the real client
 /// mirrors `_FakeCardRepository` in the sync tests; its Dio is never touched.
 class _FakeClient extends YgoProdeckClient {
-  _FakeClient(this.prices);
+  _FakeClient(this.prices, {this.sets = const {}});
 
   /// passcode -> (cardmarket, tcgplayer). A passcode absent here is one the API
-  /// does not recognise.
+  /// does not recognise. These are the **card-level floor** figures.
   final Map<String, (double?, double?)> prices;
+
+  /// passcode -> the `card_sets` entries the API reports for it, each
+  /// `(setCode, rarity, setPrice)`. Empty by default, which makes every line
+  /// fall back to the card floor — the pre-step-26 behaviour, so the older
+  /// assertions in this file double as the fallback regression suite.
+  final Map<String, List<(String?, String?, double?)>> sets;
 
   final List<List<String>> requests = [];
   int get requestCount => requests.length;
@@ -43,7 +52,10 @@ class _FakeClient extends YgoProdeckClient {
               tcgplayer: prices[passcode]!.$2,
               updatedAt: DateTime.now(),
             ),
-            sets: const [],
+            sets: [
+              for (final set in sets[passcode] ?? const <(String?, String?, double?)>[])
+                SetPrice(setCode: set.$1, rarity: set.$2, price: set.$3),
+            ],
           ),
     ];
   }
@@ -52,25 +64,48 @@ class _FakeClient extends YgoProdeckClient {
 void main() {
   late Database db;
   late CardPriceDao priceDao;
+  late PrintingPriceDao printingPriceDao;
   late CollectionDao collectionDao;
+  late PrintingDao printingDao;
   late CardDao cardDao;
 
-  Future<void> own(String passcode, int quantity, {String language = 'EN'}) =>
-      collectionDao.addOrIncrement(
-        CollectionEntry(
-          passcode: passcode,
-          condition: CardCondition.nearMint,
-          edition: CardEdition.unlimited,
-          language: language,
-          quantity: quantity,
-          createdAt: 1000,
-          updatedAt: 1000,
-        ),
-      );
+  Future<void> own(
+    String passcode,
+    int quantity, {
+    String language = 'EN',
+    int? printingId,
+  }) => collectionDao.addOrIncrement(
+    CollectionEntry(
+      passcode: passcode,
+      printingId: printingId,
+      condition: CardCondition.nearMint,
+      edition: CardEdition.unlimited,
+      language: language,
+      quantity: quantity,
+      createdAt: 1000,
+      updatedAt: 1000,
+    ),
+  );
+
+  /// Inserts a printing and hands back its id, which is what the collection
+  /// entries and the `printing_prices` rows are keyed on.
+  Future<int> printing(
+    String passcode, {
+    required String setCode,
+    required String rarity,
+  }) async {
+    await printingDao.insertAll([
+      Printing(passcode: passcode, setCode: setCode, rarity: rarity),
+    ]);
+    final rows = await printingDao.getForPasscode(passcode);
+    return rows.firstWhere((p) => p.setCode == setCode).id!;
+  }
 
   PriceRepository repositoryWith(_FakeClient client) => PriceRepository(
     priceDao: priceDao,
+    printingPriceDao: printingPriceDao,
     collectionDao: collectionDao,
+    printingDao: printingDao,
     cardDao: cardDao,
     client: client,
   );
@@ -78,7 +113,9 @@ void main() {
   setUp(() async {
     db = await openInMemoryTestDb();
     priceDao = CardPriceDao(db);
+    printingPriceDao = PrintingPriceDao(db);
     collectionDao = CollectionDao(db);
+    printingDao = PrintingDao(db);
     cardDao = CardDao(db);
     await cardDao.insertAll([_blueEyes, _mirrorForce, _darkMagician]);
   });
@@ -176,9 +213,10 @@ void main() {
     });
   });
 
-  // The per-card rows behind the two totals, which the value export writes.
-  // They are built in the same pass that accumulates the totals, so the file
-  // and the screen cannot disagree — these assertions are what pin that.
+  // The per-printing rows behind the two totals, which the breakdown screen
+  // shows and the value export writes. They are built in the same pass that
+  // accumulates the totals, so the file and the screen cannot disagree — these
+  // assertions are what pin that.
   group('the value breakdown', () {
     test('carries each card with its name and copies owned', () async {
       await own('89631139', 3);
@@ -193,6 +231,8 @@ void main() {
       expect(line.quantity, 5, reason: 'both languages, one card');
       expect(line.cardmarketEur, 1.5);
       expect(line.tcgplayerUsd, 10.0);
+      expect(line.usdBasis, PriceBasis.cardFloor, reason: 'no set recorded');
+      expect(line.printingId, isNull);
       expect(line.pricedAt, isNotNull);
     });
 
@@ -210,6 +250,7 @@ void main() {
       expect(unpriced.quantity, 4);
       expect(unpriced.cardmarketEur, isNull);
       expect(unpriced.tcgplayerUsd, isNull);
+      expect(unpriced.usdBasis, PriceBasis.none);
       expect(unpriced.pricedAt, isNull);
       expect(value.lines, hasLength(2), reason: 'priced or not, every card');
     });
@@ -253,6 +294,314 @@ void main() {
     test('an empty collection has no lines', () async {
       final value = await repositoryWith(_FakeClient(const {})).collectionValue();
       expect(value.lines, isEmpty);
+    });
+  });
+
+  // The point of step 26. YGOPRODeck's card-level figure is documented as the
+  // lowest across every version of a card — €0.02 for Blue-Eyes, Dark Magician
+  // and Mirror Force alike — while `card_sets[].set_price` puts a CT13-EN008
+  // Blue-Eyes at $74.49. Both arrive in the same response.
+  group('pricing by printing', () {
+    test('a printing with a set_price beats the card floor', () async {
+      final ct13 = await printing(
+        '89631139',
+        setCode: 'CT13-EN008',
+        rarity: 'Ultra Rare',
+      );
+      await own('89631139', 2, printingId: ct13);
+      final client = _FakeClient(
+        {'89631139': (0.02, 0.15)},
+        sets: {
+          '89631139': [('CT13-EN008', 'Ultra Rare', 74.49)],
+        },
+      );
+
+      final value = await repositoryWith(client).collectionValue();
+
+      final line = value.lines.single;
+      expect(line.tcgplayerUsd, 74.49);
+      expect(line.usdBasis, PriceBasis.printing);
+      expect(line.setCode, 'CT13-EN008');
+      expect(line.rarity, 'Ultra Rare');
+      expect(value.tcgplayerUsd, 2 * 74.49);
+      // Euros have no per-printing figure and never will — the floor stands.
+      expect(line.cardmarketEur, 0.02);
+      expect(value.cardmarketEur, 2 * 0.02);
+    });
+
+    test('copies logged without a set use the card floor', () async {
+      await own('89631139', 2);
+      final client = _FakeClient(
+        {'89631139': (0.02, 0.15)},
+        sets: {
+          '89631139': [('CT13-EN008', 'Ultra Rare', 74.49)],
+        },
+      );
+
+      final value = await repositoryWith(client).collectionValue();
+
+      final line = value.lines.single;
+      expect(line.tcgplayerUsd, 0.15);
+      expect(line.usdBasis, PriceBasis.cardFloor);
+      expect(line.setCode, isNull);
+    });
+
+    // `parsePrice` folds the API's very common "0.00" into null, so a printing
+    // the API lists with no figure is not a free card — it falls back, and the
+    // card still counts as priced.
+    test('a printing with no figure falls back without being unpriced', () async {
+      final sdk = await printing(
+        '89631139',
+        setCode: 'SDK-001',
+        rarity: 'Ultra Rare',
+      );
+      await own('89631139', 1, printingId: sdk);
+      final client = _FakeClient(
+        {'89631139': (0.02, 0.15)},
+        sets: {
+          '89631139': [('SDK-001', 'Ultra Rare', null)],
+        },
+      );
+
+      final value = await repositoryWith(client).collectionValue();
+
+      expect(value.lines.single.usdBasis, PriceBasis.cardFloor);
+      expect(value.lines.single.tcgplayerUsd, 0.15);
+      expect(value.pricedCards, 1);
+      expect(value.unpricedCards, 0);
+    });
+
+    test('two printings of one card price differently', () async {
+      final ct13 = await printing(
+        '89631139',
+        setCode: 'CT13-EN008',
+        rarity: 'Ultra Rare',
+      );
+      final lob = await printing(
+        '89631139',
+        setCode: 'LOB-001',
+        rarity: 'Ultra Rare',
+      );
+      await own('89631139', 1, printingId: ct13);
+      await own('89631139', 3, printingId: lob);
+      final client = _FakeClient(
+        {'89631139': (0.02, 0.15)},
+        sets: {
+          '89631139': [
+            ('CT13-EN008', 'Ultra Rare', 74.49),
+            ('LOB-001', 'Ultra Rare', 236.85),
+          ],
+        },
+      );
+
+      final value = await repositoryWith(client).collectionValue();
+
+      expect(value.lines, hasLength(2));
+      expect(
+        {for (final l in value.lines) l.setCode: l.tcgplayerUsd},
+        {'CT13-EN008': 74.49, 'LOB-001': 236.85},
+      );
+      expect(value.tcgplayerUsd, 1 * 74.49 + 3 * 236.85);
+      // One card, two lines — the counts are per card and must not follow the
+      // grain of the lines.
+      expect(value.pricedCards, 1);
+      expect(value.lines.length, 2);
+      expect(value.printingPricedLines, 2);
+    });
+
+    // Rarity is half the key on purpose: matching on set code alone would give
+    // a Common the Secret Rare's price, an order of magnitude wrong with
+    // nothing on screen to suggest it.
+    test('the same set at another rarity does not match', () async {
+      final common = await printing(
+        '89631139',
+        setCode: 'LOB-001',
+        rarity: 'Common',
+      );
+      await own('89631139', 1, printingId: common);
+      final client = _FakeClient(
+        {'89631139': (0.02, 0.15)},
+        sets: {
+          '89631139': [('LOB-001', 'Ultra Rare', 236.85)],
+        },
+      );
+
+      final value = await repositoryWith(client).collectionValue();
+
+      expect(value.lines.single.usdBasis, PriceBasis.cardFloor);
+      expect(value.lines.single.tcgplayerUsd, 0.15);
+    });
+
+    test('a set the app does not store is simply ignored', () async {
+      await own('89631139', 1);
+      final client = _FakeClient(
+        {'89631139': (0.02, 0.15)},
+        sets: {
+          '89631139': [('NEVER-HEARD-OF', 'Secret Rare', 999.0)],
+        },
+      );
+
+      final value = await repositoryWith(client).collectionValue();
+
+      expect(value.tcgplayerUsd, 0.15);
+    });
+
+    // Any deterministic rule would do; an unstated "last one seen" is how two
+    // runs report two different totals. Lowest matches every other floor
+    // convention in this app.
+    test('duplicate set entries take the lowest price', () async {
+      final lob = await printing(
+        '89631139',
+        setCode: 'LOB-001',
+        rarity: 'Ultra Rare',
+      );
+      await own('89631139', 1, printingId: lob);
+      final client = _FakeClient(
+        {'89631139': (0.02, 0.15)},
+        sets: {
+          '89631139': [
+            ('LOB-001', 'Ultra Rare', 236.85),
+            ('LOB-001', 'Ultra Rare', 180.00),
+          ],
+        },
+      );
+
+      final value = await repositoryWith(client).collectionValue();
+
+      expect(value.lines.single.tcgplayerUsd, 180.00);
+    });
+
+    test('the lines still add up to the totals', () async {
+      final ct13 = await printing(
+        '89631139',
+        setCode: 'CT13-EN008',
+        rarity: 'Ultra Rare',
+      );
+      await own('89631139', 2, printingId: ct13);
+      await own('89631139', 1);
+      await own('44095762', 4);
+      final client = _FakeClient(
+        {'89631139': (0.02, 0.15), '44095762': (0.02, 0.65)},
+        sets: {
+          '89631139': [('CT13-EN008', 'Ultra Rare', 74.49)],
+        },
+      );
+
+      final value = await repositoryWith(client).collectionValue();
+
+      double sum(double? Function(CollectionValueLine) price) => value.lines
+          .map((l) => (price(l) ?? 0) * l.quantity)
+          .fold(0.0, (a, b) => a + b);
+
+      expect(sum((l) => l.cardmarketEur), closeTo(value.cardmarketEur, 1e-9));
+      expect(sum((l) => l.tcgplayerUsd), closeTo(value.tcgplayerUsd, 1e-9));
+    });
+  });
+
+  group('the printing price cache', () {
+    test('fetched set prices are written through', () async {
+      final ct13 = await printing(
+        '89631139',
+        setCode: 'CT13-EN008',
+        rarity: 'Ultra Rare',
+      );
+      await own('89631139', 1, printingId: ct13);
+      final client = _FakeClient(
+        {'89631139': (0.02, 0.15)},
+        sets: {
+          '89631139': [('CT13-EN008', 'Ultra Rare', 74.49)],
+        },
+      );
+
+      await repositoryWith(client).collectionValue();
+
+      expect((await printingPriceDao.get(ct13))!.price, 74.49);
+    });
+
+    // **The reason a null-price row is written at all.** Without it the
+    // freshness check could never be satisfied for a printing the API has no
+    // figure for, and its card would be re-fetched on every single valuation,
+    // forever. Verified to fail if `_matchSetPrices` skips unmatched printings.
+    test('a second run makes no request even for figureless printings', () async {
+      final sdk = await printing(
+        '89631139',
+        setCode: 'SDK-001',
+        rarity: 'Ultra Rare',
+      );
+      await own('89631139', 1, printingId: sdk);
+      final client = _FakeClient(
+        {'89631139': (0.02, 0.15)},
+        sets: {
+          '89631139': [('SDK-001', 'Ultra Rare', null)],
+        },
+      );
+      final repository = repositoryWith(client);
+
+      await repository.collectionValue();
+      expect(client.requestCount, 1);
+
+      await repository.collectionValue();
+      expect(client.requestCount, 1, reason: 'nothing left to ask about');
+    });
+
+    // A card-level row can be fresh while one of its printings has never been
+    // priced — both halves arrive together, so a miss on either is a miss.
+    test('a card is re-fetched when a printing has no cached row', () async {
+      final ct13 = await printing(
+        '89631139',
+        setCode: 'CT13-EN008',
+        rarity: 'Ultra Rare',
+      );
+      await own('89631139', 1, printingId: ct13);
+      await priceDao.upsertAll([
+        CardPrices(
+          passcode: '89631139',
+          cardmarket: 0.02,
+          tcgplayer: 0.15,
+          updatedAt: DateTime.now(),
+        ),
+      ]);
+      final client = _FakeClient(
+        {'89631139': (0.02, 0.15)},
+        sets: {
+          '89631139': [('CT13-EN008', 'Ultra Rare', 74.49)],
+        },
+      );
+
+      final value = await repositoryWith(client).collectionValue();
+
+      expect(client.requestCount, 1);
+      expect(value.lines.single.tcgplayerUsd, 74.49);
+    });
+
+    // The stamp beside the totals has to describe all of them, and a line can
+    // now draw its dollars from one table and its euros from the other.
+    test('asOf spans both price tables', () async {
+      final old = _millisecondPrecision(
+        DateTime.now().subtract(const Duration(hours: 12)),
+      );
+      final ct13 = await printing(
+        '89631139',
+        setCode: 'CT13-EN008',
+        rarity: 'Ultra Rare',
+      );
+      await own('89631139', 1, printingId: ct13);
+      await priceDao.upsertAll([
+        CardPrices(
+          passcode: '89631139',
+          cardmarket: 0.02,
+          tcgplayer: 0.15,
+          updatedAt: DateTime.now(),
+        ),
+      ]);
+      await printingPriceDao.upsertAll([
+        PrintingPrice(printingId: ct13, price: 74.49, updatedAt: old),
+      ]);
+
+      final value = await repositoryWith(_FakeClient(const {}))
+          .collectionValue();
+
+      expect(value.asOf, old, reason: 'the older of the two figures used');
     });
   });
 
@@ -399,7 +748,9 @@ void main() {
 
       final prices = await PriceRepository(
         priceDao: priceDao,
+        printingPriceDao: printingPriceDao,
         collectionDao: collectionDao,
+        printingDao: printingDao,
         cardDao: cardDao,
         client: _ThrowingClient(),
       ).cachedOrFetch('89631139');

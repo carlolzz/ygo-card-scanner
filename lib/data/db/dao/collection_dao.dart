@@ -4,11 +4,26 @@ import '../../../models/card_condition.dart';
 import '../../../models/card_edition.dart';
 import '../../../models/collection_entry.dart';
 import '../../../models/collection_entry_with_card.dart';
+import 'sql_chunks.dart';
 
 /// How the collection list is ordered. [cardType] is the odd one out: it is not
 /// a column but a three-way grouping — monsters, then Spells, then Traps — see
 /// [CollectionDao.getAll].
 enum CollectionSortBy { name, dateAdded, quantity, cardType }
+
+/// Copies of one card in one printing, summed across condition, edition and
+/// language — the unit the collection valuation prices.
+///
+/// A record rather than a class: it is a query result with no behaviour, and
+/// structural equality on the `(passcode, printingId)` pair is exactly what a
+/// caller grouping these wants (the same reason `planCollectionImport` keys its
+/// working set on a record). A null [printingId] is a real group — every copy
+/// logged without a set — not a missing value.
+typedef OwnedPrintingQuantity = ({
+  String passcode,
+  int? printingId,
+  int quantity,
+});
 
 /// A rarity selection for the collection list: either a specific
 /// `printings.rarity` value, or "no rarity at all".
@@ -367,16 +382,23 @@ class CollectionDao {
   /// action, so a partial result is not a state the collection should ever be
   /// in. (A lone DELETE is already atomic in SQLite; the transaction matches
   /// [applyImport] and [updateEntryDetails].)
+  /// A selection larger than SQLite's bound parameter limit is split by
+  /// [sqlChunks], with every slice inside the one transaction — chunking must
+  /// not turn an atomic delete into a partial one.
   Future<int> deleteMany(List<int> ids) async {
     if (ids.isEmpty) return 0;
-    final placeholders = List.filled(ids.length, '?').join(', ');
-    return _db.transaction(
-      (txn) => txn.delete(
-        'collection_entries',
-        where: 'id IN ($placeholders)',
-        whereArgs: ids,
-      ),
-    );
+    return _db.transaction((txn) async {
+      var removed = 0;
+      for (final chunk in sqlChunks(ids)) {
+        final placeholders = List.filled(chunk.length, '?').join(', ');
+        removed += await txn.delete(
+          'collection_entries',
+          where: 'id IN ($placeholders)',
+          whereArgs: chunk,
+        );
+      }
+      return removed;
+    });
   }
 
   /// Edits the entry [id]'s printing/condition/edition/language in place. If the
@@ -718,22 +740,36 @@ class CollectionDao {
     return {for (final row in rows) row['k']! as String: row['n']! as int};
   }
 
-  /// Total copies owned per passcode, for valuing the collection.
+  /// Copies owned per `(passcode, printing)`, for valuing the collection.
   ///
-  /// Grouped by passcode rather than returned per entry because pricing is a
-  /// property of the *card*: YGOPRODeck reports one figure per passcode, so the
-  /// four rows of a card held in two conditions and two languages all price the
-  /// same and there is nothing to gain from four lookups. This is also what
-  /// bounds the number of API requests — the key set is exactly what has to be
-  /// fetched.
-  Future<Map<String, int>> quantityByPasscode() async {
+  /// This is the grain the prices actually have since schema v4: a card's worth
+  /// depends on which printing is in hand (a CT13-EN008 Blue-Eyes is $74.49
+  /// against a card-level floor of $0.15), so a card held as two printings is
+  /// two groups priced separately. Condition, edition and language are summed
+  /// away — no price source distinguishes them.
+  ///
+  /// Replaced `quantityByPasscode`, which grouped by passcode alone. The
+  /// distinct passcodes are still what bounds the API request count; they are
+  /// derived from this result at the call site rather than fetched twice.
+  ///
+  /// **`GROUP BY printing_id` folds every NULL into one group**, which is the
+  /// exact opposite of how the `collection_entries` UNIQUE key treats NULL (see
+  /// [addOrIncrement], which special-cases it by hand). That is what is wanted
+  /// here — every copy logged without a set is one group priced at the card
+  /// floor — and it is surprising enough to be pinned by a test.
+  Future<List<OwnedPrintingQuantity>> quantityByPasscodeAndPrinting() async {
     final rows = await _db.rawQuery(
-      'SELECT passcode, SUM(quantity) AS n '
-      'FROM collection_entries GROUP BY passcode',
+      'SELECT passcode, printing_id, SUM(quantity) AS n '
+      'FROM collection_entries GROUP BY passcode, printing_id',
     );
-    return {
-      for (final row in rows) row['passcode']! as String: row['n']! as int,
-    };
+    return [
+      for (final row in rows)
+        (
+          passcode: row['passcode']! as String,
+          printingId: row['printing_id'] as int?,
+          quantity: row['n']! as int,
+        ),
+    ];
   }
 
   Future<List<CollectionEntry>> getEntriesForPasscode(String passcode) async {
@@ -747,18 +783,23 @@ class CollectionDao {
 
   /// Every entry for any of the listed cards, for callers that would otherwise
   /// do one round trip per card. Same dynamic-`IN` convention as
-  /// `CardDao.getByPasscodes`; order unspecified.
+  /// `CardDao.getByPasscodes`; order unspecified. Split by [sqlChunks], since a
+  /// CSV import can reach this with a whole collection's worth of passcodes.
   Future<List<CollectionEntry>> getEntriesForPasscodes(
     List<String> passcodes,
   ) async {
     if (passcodes.isEmpty) return const [];
-    final placeholders = List.filled(passcodes.length, '?').join(', ');
-    final rows = await _db.query(
-      'collection_entries',
-      where: 'passcode IN ($placeholders)',
-      whereArgs: passcodes,
-    );
-    return rows.map(CollectionEntry.fromMap).toList();
+    final result = <CollectionEntry>[];
+    for (final chunk in sqlChunks(passcodes)) {
+      final placeholders = List.filled(chunk.length, '?').join(', ');
+      final rows = await _db.query(
+        'collection_entries',
+        where: 'passcode IN ($placeholders)',
+        whereArgs: chunk,
+      );
+      result.addAll(rows.map(CollectionEntry.fromMap));
+    }
+    return result;
   }
 
   /// Writes a prepared import: new rows inserted, matched rows set to a new

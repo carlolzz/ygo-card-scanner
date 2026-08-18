@@ -2,18 +2,26 @@ import 'package:freezed_annotation/freezed_annotation.dart';
 
 part 'card_prices.freezed.dart';
 
-/// One card's market prices, as YGOPRODeck reports them in `card_prices`.
+/// One card's **card-level** market prices, from YGOPRODeck's `card_prices`.
 ///
-/// Maps to the `card_prices` table (schema v3). Every figure is documented by
+/// Maps to the `card_prices` table (schema v4). Both figures are documented by
 /// the API as "the lowest price found across multiple versions of that card",
-/// so this is a floor for the *card*, not a valuation of a particular printing
-/// in a particular grade — [SetPrice] is the only per-printing figure the API
-/// offers, and it exists in one currency only.
+/// and that is not a figure of speech: `cardmarket_price` is €0.02 for
+/// Blue-Eyes White Dragon, Dark Magician and Mirror Force alike. So this is a
+/// **floor for the card**, not a valuation of the printing in hand.
 ///
-/// **[cardmarket] is EUR; every other field is USD.** They are deliberately not
+/// [PrintingPrice] is the real per-printing figure and is what the collection
+/// valuation uses wherever a set is recorded; this row is the fallback for
+/// copies logged without one, and the only source there is for euros.
+///
+/// **[cardmarket] is EUR, [tcgplayer] is USD.** They are deliberately not
 /// reconciled anywhere: the collection total is reported as two separate
 /// figures rather than one mixed sum, because this app carries no exchange rate
 /// and inventing one would silently turn an estimate into a wrong number.
+///
+/// eBay, Amazon and CoolStuffInc were carried here until step 26. They were
+/// displayed on a card's Prices tab and fed nothing else, so they went with the
+/// v4 migration rather than linger as columns nothing reads.
 @freezed
 abstract class CardPrices with _$CardPrices {
   const CardPrices._();
@@ -26,9 +34,6 @@ abstract class CardPrices with _$CardPrices {
 
     /// TCGplayer, in US dollars.
     double? tcgplayer,
-    double? ebay,
-    double? amazon,
-    double? coolstuffinc,
 
     /// When this row was fetched. Drives the TTL in `PriceRepository` and the
     /// "prices as of …" stamp the UI shows, so a cached figure is never
@@ -40,9 +45,6 @@ abstract class CardPrices with _$CardPrices {
     passcode: map['passcode'] as String,
     cardmarket: (map['cardmarket'] as num?)?.toDouble(),
     tcgplayer: (map['tcgplayer'] as num?)?.toDouble(),
-    ebay: (map['ebay'] as num?)?.toDouble(),
-    amazon: (map['amazon'] as num?)?.toDouble(),
-    coolstuffinc: (map['coolstuffinc'] as num?)?.toDouble(),
     updatedAt: DateTime.fromMillisecondsSinceEpoch(map['updated_at'] as int),
   );
 
@@ -50,22 +52,61 @@ abstract class CardPrices with _$CardPrices {
     'passcode': passcode,
     'cardmarket': cardmarket,
     'tcgplayer': tcgplayer,
-    'ebay': ebay,
-    'amazon': amazon,
-    'coolstuffinc': coolstuffinc,
+    'updated_at': updatedAt.millisecondsSinceEpoch,
+  };
+}
+
+/// One printing's price, cached in the `printing_prices` table (schema v4).
+///
+/// The persisted form of a [SetPrice], keyed on `printings.id` once the
+/// API's set code and rarity have been matched back to a row this app stores.
+///
+/// **A null [price] is a real answer, not a missing one.** `parsePrice` folds
+/// the API's very common `"0.00"` into null, so most printings have no figure;
+/// the row records that we asked and when, which is what stops its card being
+/// re-fetched on every valuation forever. A printing with no row at all has
+/// never been asked about.
+@freezed
+abstract class PrintingPrice with _$PrintingPrice {
+  const PrintingPrice._();
+
+  const factory PrintingPrice({
+    required int printingId,
+
+    /// US dollars, or null when the API had no usable figure for this printing.
+    double? price,
+
+    required DateTime updatedAt,
+  }) = _PrintingPrice;
+
+  factory PrintingPrice.fromMap(Map<String, Object?> map) => PrintingPrice(
+    printingId: map['printing_id'] as int,
+    price: (map['price'] as num?)?.toDouble(),
+    updatedAt: DateTime.fromMillisecondsSinceEpoch(map['updated_at'] as int),
+  );
+
+  Map<String, Object?> toMap() => {
+    'printing_id': printingId,
+    'price': price,
     'updated_at': updatedAt.millisecondsSinceEpoch,
   };
 }
 
 /// What one set/rarity printing of a card sells for, from `card_sets[].set_price`.
 ///
-/// **Never persisted** — it lives with the model rather than in a DAO because
-/// there is no table behind it. The `printings` rows the sync already stores
-/// carry the same set code, name and rarity; only the price is transient, and
-/// it is read live whenever a card's Prices tab is opened.
+/// **The figure the collection valuation is actually built on** since step 26.
+/// It is per set *and* rarity, so it reflects the card in hand in a way the
+/// card-level [CardPrices] floor cannot: a CT13-EN008 Blue-Eyes is $74.49 here
+/// and $0.15 there.
+///
+/// The API's wire form. It is matched back to a `printings.id` on the exact
+/// `(passcode, set_code, rarity)` triple — the `printings` UNIQUE key — and
+/// persisted as a [PrintingPrice]. Both sides come from the same fields of the
+/// same endpoint, so that match is an identity rather than a heuristic.
 ///
 /// [price] is USD, and it is the *only* currency available per printing —
-/// YGOPRODeck reports Cardmarket at the card level and nowhere else.
+/// YGOPRODeck reports Cardmarket at the card level and nowhere else, which is
+/// why the collection's euro total remains a floor.
 class SetPrice {
   const SetPrice({
     this.setCode,

@@ -7,6 +7,8 @@ import 'package:ygo_scanner/data/api/ygoprodeck_client.dart';
 import 'package:ygo_scanner/data/db/dao/card_dao.dart';
 import 'package:ygo_scanner/data/db/dao/card_price_dao.dart';
 import 'package:ygo_scanner/data/db/dao/collection_dao.dart';
+import 'package:ygo_scanner/data/db/dao/printing_dao.dart';
+import 'package:ygo_scanner/data/db/dao/printing_price_dao.dart';
 import 'package:ygo_scanner/data/db/database.dart';
 import 'package:ygo_scanner/data/repositories/price_repository.dart';
 import 'package:ygo_scanner/data/seed/fake_collection_seed.dart';
@@ -18,6 +20,11 @@ import '../../support/widget_test_harness.dart';
 
 /// Prices every card asked for at a flat figure, so the totals are arithmetic
 /// the test can state rather than fixture bookkeeping.
+///
+/// Reports **no** `card_sets` figures, so every line falls back to the
+/// card-level floor and the totals stay copy-count arithmetic even though some
+/// seeded entries carry a printing. The per-printing path is exercised in
+/// `price_repository_test.dart`, where the numbers can be stated exactly.
 class _FlatClient extends YgoProdeckClient {
   _FlatClient({this.knows = true});
 
@@ -90,7 +97,9 @@ void main() {
           priceRepositoryProvider.overrideWith(
             (ref) async => PriceRepository(
               priceDao: CardPriceDao(testDb),
+              printingPriceDao: PrintingPriceDao(testDb),
               collectionDao: CollectionDao(testDb),
+              printingDao: PrintingDao(testDb),
               cardDao: CardDao(testDb),
               client: client,
             ),
@@ -240,6 +249,53 @@ void main() {
         await tapCalculate(tester);
 
         expect(find.text(AppStrings.statisticsValueExportButton), findsNothing);
+      });
+    });
+  });
+
+  // Same contract as the export button beside it, for the same reason: there is
+  // nothing to break down until a calculation has produced some lines.
+  //
+  // Presence only — the screen itself is covered by
+  // `collection_value_screen_test.dart`, which pumps it directly. Tapping
+  // through go_router to a screen while the sqflite isolate is live is the
+  // documented hang.
+  group('the value breakdown button', () {
+    testWidgets('is absent until a calculation succeeds', (tester) async {
+      await tester.runAsync(() async {
+        useTallViewport(tester);
+        await openStatistics(tester, client: _FlatClient());
+
+        expect(
+          find.text(AppStrings.statisticsValueBreakdownButton),
+          findsNothing,
+        );
+      });
+    });
+
+    testWidgets('appears beside the totals', (tester) async {
+      await tester.runAsync(() async {
+        useTallViewport(tester);
+        await openStatistics(tester, client: _FlatClient());
+        await tapCalculate(tester);
+
+        expect(
+          find.text(AppStrings.statisticsValueBreakdownButton),
+          findsOneWidget,
+        );
+      });
+    });
+
+    testWidgets('is absent after a failure', (tester) async {
+      await tester.runAsync(() async {
+        useTallViewport(tester);
+        await openStatistics(tester, client: _OfflineClient());
+        await tapCalculate(tester);
+
+        expect(
+          find.text(AppStrings.statisticsValueBreakdownButton),
+          findsNothing,
+        );
       });
     });
   });

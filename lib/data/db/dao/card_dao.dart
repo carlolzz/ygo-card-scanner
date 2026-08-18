@@ -1,6 +1,7 @@
 import 'package:sqflite/sqflite.dart';
 
 import '../../../models/ygo_card.dart';
+import 'sql_chunks.dart';
 
 class CardDao {
   const CardDao(this._db);
@@ -48,13 +49,19 @@ class CardDao {
     // `IN ()` is not valid SQL, and an empty candidate list is a normal case
     // (nothing detected in the frame).
     if (passcodes.isEmpty) return const [];
-    final placeholders = List.filled(passcodes.length, '?').join(', ');
-    final rows = await _db.query(
-      'cards',
-      where: 'passcode IN ($placeholders)',
-      whereArgs: passcodes,
-    );
-    return rows.map(YgoCard.fromMap).toList();
+    // Split so a whole-collection lookup cannot exceed SQLite's bound
+    // parameter limit — see `sql_chunks.dart`.
+    final result = <YgoCard>[];
+    for (final chunk in sqlChunks(passcodes)) {
+      final placeholders = List.filled(chunk.length, '?').join(', ');
+      final rows = await _db.query(
+        'cards',
+        where: 'passcode IN ($placeholders)',
+        whereArgs: chunk,
+      );
+      result.addAll(rows.map(YgoCard.fromMap));
+    }
+    return result;
   }
 
   /// Ranks prefix matches ('query%') above substring-only matches

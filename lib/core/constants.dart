@@ -31,16 +31,19 @@ class AppStrings {
   static const String pricesBySetSection = 'By set';
   static const String pricesCardmarket = 'Cardmarket';
   static const String pricesTcgplayer = 'TCGplayer';
-  static const String pricesEbay = 'eBay';
-  static const String pricesAmazon = 'Amazon';
-  static const String pricesCoolStuffInc = 'CoolStuffInc';
 
   /// Says what these figures are, because "lowest across printings" is a very
   /// different number from what a particular copy is worth, and the difference
-  /// is invisible without being told.
+  /// is invisible without being told. Concretely: this is the line that
+  /// explains why Blue-Eyes White Dragon reads €0.02 while the "By set" table
+  /// below it lists a $74.49 printing.
+  ///
+  /// eBay, Amazon and CoolStuffInc were listed here until step 26. They were
+  /// shown and nothing else, so they were dropped along with their columns.
   static const String pricesCardLevelNote =
-      'The lowest price found across every version of this card. Cardmarket is '
-      'in euros; every other figure is in US dollars.';
+      'The lowest price found across every version of this card — see "By set" '
+      'below for what a particular printing is worth. Cardmarket is in euros, '
+      'TCGplayer in US dollars.';
 
   /// Per-set prices come from `card_sets[].set_price`, which is USD only —
   /// YGOPRODeck reports Cardmarket at the card level and nowhere else.
@@ -222,7 +225,7 @@ class AppStrings {
   /// directly decides whether its own edges survive — a patterned desk is the
   /// single biggest cause of "it won't recognise anything".
   static const String scanSurfaceHint =
-      'Place the cards ideally on a monochromatic surface, preferably black';
+      'Place the cards ideally on a monochromatic surface.';
 
   static const String scanDetecting = 'Point at a card';
   static const String scanReading = 'Identifying…';
@@ -443,7 +446,11 @@ class AppStrings {
   static const String statisticsValueSection = 'Collection value';
   static const String statisticsValueButton = 'Calculate collection value';
   static const String statisticsValueRefreshButton = 'Refresh prices';
-  static const String statisticsValueCardmarketLabel = 'Cardmarket';
+  /// Labelled asymmetrically on purpose. Since step 26 the TCGplayer total
+  /// prices each copy at the set and rarity recorded, while Cardmarket has no
+  /// per-printing figure to use and stays the card-level floor — so calling
+  /// both of them plain vendor names would imply they are the same measurement.
+  static const String statisticsValueCardmarketLabel = 'Cardmarket (floor)';
   static const String statisticsValueTcgplayerLabel = 'TCGplayer';
   static const String statisticsValueErrorMessage =
       'Could not fetch prices. Check your connection and try again.';
@@ -461,11 +468,30 @@ class AppStrings {
   static const String statisticsValueExportButton = 'Export value breakdown';
   static const String statisticsValueExportSubject = 'YGO collection value';
 
-  /// Says what the totals are, since a "lowest across printings" figure is very
-  /// different from what a graded, first-edition copy would fetch.
+  /// Says what the totals are. The two halves are no longer the same kind of
+  /// figure and the note has to carry that: TCGplayer prices the printing, and
+  /// Cardmarket cannot, because YGOPRODeck reports it at the card level only.
   static const String statisticsValueNote =
-      'A floor, not a valuation: each card is priced at the lowest figure '
-      'across its printings, ignoring condition, edition and set.';
+      'TCGplayer prices each copy at the set and rarity you recorded, falling '
+      'back to the card\'s lowest printing where no set is recorded. '
+      'Cardmarket is always that lowest-printing floor — no euro price exists '
+      'per printing. Condition and edition are ignored on both.';
+
+  /// How much of the valuation got a real per-printing figure rather than the
+  /// card floor — the measure of how far it is worth trusting.
+  static String statisticsValuePrintingPriced(int priced, int total) =>
+      '$priced of $total ${total == 1 ? 'line' : 'lines'} priced at their own '
+      'printing';
+
+  static const String statisticsValueBreakdownButton = 'View breakdown';
+  static const String valueBreakdownTitle = 'Value breakdown';
+  static const String valueBreakdownSortByValue = 'Most valuable first';
+  static const String valueBreakdownSortByName = 'By name';
+  static const String valueBreakdownNoSet = 'No set recorded';
+
+  /// Marks a row that fell back to the card-level floor. A word rather than a
+  /// colour, so it survives a colour-blind reader and a greyscale screenshot.
+  static const String valueBreakdownCardFloorTag = 'card floor';
 
   static const String syncFetchingMessage = 'Downloading card database…';
   static const String syncWritingMessage = 'Saving to your device…';

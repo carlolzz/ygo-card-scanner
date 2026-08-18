@@ -46,9 +46,6 @@ void main() {
         passcode: '89631139',
         cardmarket: 1.23,
         tcgplayer: 4.56,
-        ebay: 7.89,
-        amazon: 10.11,
-        coolstuffinc: 12.13,
         updatedAt: stamp,
       ),
     ]);
@@ -58,9 +55,6 @@ void main() {
     expect(row, isNotNull);
     expect(row!.cardmarket, 1.23);
     expect(row.tcgplayer, 4.56);
-    expect(row.ebay, 7.89);
-    expect(row.amazon, 10.11);
-    expect(row.coolstuffinc, 12.13);
     expect(row.updatedAt, stamp);
   });
 

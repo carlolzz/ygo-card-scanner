@@ -103,7 +103,7 @@ tools/
 assets/
 ```
 
-## Database schema (version 3)
+## Database schema (version 4)
 
 ```sql
 CREATE TABLE cards (
@@ -148,13 +148,16 @@ CREATE TABLE collection_entries (
 );
 CREATE INDEX idx_entries_passcode ON collection_entries(passcode);
 
-CREATE TABLE card_prices (          -- v3
+CREATE TABLE card_prices (          -- v3, rebuilt in v4
   passcode      TEXT PRIMARY KEY REFERENCES cards(passcode) ON DELETE CASCADE,
-  cardmarket    REAL,               -- EUR; every other column is USD
-  tcgplayer     REAL,
-  ebay          REAL,
-  amazon        REAL,
-  coolstuffinc  REAL,
+  cardmarket    REAL,               -- EUR
+  tcgplayer     REAL,               -- USD
+  updated_at    INTEGER NOT NULL
+);
+
+CREATE TABLE printing_prices (      -- v4
+  printing_id   INTEGER PRIMARY KEY REFERENCES printings(id) ON DELETE CASCADE,
+  price         REAL,               -- USD; NULL = asked, no figure
   updated_at    INTEGER NOT NULL
 );
 
@@ -183,16 +186,31 @@ Notes:
   is mirrored into the `meta` table alongside sqflite's own `user_version`.
   v2 added `cards.local_image_path` (see `lib/data/db/dao/meta_dao.dart` for
   the DAO — a plain get/set(key, value), REPLACE semantics); v3 added the
-  `card_prices` cache.
-- **`card_prices` is a cache, and a re-sync deliberately empties it.**
+  `card_prices` cache; v4 dropped and recreated it without eBay/Amazon/
+  CoolStuffInc and added `printing_prices`.
+- **Both price tables are caches, and a re-sync deliberately empties them.**
   `CardDao.insertAll` uses `ConflictAlgorithm.replace`, i.e. `INSERT OR
   REPLACE`, which *deletes and re-inserts* each `cards` row — so every child row
   with an `ON DELETE CASCADE` goes with it, exactly as already happens to
   `printings` and to `cards.local_image_path`. That is wanted here: prices from
   before a re-sync are the most stale ones. Every row is re-fetchable, so
-  nothing in this table is user data. **Per-set prices are not stored** —
-  YGOPRODeck reports `card_sets[].set_price` (USD only) alongside the card-level
-  figures, and those are read live on a card's Prices tab rather than persisted.
+  nothing in either table is user data.
+  For `printing_prices` the cascade is **load-bearing for correctness, not just
+  hygiene**: `printings.id` is AUTOINCREMENT and `printings` cascades from
+  `cards`, so a re-sync *re-keys* every printing — a price row that outlived its
+  printing would silently describe a different set and rarity.
+- **Per-set prices ARE stored, since v4** (this reverses the v3 decision).
+  YGOPRODeck's card-level figures are documented as "the lowest price found
+  across multiple versions of that card", and measurably so: `cardmarket_price`
+  is €0.02 for Blue-Eyes White Dragon, Dark Magician and Mirror Force alike. The
+  per-set `card_sets[].set_price` is the real figure (CT13-EN008 Blue-Eyes =
+  $74.49) and arrives in the *same response*, so caching it costs no extra
+  requests. It is **USD only** — there is no per-set Cardmarket price and never
+  will be — so the collection's euro total remains a card-level floor and is
+  labelled as one everywhere it appears. A `printing_prices` row with a NULL
+  `price` means "asked, no figure" and is deliberately written: without it the
+  TTL check could never be satisfied for such a printing and its card would be
+  re-fetched on every valuation forever.
 - `meta` also carries a `last_sync` key (epoch ms), written at the end of
   `CardRepository.sync()`'s transaction. `CardRepository.needsSync()`
   treats a missing `last_sync` OR an empty `cards` table as "needs sync" —
@@ -2181,6 +2199,134 @@ order):
     `CardDetectionTuning.innerQuadMinAreaRatio` at 0.78, the passcode ROI filter
     off, `artAgreementFrames` at 2, every `FrameQualityTuning` threshold still
     uncalibrated on device, and whether `kPriceTtl` at 24 h is right.
+
+26. Pricing by printing, the in-app value breakdown, and the vendor cleanup ←
+    done (verified: `flutter analyze` clean, full `flutter test` green at **715
+    tests**, `pytest tools/` green). **One DB migration (v3 → v4), no new
+    dependency.** Nothing here touches the descriptor,
+    `assets/card_hashes.json`, the detection algorithm or any scan/quality
+    threshold.
+    Context: the report was that the individual values in the exported value CSV
+    "look way off". They were — and **the arithmetic was not**. The accumulation
+    loop was read and checked line by line: quantity summed per passcode, unit ×
+    quantity, currencies never mixed, `"0.00"` folded to null by `parsePrice`,
+    the export reusing the on-screen object so file and screen cannot disagree.
+    Nothing was double-counted. Only the **grain** was wrong.
+    **The input was the problem, measured against the live API.**
+    `cardmarket_price` is **€0.02** for Blue-Eyes White Dragon, Dark Magician
+    *and* Mirror Force; `tcgplayer_price` is 0.15 / 0.30 / 0.65. The API guide
+    says each figure is "the lowest price found across multiple versions of that
+    card", so the euro total was roughly `€0.02 × copies owned`. Meanwhile
+    `card_sets[].set_price` is per set *and* rarity and realistic — CT13-EN008
+    Blue-Eyes is **$74.49**, LOB-001 is $236.85.
+    **And it was already being downloaded and thrown away.** `fetchPrices`
+    returns `CardPricing.sets` in the same response and `collectionValue()`
+    discarded it, while `collection_entries.printing_id` has recorded which
+    printing each copy is since v1. So pricing by printing costs **zero extra
+    requests** — the fetch is still bounded by distinct passcodes, and the
+    "Priced 120 / 340 cards" progress line is unchanged.
+    **Schema v4**: `printing_prices` (`printing_id` PK → `printings(id)` ON
+    DELETE CASCADE, `price` REAL, `updated_at`), plus `card_prices` **dropped
+    and recreated** without `ebay`/`amazon`/`coolstuffinc` — `ALTER TABLE …
+    DROP COLUMN` needs SQLite 3.35 and sqflite uses Android's system SQLite
+    (API 30 ships 3.28), and dropping is safe precisely because the table is a
+    pure re-fetchable cache a re-sync already empties. See the schema notes for
+    why the cascade and the NULL-price row are both load-bearing.
+    **The valuation regrouped from passcode to `(passcode, printing_id)`.**
+    `CollectionDao.quantityByPasscode` is **replaced** by
+    `quantityByPasscodeAndPrinting` (deleted, not kept alongside — one caller,
+    and a DAO method with no feature behind it is dead code by this file's own
+    rule), returning an `OwnedPrintingQuantity` record. **`GROUP BY printing_id`
+    folds every NULL into one group** — the exact opposite of how the
+    `collection_entries` UNIQUE key treats NULL, which `addOrIncrement`
+    special-cases by hand. That is wanted (every copy logged without a set is
+    one group priced at the floor) and is pinned by a test.
+    Dollars prefer the printing's own `set_price` and fall back to the card
+    floor; euros are *always* the floor. `PriceBasis` (`printing`/`cardFloor`/
+    `none`) rides every `CollectionValueLine` and is surfaced on screen and in
+    the CSV, because a total built mostly from fallbacks is barely better than
+    the one this replaced and the numbers alone cannot say which it is.
+    **`pricedCards`/`unpricedCards` stay distinct-passcode counts** while
+    `lines.length` is per group — the strings say "cards", the fetch is bounded
+    by passcodes, and `CollectionValueController` derives its progress from them
+    and would otherwise contradict the line it just displayed.
+    **The `SetPrice` → `printings.id` match is the exact `(passcode, set_code,
+    rarity)` triple**, the `printings` UNIQUE key. Both sides come from the same
+    three fields of the same endpoint (`_parseEntry` and `parsePricingEntry`
+    read `set_code`/`set_rarity` identically), so string equality is an
+    *identity*, not a heuristic — none of `resolveImportRow`'s case-and-space
+    ladder applies, since that exists because a human typed the CSV. `set_name`
+    is excluded: it is not in the UNIQUE key, so a renamed set would stop
+    matching. Rarity is half the key on purpose — matching on set code alone
+    would give a Common the Secret Rare's price, an order of magnitude wrong
+    with nothing on screen to suggest it. Duplicate entries collapsing onto one
+    printing take the **lowest** non-null price; any deterministic rule would
+    do, but an unstated "last one seen" is how two runs report two different
+    totals. `asOf` now spans both tables, since a line can draw its dollars from
+    a printing row and its euros from a card row fetched at different times.
+    **eBay, Amazon and CoolStuffInc are gone end to end** — the `CardPrices`
+    fields, `parsePricingEntry`, the three rows on the Prices tab, the
+    `AppStrings`, and the columns. They were displayed and fed nothing else.
+    **The value CSV is now one row per `(card, printing)`** with `set_code`,
+    `set_name`, `rarity` and a `tcgplayer_basis` column reading
+    `printing`/`card_floor`/empty. `cardmarket_eur` was **renamed
+    `cardmarket_eur_floor`** (totals likewise): a column called `cardmarket_eur`
+    beside a per-printing `tcgplayer_usd` implies the two are the same
+    measurement, which is the exact misreading this step exists to end. *A
+    downstream script reading the old name will need updating.* Everything else
+    is preserved verbatim — empty cell for unknown and never `0`, currency in
+    the column name, bare `toStringAsFixed(2)` rather than `money.dart`, no
+    totals row, and still **not importable** (no `condition` column, so
+    `parseCollectionCsv` refuses it outright). The file's doc comment was
+    *rewritten* rather than extended: it argued for per-card granularity **on
+    the grounds that prices are card-level**, a rationale this step kills.
+    **The breakdown is visible in the app**, at `AppRoutes.collectionValue` =
+    `/statistics/value`, reached from a "View breakdown" button that appears in
+    `_ValueResult` only after a calculation succeeds — same contract as the
+    export button beside it, and the `CollectionValue` travels as `state.extra`
+    like `collectionDetail`/`cardDetail`. `CollectionValueScreen` **reads
+    nothing from Riverpod**: everything comes from `widget.value`, which makes
+    it a pure function of its argument and so testable by pumping it under a
+    bare `MaterialApp`, sidestepping the documented hang when a route transition
+    kicks off the sqflite isolate. Rows show name, set, rarity, `×N` and the
+    **line totals** (not unit prices), with a muted `card floor` tag only where
+    the dollars fell back — a word, not a colour, so it survives a colour-blind
+    reader. Unpriced lines stay in the list showing `kNoPrice`; they are the
+    detail behind the count above, and hiding them would repeat the mistake the
+    lines were kept to fix. Sorting is by line total descending (default,
+    unpriced last) or by name; the pure `sortValueLines` is host-tested and
+    non-mutating, so the export keeps the repository's name order and stays
+    diff-stable. **`CardArtThumbnail` is deliberately absent** and documented as
+    such: it needs a `YgoCard`, reaching one means the database, and that would
+    cost the screen its pure-`extra` property, fire a burst of art lookups over
+    a now-per-printing list, and double every row's height on a dense money
+    list. Rows are untappable for the same reason. `_StatTile` was extracted to
+    a public `StatTile` in its own file rather than copied.
+    **Copy**: `statisticsValueNote` was rewritten to carry the asymmetry (the
+    old text is now false of the USD side and still true of the EUR side), and
+    the tiles are labelled **"Cardmarket (floor)"** vs "TCGplayer" — calling
+    both by a plain vendor name would imply they are the same measurement.
+    **Bundled bug fix, pre-existing and latent**: the dynamic-`IN` DAO methods
+    were called with the *full* owned passcode list, and
+    `SQLITE_MAX_VARIABLE_NUMBER` is **999** before SQLite 3.32 — which Android
+    API 30 still ships. A collection past ~1000 distinct cards already threw
+    there, and this step makes the id lists longer. `lib/data/db/dao/
+    sql_chunks.dart` (`kSqlVariableLimit = 900`, headroom for extra
+    `whereArgs`) is now applied *inside* `CardDao.getByPasscodes`,
+    `CardPriceDao.getForPasscodes`, `PrintingDao.getForPasscodes`,
+    `CollectionDao.getEntriesForPasscodes`, `CollectionDao.deleteMany` (every
+    slice inside the one transaction — chunking must not turn an atomic delete
+    into a partial one) and the new `getForPrintings`. In the DAO, where a
+    caller cannot forget it.
+    **Verified to fail before being kept**: the "a second run makes no request
+    even for figureless printings" test, against a `_matchSetPrices` that skips
+    unmatched printings — it requested twice, i.e. forever.
+    **Still open**, unchanged: `maxHammingDistance` at 72,
+    `CardDetectionTuning.innerQuadMinAreaRatio` at 0.78, the passcode ROI filter
+    off, `artAgreementFrames` at 2, every `FrameQualityTuning` threshold still
+    uncalibrated on device, and whether `kPriceTtl` at 24 h is right. New and
+    open: whether the card-level Cardmarket floor earns its place on the screen
+    at all now that it sits beside a genuinely per-printing dollar figure.
 
 ## Standing rules
 

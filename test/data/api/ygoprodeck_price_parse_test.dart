@@ -74,9 +74,6 @@ void main() {
       expect(pricing.card.passcode, '89631139');
       expect(pricing.card.cardmarket, 0.29);
       expect(pricing.card.tcgplayer, 1.15);
-      expect(pricing.card.ebay, 2.99);
-      expect(pricing.card.amazon, 3.49);
-      expect(pricing.card.coolstuffinc, 0.99);
       expect(pricing.card.updatedAt, fetchedAt);
 
       expect(pricing.sets, hasLength(2));

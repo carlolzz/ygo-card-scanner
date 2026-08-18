@@ -219,6 +219,29 @@ class HomeMenuTokens {
   static const double iconSize = 40;
 }
 
+/// The big-figure tiles on the Statistics screen and the value breakdown.
+class StatTileTokens {
+  const StatTileTokens._();
+
+  /// The figure itself. Large enough to be the thing the eye lands on, which is
+  /// the entire job of a tile that carries one number.
+  static const double valueFontSize = 28;
+}
+
+/// Geometry of the value breakdown screen.
+class ValueBreakdownTokens {
+  const ValueBreakdownTokens._();
+
+  /// Width of the money column, holding two stacked figures. Wider than
+  /// [PriceTokens.setPriceWidth] because a *line total* can run several digits
+  /// longer than a unit price once quantity is applied.
+  static const double moneyWidth = 96;
+
+  /// Width of the `xN` column. Fixed so the money column starts on one edge
+  /// down the whole list rather than shifting as counts gain a digit.
+  static const double quantityWidth = 34;
+}
+
 /// Geometry shared by the screens that show one card: the collection detail
 /// screen, the card-search detail screen and the pricing view.
 class CardDetailTokens {

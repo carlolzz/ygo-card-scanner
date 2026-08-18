@@ -1,6 +1,7 @@
 import 'package:sqflite/sqflite.dart';
 
 import '../../../models/card_prices.dart';
+import 'sql_chunks.dart';
 
 /// Reads and writes the `card_prices` cache (schema v3).
 ///
@@ -36,18 +37,23 @@ class CardPriceDao {
   ///
   /// The placeholder list is built from the argument's **length only**, never
   /// from its contents, so the query stays fully parameterized. Follows
-  /// `CardDao.getByPasscodes`, which set this convention.
+  /// `CardDao.getByPasscodes`, which set this convention, and splits by
+  /// [sqlChunks] so a large collection cannot exceed SQLite's parameter limit.
   Future<List<CardPrices>> getForPasscodes(List<String> passcodes) async {
     // `IN ()` is not valid SQL, and an empty collection reaches this with
     // nothing to look up.
     if (passcodes.isEmpty) return const [];
-    final placeholders = List.filled(passcodes.length, '?').join(', ');
-    final rows = await _db.query(
-      'card_prices',
-      where: 'passcode IN ($placeholders)',
-      whereArgs: passcodes,
-    );
-    return rows.map(CardPrices.fromMap).toList();
+    final result = <CardPrices>[];
+    for (final chunk in sqlChunks(passcodes)) {
+      final placeholders = List.filled(chunk.length, '?').join(', ');
+      final rows = await _db.query(
+        'card_prices',
+        where: 'passcode IN ($placeholders)',
+        whereArgs: chunk,
+      );
+      result.addAll(rows.map(CardPrices.fromMap));
+    }
+    return result;
   }
 
   /// Writes a batch of freshly fetched rows, replacing any cached ones.

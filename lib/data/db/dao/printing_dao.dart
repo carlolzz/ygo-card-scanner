@@ -1,6 +1,7 @@
 import 'package:sqflite/sqflite.dart';
 
 import '../../../models/printing.dart';
+import 'sql_chunks.dart';
 
 class PrintingDao {
   const PrintingDao(this._db);
@@ -39,17 +40,20 @@ class PrintingDao {
   /// placeholders built from the argument's **length only**, so the query stays
   /// parameterized, and an early return for the empty case because `IN ()` is
   /// invalid SQL. Order is unspecified; group by `passcode` at the call site.
+  /// The list is split by [sqlChunks] so a large collection cannot exceed
+  /// SQLite's bound parameter limit.
   Future<List<Printing>> getForPasscodes(List<String> passcodes) async {
     if (passcodes.isEmpty) return const [];
-    final placeholders = List.filled(passcodes.length, '?').join(', ');
-    final rows = await _db.query(
-      'printings',
-      where: 'passcode IN ($placeholders)',
-      whereArgs: passcodes,
-    );
-    return rows.map(Printing.fromMap).toList();
+    final result = <Printing>[];
+    for (final chunk in sqlChunks(passcodes)) {
+      final placeholders = List.filled(chunk.length, '?').join(', ');
+      final rows = await _db.query(
+        'printings',
+        where: 'passcode IN ($placeholders)',
+        whereArgs: chunk,
+      );
+      result.addAll(rows.map(Printing.fromMap));
+    }
+    return result;
   }
-
-  /// Every rarity the synced card database knows about, alphabetically.
-  ///
 }

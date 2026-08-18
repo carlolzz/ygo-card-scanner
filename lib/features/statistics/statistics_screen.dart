@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import 'package:share_plus/share_plus.dart';
 
 import '../../core/constants.dart';
 import '../../core/money.dart';
+import '../../core/routes.dart';
 import '../../core/theme/tokens.dart';
 import '../../data/export/collection_csv_parser.dart';
 import '../../data/export/collection_exporter.dart';
@@ -15,6 +17,7 @@ import '../../models/card_condition.dart';
 import '../../models/card_language.dart';
 import '../collection/collection_providers.dart';
 import '../pricing/card_prices_view.dart';
+import 'stat_tile.dart';
 import 'statistics_providers.dart';
 
 /// Collection statistics: totals and breakdowns by condition, language, and
@@ -82,14 +85,14 @@ class _StatisticsBody extends StatelessWidget {
         Row(
           children: [
             Expanded(
-              child: _StatTile(
+              child: StatTile(
                 label: AppStrings.statisticsTotalCopiesLabel,
                 value: '${stats.totalCopies}',
               ),
             ),
             const SizedBox(width: AppSpacing.md),
             Expanded(
-              child: _StatTile(
+              child: StatTile(
                 label: AppStrings.statisticsDistinctCardsLabel,
                 value: '${stats.distinctCards}',
               ),
@@ -160,40 +163,6 @@ class _BreakdownRow {
 
   final String label;
   final int count;
-}
-
-class _StatTile extends StatelessWidget {
-  const _StatTile({required this.label, required this.value});
-
-  final String label;
-  final String value;
-
-  @override
-  Widget build(BuildContext context) {
-    final palette = AppPalette.of(context);
-    return Container(
-      padding: const EdgeInsets.all(AppSpacing.md),
-      decoration: BoxDecoration(
-        color: palette.surfaceRaised,
-        borderRadius: BorderRadius.circular(AppRadius.md),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            value,
-            style: TextStyle(
-              color: palette.accent,
-              fontWeight: FontWeight.bold,
-              fontSize: 28,
-            ),
-          ),
-          const SizedBox(height: AppSpacing.xs),
-          Text(label, style: TextStyle(color: palette.onSurfaceMuted)),
-        ],
-      ),
-    );
-  }
 }
 
 class _BreakdownSection extends StatelessWidget {
@@ -337,14 +306,14 @@ class _ValueResult extends StatelessWidget {
         Row(
           children: [
             Expanded(
-              child: _StatTile(
+              child: StatTile(
                 label: AppStrings.statisticsValueCardmarketLabel,
                 value: formatEur(value.cardmarketEur),
               ),
             ),
             const SizedBox(width: AppSpacing.md),
             Expanded(
-              child: _StatTile(
+              child: StatTile(
                 label: AppStrings.statisticsValueTcgplayerLabel,
                 value: formatUsd(value.tcgplayerUsd),
               ),
@@ -379,6 +348,21 @@ class _ValueResult extends StatelessWidget {
             ),
           ),
         const SizedBox(height: AppSpacing.sm),
+        // Stacked, not in a row: three labelled buttons crowd a 360pt screen.
+        // Breakdown first — reading the figures is the common next step, while
+        // refreshing and exporting are things you do once you trust them.
+        SizedBox(
+          width: double.infinity,
+          child: OutlinedButton.icon(
+            icon: const Icon(Icons.receipt_long),
+            label: const Text(AppStrings.statisticsValueBreakdownButton),
+            onPressed: () => context.push(
+              AppRoutes.collectionValue,
+              extra: value,
+            ),
+          ),
+        ),
+        const SizedBox(height: AppSpacing.sm),
         SizedBox(
           width: double.infinity,
           child: OutlinedButton.icon(
@@ -388,8 +372,6 @@ class _ValueResult extends StatelessWidget {
           ),
         ),
         const SizedBox(height: AppSpacing.sm),
-        // Stacked under Refresh rather than beside it: two labelled buttons
-        // crowd a 360pt row.
         SizedBox(
           width: double.infinity,
           child: _ValueExportButton(value: value),

@@ -5,16 +5,26 @@ import 'package:ygo_scanner/data/repositories/price_repository.dart';
 CollectionValueLine _line({
   String passcode = '89631139',
   String name = 'Blue-Eyes White Dragon',
+  int? printingId,
+  String? setCode,
+  String? setName,
+  String? rarity,
   int quantity = 1,
   double? cardmarketEur,
   double? tcgplayerUsd,
+  PriceBasis usdBasis = PriceBasis.none,
   DateTime? pricedAt,
 }) => CollectionValueLine(
   passcode: passcode,
   name: name,
+  printingId: printingId,
+  setCode: setCode,
+  setName: setName,
+  rarity: rarity,
   quantity: quantity,
   cardmarketEur: cardmarketEur,
   tcgplayerUsd: tcgplayerUsd,
+  usdBasis: usdBasis,
   pricedAt: pricedAt,
 );
 
@@ -39,13 +49,18 @@ void main() {
     );
   });
 
-  test('writes unit prices, line totals and the price date', () {
+  test('writes the printing, unit prices, line totals and the date', () {
     final csv = collectionValueToCsv(
       _value([
         _line(
+          printingId: 7,
+          setCode: 'CT13-EN008',
+          setName: '2016 Mega-Tins',
+          rarity: 'Ultra Rare',
           quantity: 3,
           cardmarketEur: 1.2,
           tcgplayerUsd: 2.5,
+          usdBasis: PriceBasis.printing,
           pricedAt: DateTime.utc(2026, 8, 17, 9),
         ),
       ]),
@@ -54,13 +69,56 @@ void main() {
     expect(_rows(csv).single, [
       '89631139',
       'Blue-Eyes White Dragon',
+      'CT13-EN008',
+      '2016 Mega-Tins',
+      'Ultra Rare',
       '3',
       '1.20',
       '2.50',
+      'printing',
       '3.60',
       '7.50',
       '2026-08-17T09:00:00.000Z',
     ].join(','));
+  });
+
+  // The column that says whether a row got a real per-printing figure or fell
+  // back to the card-level floor — the distinction the whole valuation rests
+  // on, and the one thing a spreadsheet cannot infer from the numbers.
+  group('tcgplayer_basis', () {
+    String basisOf(CollectionValueLine line) =>
+        _rows(collectionValueToCsv(_value([line]))).single.split(',')[8];
+
+    test('a printing figure reads "printing"', () {
+      expect(
+        basisOf(_line(tcgplayerUsd: 1, usdBasis: PriceBasis.printing)),
+        'printing',
+      );
+    });
+
+    test('a fallback reads "card_floor"', () {
+      expect(
+        basisOf(_line(tcgplayerUsd: 1, usdBasis: PriceBasis.cardFloor)),
+        'card_floor',
+      );
+    });
+
+    // Empty, like every other unknown in this file — not the word "none",
+    // which would read as a value rather than as an absence.
+    test('an unpriced row leaves it empty', () {
+      expect(basisOf(_line()), '');
+    });
+  });
+
+  test('a line with no printing leaves the set columns empty', () {
+    final csv = collectionValueToCsv(
+      _value([_line(quantity: 2, tcgplayerUsd: 1, usdBasis: PriceBasis.cardFloor)]),
+    );
+
+    final fields = _rows(csv).single.split(',');
+    expect(fields[2], '', reason: 'set code');
+    expect(fields[3], '', reason: 'set name');
+    expect(fields[4], '', reason: 'rarity');
   });
 
   // A local timestamp still lands in the file as UTC, like every other
@@ -80,7 +138,7 @@ void main() {
   test('an unknown price is an empty cell, never a zero', () {
     final csv = collectionValueToCsv(_value([_line(quantity: 4)]));
 
-    expect(_rows(csv).single, '89631139,Blue-Eyes White Dragon,4,,,,,');
+    expect(_rows(csv).single, '89631139,Blue-Eyes White Dragon,,,,4,,,,,,');
   });
 
   test('one currency can be missing while the other is priced', () {
@@ -89,16 +147,17 @@ void main() {
         _line(
           quantity: 2,
           tcgplayerUsd: 5,
+          usdBasis: PriceBasis.cardFloor,
           pricedAt: DateTime.utc(2026, 8, 17),
         ),
       ]),
     );
 
     final fields = _rows(csv).single.split(',');
-    expect(fields[3], '', reason: 'no Cardmarket figure');
-    expect(fields[4], '5.00');
-    expect(fields[5], '', reason: 'and so no Cardmarket line total');
-    expect(fields[6], '10.00');
+    expect(fields[6], '', reason: 'no Cardmarket figure');
+    expect(fields[7], '5.00');
+    expect(fields[9], '', reason: 'and so no Cardmarket line total');
+    expect(fields[10], '10.00');
   });
 
   test('lines are written in the order they arrive', () {

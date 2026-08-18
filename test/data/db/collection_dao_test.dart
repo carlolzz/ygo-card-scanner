@@ -820,20 +820,126 @@ void main() {
       });
     });
 
-    // Backs valuing the collection. Grouped by passcode because pricing is a
-    // property of the card, not the entry: Blue-Eyes' two language rows price
-    // identically, so they must arrive as one lookup of five copies rather than
-    // two of three and two.
-    test('quantityByPasscode folds every entry of a card into one', () async {
-      expect(await collectionDao.quantityByPasscode(), {
-        _blueEyes.passcode: 5,
-        _redEyes.passcode: 5,
-      });
+    // Backs valuing the collection. Condition, edition and language are summed
+    // away because no price source distinguishes them: Blue-Eyes' two language
+    // rows price identically, so they arrive as one group of five copies rather
+    // than two of three and two.
+    test('quantityByPasscodeAndPrinting sums a card\'s language rows', () async {
+      final groups = await collectionDao.quantityByPasscodeAndPrinting();
+      expect(
+        {for (final g in groups) g.passcode: g.quantity},
+        {_blueEyes.passcode: 5, _redEyes.passcode: 5},
+      );
+      expect(
+        groups.every((g) => g.printingId == null),
+        isTrue,
+        reason: 'none of these entries records a set',
+      );
     });
   });
 
-  test('quantityByPasscode on an empty collection is empty', () async {
-    expect(await collectionDao.quantityByPasscode(), isEmpty);
+  group('quantityByPasscodeAndPrinting', () {
+    test('on an empty collection is empty', () async {
+      expect(await collectionDao.quantityByPasscodeAndPrinting(), isEmpty);
+    });
+
+    // The grain the prices have since schema v4: a CT13-EN008 Blue-Eyes and an
+    // LOB-EN001 Blue-Eyes are worth wildly different amounts, so they must be
+    // priced — and therefore grouped — separately.
+    test('splits one card held as two printings into two groups', () async {
+      await printingDao.insertAll(const [
+        Printing(passcode: '89631139', setCode: 'LOB-EN001', rarity: 'Ultra Rare'),
+        Printing(passcode: '89631139', setCode: 'CT13-EN008', rarity: 'Ultra Rare'),
+      ]);
+      final printings = await printingDao.getForPasscode('89631139');
+      final lob = printings.firstWhere((p) => p.setCode == 'LOB-EN001').id;
+      final ct13 = printings.firstWhere((p) => p.setCode == 'CT13-EN008').id;
+
+      await collectionDao.addOrIncrement(
+        _entry(
+          passcode: _blueEyes.passcode,
+          printingId: lob,
+          condition: CardCondition.nearMint,
+          quantity: 2,
+        ),
+      );
+      await collectionDao.addOrIncrement(
+        _entry(
+          passcode: _blueEyes.passcode,
+          printingId: ct13,
+          condition: CardCondition.nearMint,
+          quantity: 3,
+        ),
+      );
+
+      final groups = await collectionDao.quantityByPasscodeAndPrinting();
+
+      expect(groups, hasLength(2));
+      expect(
+        {for (final g in groups) g.printingId: g.quantity},
+        {lob: 2, ct13: 3},
+      );
+    });
+
+    // **`GROUP BY printing_id` folds every NULL into one group**, the exact
+    // opposite of how the `collection_entries` UNIQUE key treats NULL (which is
+    // why `addOrIncrement` special-cases it by hand). That is wanted here —
+    // every copy logged without a set is one group priced at the card floor —
+    // and it is surprising enough to pin.
+    test('every entry with no printing folds into a single group', () async {
+      await collectionDao.addOrIncrement(
+        _entry(
+          passcode: _blueEyes.passcode,
+          condition: CardCondition.nearMint,
+          quantity: 2,
+        ),
+      );
+      await collectionDao.addOrIncrement(
+        _entry(
+          passcode: _blueEyes.passcode,
+          condition: CardCondition.played,
+          language: 'DE',
+          quantity: 4,
+        ),
+      );
+
+      final groups = await collectionDao.quantityByPasscodeAndPrinting();
+
+      expect(groups, hasLength(1));
+      expect(groups.single.printingId, isNull);
+      expect(groups.single.quantity, 6);
+    });
+
+    test('two languages under one printing stay one group', () async {
+      await printingDao.insertAll(const [
+        Printing(passcode: '89631139', setCode: 'LOB-EN001', rarity: 'Ultra Rare'),
+      ]);
+      final printing = (await printingDao.getForPasscode('89631139')).single;
+
+      await collectionDao.addOrIncrement(
+        _entry(
+          passcode: _blueEyes.passcode,
+          printingId: printing.id,
+          condition: CardCondition.nearMint,
+          language: 'EN',
+          quantity: 1,
+        ),
+      );
+      await collectionDao.addOrIncrement(
+        _entry(
+          passcode: _blueEyes.passcode,
+          printingId: printing.id,
+          condition: CardCondition.nearMint,
+          language: 'DE',
+          quantity: 2,
+        ),
+      );
+
+      final groups = await collectionDao.quantityByPasscodeAndPrinting();
+
+      expect(groups, hasLength(1));
+      expect(groups.single.quantity, 3);
+    });
   });
 
   group('getAll printing join', () {

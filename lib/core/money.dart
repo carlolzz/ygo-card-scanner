@@ -17,7 +17,7 @@ const String kNoPrice = '—';
 /// Cardmarket, in euros.
 String formatEur(double? value) => _format(value, '€');
 
-/// TCGplayer, eBay, Amazon, CoolStuffInc and every `set_price`, in US dollars.
+/// TCGplayer and every `set_price`, in US dollars.
 String formatUsd(double? value) => _format(value, r'$');
 
 /// Null and non-positive both render as [kNoPrice], matching `parsePrice`,

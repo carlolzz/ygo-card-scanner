@@ -31,8 +31,21 @@ You can easily explore your personal collection through [this web app](https://g
 - **Per card details.** Condition (Mint through Poor), edition, language, set
   and rarity, and quantity. Editing an entry into a combination you already own
   merges the two automatically instead of creating a duplicate.
+- **Card browser.** Search the whole card database, owned or not, and read a
+  card's effect text, stats and printings.
+- **Prices.** Each card has a Prices tab: the card level Cardmarket and
+  TCGplayer figures, plus a table of what each individual printing sells for.
+- **What your collection is worth.** Calculated on demand from Statistics.
+  Copies are priced at the set and rarity you actually recorded, falling back
+  to the card's lowest printing where no set is. A breakdown screen lists every
+  printing you own with its line total, and marks the rows that had to fall
+  back, so you can see how much of the total to trust. Dollars and euros are
+  reported as two separate totals and never added together — and the euro one
+  stays a card level floor, because YGOPRODeck publishes no Cardmarket price
+  per printing.
 - **CSV export and import.** Export the whole collection as a spreadsheet
-  friendly CSV, and import one back in with a choice of merge rules.
+  friendly CSV, and import one back in with a choice of merge rules. The value
+  breakdown exports separately.
 - **Statistics.** Total copies, distinct cards, and breakdowns by condition,
   language and card type.
 
@@ -124,8 +137,8 @@ usually tells you exactly what to run to fix it.
 If you have Git installed:
 
 ```
-git clone https://github.com/carlolzz/ygo-card-recognition.git
-cd ygo-card-recognition
+git clone https://github.com/carlolzz/ygo-card-scanner.git
+cd ygo-card-scanner
 ```
 
 If you do not have Git, use the green **Code** button at the top of the
@@ -236,8 +249,9 @@ pytest tools/
 
 The app is offline first. All data lives in a local SQLite database on the
 phone. The only network calls are the initial card database sync, the optional
-re sync from Settings, and downloading a card's artwork the first time it is
-shown.
+re sync from Settings, downloading a card's artwork the first time it is shown,
+and fetching prices when you ask for them. Nothing about your collection is
+ever uploaded.
 
 | Layer | Choice |
 |---|---|
@@ -255,7 +269,8 @@ lib/
   core/          theme tokens, router, shared helpers
   data/          database, DAOs, API clients, repositories, CSV import/export
   models/        card, printing, collection entry, enums, settings
-  features/      home, scan, collection, add_card, statistics, sync, settings
+  features/      home, scan, collection, add_card, card_search, pricing,
+                 statistics, sync, settings
   shared/        reusable widgets
 test/            mirrors lib/
 tools/           host side Python tools, not shipped in the app

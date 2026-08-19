@@ -68,3 +68,8 @@ assets/icon/past_icons/
 # Notes about what a built APK discloses about this machine and account —
 # local reference only, deliberately not published in the repo it describes.
 docs/apk-sharing-privacy.md
+
+# Install guide handed out alongside a shared APK. The README already covers
+# installing and building for anyone who reaches the repo; this one is written
+# for a recipient who has the file and nothing else.
+GETTING_STARTED.md

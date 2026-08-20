@@ -4,12 +4,13 @@ import '../../../models/card_condition.dart';
 import '../../../models/card_edition.dart';
 import '../../../models/collection_entry.dart';
 import '../../../models/collection_entry_with_card.dart';
+import '../../../models/collection_sort_by.dart';
 import 'sql_chunks.dart';
 
-/// How the collection list is ordered. [cardType] is the odd one out: it is not
-/// a column but a three-way grouping — monsters, then Spells, then Traps — see
-/// [CollectionDao.getAll].
-enum CollectionSortBy { name, dateAdded, quantity, cardType }
+// [CollectionSortBy] moved to `models/collection_sort_by.dart` when it became a
+// persisted setting; it is re-exported so the many call sites that reach it
+// through [CollectionFilter] keep their single import.
+export '../../../models/collection_sort_by.dart';
 
 /// Copies of one card in one printing, summed across condition, edition and
 /// language — the unit the collection valuation prices.

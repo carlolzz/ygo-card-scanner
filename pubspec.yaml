@@ -5,7 +5,7 @@
 name: ygo_scanner
 description: "Catalogue a physical Yu-Gi-Oh card collection by camera."
 publish_to: 'none'
-version: 0.6.0+6
+version: 0.6.1+7
 
 environment:
   sdk: ^3.12.2

@@ -2,6 +2,7 @@ import 'app_theme_mode.dart';
 import 'card_condition.dart';
 import 'card_edition.dart';
 import 'card_language.dart';
+import 'collection_sort_by.dart';
 import 'collection_view_mode.dart';
 
 /// The user's persisted preferences.
@@ -24,6 +25,8 @@ class AppSettings {
     this.showScanHelp = true,
     this.confirmBeforeDelete = true,
     this.collectionViewMode = CollectionViewMode.standard,
+    this.collectionSortBy = CollectionSortBy.name,
+    this.collectionSortDescending = false,
   });
 
   /// Pre-selected grade for a newly logged card, in both the scan review gate
@@ -61,6 +64,20 @@ class AppSettings {
   /// the same shape in reverse (a Settings row *and* a scan-screen shortcut).
   final CollectionViewMode collectionViewMode;
 
+  /// How the collection list is ordered, and in which direction. Persisted for
+  /// the same reason [collectionViewMode] is: it is a browsing preference the
+  /// user sets deliberately, and rebuilding the collection screen — which
+  /// happens every time they leave it for the home menu — used to reset it to
+  /// Name/ascending.
+  ///
+  /// Like [collectionViewMode] these have no Settings row: the controls live in
+  /// the collection screen's app bar, where the effect is visible. The rest of
+  /// the collection filter is deliberately *not* persisted — a filter hides
+  /// cards, and a still-narrowed collection on the next visit reads as lost
+  /// data, while a sort only reorders what is already all there.
+  final CollectionSortBy collectionSortBy;
+  final bool collectionSortDescending;
+
   AppSettings copyWith({
     CardCondition? defaultCondition,
     CardEdition? defaultEdition,
@@ -70,6 +87,8 @@ class AppSettings {
     bool? showScanHelp,
     bool? confirmBeforeDelete,
     CollectionViewMode? collectionViewMode,
+    CollectionSortBy? collectionSortBy,
+    bool? collectionSortDescending,
   }) {
     return AppSettings(
       defaultCondition: defaultCondition ?? this.defaultCondition,
@@ -80,6 +99,9 @@ class AppSettings {
       showScanHelp: showScanHelp ?? this.showScanHelp,
       confirmBeforeDelete: confirmBeforeDelete ?? this.confirmBeforeDelete,
       collectionViewMode: collectionViewMode ?? this.collectionViewMode,
+      collectionSortBy: collectionSortBy ?? this.collectionSortBy,
+      collectionSortDescending:
+          collectionSortDescending ?? this.collectionSortDescending,
     );
   }
 }

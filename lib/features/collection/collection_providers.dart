@@ -1,20 +1,43 @@
+import 'dart:async';
+
 import 'package:riverpod_annotation/riverpod_annotation.dart';
 
 import '../../data/db/dao/collection_dao.dart';
 import '../../data/repositories/card_repository.dart';
 import '../../data/repositories/collection_repository.dart';
 import '../../data/seed/fake_collection_seed.dart';
+import '../../models/app_settings.dart';
 import '../../models/card_condition.dart';
 import '../../models/collection_entry.dart';
 import '../../models/collection_entry_with_card.dart';
 import '../../models/printing.dart';
+import '../settings/settings_providers.dart';
 
 part 'collection_providers.g.dart';
 
 @riverpod
 class CollectionFilterController extends _$CollectionFilterController {
+  /// The filters themselves start empty on every visit — a filter *hides* cards,
+  /// and a collection still narrowed from last week reads as lost data. The sort
+  /// is the exception: it only reorders what is already all there, so it is
+  /// restored from settings, which is what stops a trip to the home menu (this
+  /// notifier is autoDispose) putting the list back in name order.
+  ///
+  /// `ref.read`, not `watch`, deliberately — matching `ScanController` and
+  /// `AddCardSelectionController`. Watching would rebuild this notifier on the
+  /// write-through in [setSortBy] and so wipe every other filter the user had
+  /// applied. `App` gates routing on settings resolving, so `.value` is
+  /// non-null here in practice; the fallback is what the screen rendered before
+  /// this was persisted.
   @override
-  CollectionFilter build() => const CollectionFilter();
+  CollectionFilter build() {
+    final settings =
+        ref.read(settingsControllerProvider).value ?? const AppSettings();
+    return CollectionFilter(
+      sortBy: settings.collectionSortBy,
+      sortDescending: settings.collectionSortDescending,
+    );
+  }
 
   void setNameQuery(String query) {
     state = state.copyWith(
@@ -37,11 +60,27 @@ class CollectionFilterController extends _$CollectionFilterController {
   void setRarity(RarityFilter? rarity) =>
       state = state.copyWith(rarity: rarity, clearRarity: rarity == null);
 
-  void setSortBy(CollectionSortBy sortBy) =>
-      state = state.copyWith(sortBy: sortBy);
+  /// Both sort controls publish immediately and persist in the background: the
+  /// list must reorder on the tap, and a failed write is not worth blocking or
+  /// reverting a reorder the user can simply repeat. [SettingsController] itself
+  /// still writes before it publishes, so its own state never claims a
+  /// preference the database doesn't hold.
+  void setSortBy(CollectionSortBy sortBy) {
+    state = state.copyWith(sortBy: sortBy);
+    unawaited(
+      ref.read(settingsControllerProvider.notifier).setCollectionSortBy(sortBy),
+    );
+  }
 
-  void toggleSortDirection() =>
-      state = state.copyWith(sortDescending: !state.sortDescending);
+  void toggleSortDirection() {
+    final descending = !state.sortDescending;
+    state = state.copyWith(sortDescending: descending);
+    unawaited(
+      ref
+          .read(settingsControllerProvider.notifier)
+          .setCollectionSortDescending(descending),
+    );
+  }
 }
 
 /// Which collection entries are selected, and whether the screen is in

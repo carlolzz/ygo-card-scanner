@@ -4,6 +4,7 @@ import '../../models/app_settings.dart';
 import '../../models/app_theme_mode.dart';
 import '../../models/card_condition.dart';
 import '../../models/card_edition.dart';
+import '../../models/collection_sort_by.dart';
 import '../../models/collection_view_mode.dart';
 import '../db/dao/meta_dao.dart';
 import '../db/database.dart';
@@ -20,6 +21,8 @@ const _showScanDiagnosticsKey = 'settings.show_scan_diagnostics';
 const _showScanHelpKey = 'settings.show_scan_help';
 const _confirmBeforeDeleteKey = 'settings.confirm_before_delete';
 const _collectionViewModeKey = 'settings.collection_view_mode';
+const _collectionSortByKey = 'settings.collection_sort_by';
+const _collectionSortDescendingKey = 'settings.collection_sort_descending';
 
 /// Reads and writes [AppSettings] as key/value pairs in the existing `meta`
 /// table. No schema change: `meta` has carried arbitrary keys since v1, and a
@@ -65,6 +68,15 @@ class SettingsRepository {
         CollectionViewMode.fromDb,
         defaults.collectionViewMode,
       ),
+      collectionSortBy: _parse(
+        await _metaDao.get(_collectionSortByKey),
+        CollectionSortBy.fromDb,
+        defaults.collectionSortBy,
+      ),
+      collectionSortDescending: _parseBool(
+        await _metaDao.get(_collectionSortDescendingKey),
+        defaults.collectionSortDescending,
+      ),
     );
   }
 
@@ -85,6 +97,11 @@ class SettingsRepository {
     await _metaDao.set(
       _collectionViewModeKey,
       settings.collectionViewMode.toDb(),
+    );
+    await _metaDao.set(_collectionSortByKey, settings.collectionSortBy.toDb());
+    await _metaDao.set(
+      _collectionSortDescendingKey,
+      settings.collectionSortDescending.toString(),
     );
   }
 

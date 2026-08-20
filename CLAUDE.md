@@ -76,6 +76,7 @@ lib/
     card_edition.dart
     card_language.dart
     card_prices.dart
+    collection_sort_by.dart
     app_settings.dart
     app_theme_mode.dart
   features/
@@ -2327,6 +2328,56 @@ order):
     uncalibrated on device, and whether `kPriceTtl` at 24 h is right. New and
     open: whether the card-level Cardmarket floor earns its place on the screen
     at all now that it sits beside a genuinely per-printing dollar figure.
+
+27. Persisted collection sort order ← done (verified: `flutter analyze` clean,
+    full `flutter test` green at **723 tests**). **No DB migration, no schema
+    change, no new dependency.** Nothing here touches the descriptor,
+    `assets/card_hashes.json`, the detection algorithm or any scan threshold.
+    The report: pick a sort in the collection app bar, go back to the home menu,
+    return — it is back on Name ascending. `CollectionFilterController` is
+    autoDispose (correctly — the screen watches it) and `build()` returned
+    `const CollectionFilter()`, so leaving the screen discarded the sort along
+    with everything else.
+    **Only the sort is persisted, and the asymmetry is the design.** A filter
+    *hides* cards, and a collection still narrowed on the next visit reads as
+    lost data; a sort only reorders what is already all there. So `build()`
+    seeds `sortBy`/`sortDescending` from settings and leaves every other field
+    empty — the same split `CollectionFilter.cleared()` already makes for the
+    sheet's Reset button.
+    Storage is the `meta` table via two new `settings.*` keys, exactly like
+    `collectionViewMode` (step 18) and with the same rationale for having **no
+    Settings row**: the control lives where the effect is visible.
+    `CollectionSortBy` **moved to `lib/models/collection_sort_by.dart`** and
+    gained `toDb`/`fromDb` — every persisted enum lives there, and `AppSettings`
+    must not import the DAO layer. `collection_dao.dart` re-exports it, so the
+    call sites that reach it through `CollectionFilter` keep their single
+    import.
+    **`ref.read`, not `watch`, in `build()`** — matching `ScanController` and
+    `AddCardSelectionController`. Watching would rebuild the notifier on its own
+    write-through and so wipe every filter the user had applied; a test pins
+    that. The setters publish first and persist unawaited: the list must reorder
+    on the tap, and a failed write is not worth reverting a reorder the user can
+    repeat.
+    **Bug found by the new test, and it predates this step**:
+    `SettingsController._update` read `state.value`, awaited the repository,
+    then published — so two changes made before the first write landed both
+    started from the *same* snapshot and the second silently reverted the first.
+    Choosing a sort field and then flipping its direction is exactly that
+    sequence. `_update` now chains onto a `_writes` future, applying each change
+    only once the previous one has published; the queue swallows failures so one
+    bad write cannot wedge every later preference change, while the caller still
+    sees the error.
+    **Verified to fail** before being kept: with `build()` reverted to
+    `const CollectionFilter()`, both the leave-and-return and the restart tests
+    fail — which also proves the autoDispose teardown in the test is real rather
+    than a subscription quietly holding the notifier alive.
+    **Gotcha**: `dart format` on this toolchain reformats ~90 untouched files
+    (formatter version drift against what the repo was written with). Format the
+    files you changed, not the tree, or the diff buries the change.
+    **Still open**, unchanged: `maxHammingDistance` at 72,
+    `CardDetectionTuning.innerQuadMinAreaRatio` at 0.78, the passcode ROI filter
+    off, `artAgreementFrames` at 2, every `FrameQualityTuning` threshold still
+    uncalibrated on device, and whether `kPriceTtl` at 24 h is right.
 
 ## Standing rules
 

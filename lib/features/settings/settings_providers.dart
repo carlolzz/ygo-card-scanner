@@ -6,6 +6,7 @@ import '../../models/app_settings.dart';
 import '../../models/app_theme_mode.dart';
 import '../../models/card_condition.dart';
 import '../../models/card_edition.dart';
+import '../../models/collection_sort_by.dart';
 import '../../models/collection_view_mode.dart';
 import '../collection/collection_providers.dart';
 import '../sync/initial_sync_providers.dart';
@@ -50,15 +51,40 @@ class SettingsController extends _$SettingsController {
   Future<void> setCollectionViewMode(CollectionViewMode value) =>
       _update((s) => s.copyWith(collectionViewMode: value));
 
+  /// Set from the collection screen's app-bar sort menu and direction toggle,
+  /// not the Settings screen — same reasoning as [setCollectionViewMode].
+  /// `CollectionFilterController` seeds itself from these and writes through
+  /// here, so the order survives leaving the screen.
+  Future<void> setCollectionSortBy(CollectionSortBy value) =>
+      _update((s) => s.copyWith(collectionSortBy: value));
+
+  Future<void> setCollectionSortDescending(bool value) =>
+      _update((s) => s.copyWith(collectionSortDescending: value));
+
+  /// Serializes [_update]. Without it two changes made before the first write
+  /// lands both read the *same* `state.value`, so the second saves a snapshot
+  /// taken before the first and silently reverts it — which is exactly what
+  /// picking a sort field and then flipping its direction does.
+  Future<void> _writes = Future<void>.value();
+
   /// Persist first, then publish: if the write fails the in-memory state must
   /// not claim a preference the database doesn't hold.
-  Future<void> _update(AppSettings Function(AppSettings) change) async {
-    final current = state.value;
-    if (current == null) return;
-    final next = change(current);
-    final repository = await ref.read(settingsRepositoryProvider.future);
-    await repository.save(next);
-    state = AsyncData(next);
+  ///
+  /// [change] is applied only once any write already in flight has published,
+  /// so each one composes onto the last rather than racing it.
+  Future<void> _update(AppSettings Function(AppSettings) change) {
+    final result = _writes.then((_) async {
+      final current = state.value;
+      if (current == null) return;
+      final next = change(current);
+      final repository = await ref.read(settingsRepositoryProvider.future);
+      await repository.save(next);
+      state = AsyncData(next);
+    });
+    // The queue swallows failures so one bad write can't wedge every later
+    // preference change; the caller still sees the error on [result].
+    _writes = result.then((_) {}, onError: (_) {});
+    return result;
   }
 }
 

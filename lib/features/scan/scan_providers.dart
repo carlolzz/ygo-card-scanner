@@ -26,33 +26,64 @@ class PasscodeReading {
   final String? passcode;
 }
 
-/// The one camera, for the life of the process.
+/// The camera, pinned for the life of the process while [keepCameraReady] is on.
 ///
-/// **`keepAlive`, and that is the whole fix for "the camera reloads every time I
-/// go back to Log Cards".** This used to be autoDispose, and the chain behind it
-/// meant leaving the screen was a full teardown: `ScanScreen` unmounts →
-/// [ScanController] disposes → `artReadings` disposes → [scanCamera] disposes →
-/// its `onDispose(camera.stop)` fires → this provider loses its last listener →
-/// `service.dispose()` sets `_disposed` **permanently**. Re-entry then built a
-/// brand-new service and paid `initialize()` plus eight metering round-trips and
-/// a `startImageStream` all over again — a visible second or two of black every
-/// time, for a round trip to Settings.
+/// **The two halves of the user's "Keep the camera ready" switch.**
 ///
-/// Now the camera opens on the first Log Cards entry of an app run and stays
-/// open until the app is backgrounded ([ScanCameraActive] owns that signal).
-/// The cost is a bound camera — and a lit privacy indicator — while browsing the
+/// *Pinned* (the default): the camera opens on the first Log Cards entry of an
+/// app run and stays open until the app is backgrounded ([ScanCameraActive] owns
+/// that signal). This is the fix for "the camera reloads every time I go back to
+/// Log Cards" — see the unpinned case for what that reload actually was. The
+/// cost is a bound camera, and a lit privacy indicator, while browsing the
 /// collection afterwards; [CameraService.frameProcessingEnabled] is what keeps
 /// that to an idle preview rather than a running recognition pipeline.
 ///
-/// `dispose`, not `stop`, on teardown: this now fires only on
-/// `ref.invalidate` (i.e. [ScanController.retry]) or when the container itself
-/// goes, so the frame stream can be closed for good. Releasing the camera on a
-/// mere background is [scanCamera]'s job, via `stop`.
-@Riverpod(keepAlive: true)
+/// *Unpinned*: leaving the screen is a full teardown again, and every link in
+/// the chain is load-bearing. `ScanScreen` unmounts → [ScanController] disposes →
+/// `artReadings` disposes → [scanCamera] disposes → its `onDispose(camera.stop)`
+/// fires → this provider loses its last listener → `service.dispose()` sets
+/// `_disposed` **permanently**. Re-entry cannot reuse that instance and must
+/// build a new one, paying `initialize()` plus eight metering round-trips and a
+/// `startImageStream` — a visible second or two of black. That the *provider*
+/// disposes alongside the service is what makes the fresh instance automatic.
+///
+/// `dispose`, not `stop`, on teardown, in both cases: releasing the camera on a
+/// mere background is [scanCamera]'s job, via `stop`. Reaching here means the
+/// service is finished with, so the frame stream can be closed for good.
+@riverpod
 CameraService cameraService(Ref ref) {
   final service = CameraScanService();
   ref.onDispose(service.dispose);
+  _pinWhileCameraKeptReady(ref);
   return service;
+}
+
+/// Pins the calling provider for the life of the process while the user's
+/// "keep the camera ready" setting is on, and releases it the moment they turn
+/// it off. The per-value form of `@Riverpod(keepAlive: true)`, which the
+/// annotation itself cannot express.
+///
+/// `ref.read` for the decision, never `ref.watch`: watching would *rebuild* the
+/// camera on a toggle, and a rebuild of [cameraService] replaces the
+/// `CameraScanService` while [scanCamera] reopens the camera behind it. The user
+/// is sitting in Settings at that moment, so a camera opening there is the exact
+/// thing the switch exists to prevent. The listener therefore only ever
+/// **closes** the link; turning the setting back on takes effect at the next
+/// build, i.e. the next Log Cards entry, which is soon enough for a preference
+/// about how that entry feels.
+///
+/// Only closing also keeps `ref.keepAlive()` out of a listener callback, where
+/// `Ref` asserts it is being used inside a life-cycle. `KeepAliveLink.close`
+/// touches no `Ref` and a second close is a no-op, so registering it on
+/// `onDispose` as well is safe, and closing the last link only *schedules*
+/// disposal rather than reentering it here.
+void _pinWhileCameraKeptReady(Ref ref) {
+  if (!ref.read(keepCameraReadyProvider)) return;
+  final link = ref.keepAlive();
+  ref.onDispose(link.close);
+  ref.listen(keepCameraReadyProvider, (_, keep) {
+    if (!keep) link.close();
+  });
 }
 
 @riverpod
@@ -75,10 +106,12 @@ PasscodeOcr passcodeOcr(Ref ref) {
 /// be running" owning the signal that decides it is the smallest correct home,
 /// and it keeps `App` stateless.
 ///
-/// `keepAlive` for the same reason as [cameraService]: an autoDispose notifier
-/// would be torn down between scan sessions, taking the listener with it and
-/// resetting the state — and it is read with `ref.read` from a callback, which
-/// holds no subscription of its own.
+/// `keepAlive` unconditionally, unlike [cameraService], which the user's "keep
+/// the camera ready" setting only pins: this is one bool and one lifecycle
+/// listener, so there is nothing to release. An autoDispose notifier would be
+/// torn down between scan sessions, taking the listener with it and resetting
+/// the state — and it is read with `ref.read` from a callback, which holds no
+/// subscription of its own.
 ///
 /// `inactive` deliberately keeps the camera: on first launch the OS
 /// camera-permission dialog briefly makes the app inactive, and releasing there
@@ -148,6 +181,18 @@ bool scanDiagnosticsEnabled(Ref ref) =>
 bool scanHelpEnabled(Ref ref) =>
     ref.watch(settingsControllerProvider).value?.showScanHelp ?? true;
 
+/// Whether the camera is held open after the scan screen goes away. Derived
+/// from the persisted [AppSettings.keepCameraReady] the same way
+/// [scanHelpEnabled] is, and consumed only by [_pinWhileCameraKeptReady] —
+/// which reads it once per build and then listens only for it going off. See
+/// [cameraService] for what each half actually does.
+///
+/// Defaults to true so a fresh install (settings not yet resolved) behaves as
+/// it did before this was a choice.
+@riverpod
+bool keepCameraReady(Ref ref) =>
+    ref.watch(settingsControllerProvider).value?.keepCameraReady ?? true;
+
 /// Whether the artwork pipeline should stand still because a result is waiting
 /// on the user (a review, a candidate list, an unknown code, a camera error).
 ///
@@ -214,15 +259,16 @@ class PasscodeOcrRequested extends _$PasscodeOcrRequested {
 /// the camera out from under the other. It rebuilds — and so starts or stops
 /// the camera — only when [scanCameraActive] flips.
 ///
-/// `keepAlive` alongside [cameraService], and both halves are needed: a
-/// keepAlive service reached through an autoDispose gate would still be stopped
-/// the moment the scan screen's readers went away, and re-entry would still pay
-/// `initialize()`. Nothing reads this before the first Log Cards entry, so the
-/// camera is not opened at launch — only kept once opened.
-@Riverpod(keepAlive: true)
+/// Pinned by [keepCameraReady] alongside [cameraService], and both halves are
+/// needed: a pinned service reached through an unpinned gate would still be
+/// stopped the moment the scan screen's readers went away, and re-entry would
+/// still pay `initialize()`. Nothing reads this before the first Log Cards
+/// entry, so the camera is not opened at launch — only kept once opened.
+@riverpod
 Future<CameraService> scanCamera(Ref ref) async {
   final camera = ref.watch(cameraServiceProvider);
   ref.onDispose(camera.stop);
+  _pinWhileCameraKeptReady(ref);
   if (ref.watch(scanCameraActiveProvider)) {
     await camera.start();
   }

@@ -2529,6 +2529,77 @@ order):
     accepted: while browsing the collection after a scan the camera stays bound and
     the OS privacy indicator stays lit — the trade the "open for the whole
     foreground" choice makes, held to an idle preview by `frameProcessingEnabled`.
+    (**Step 29 made that trade the user's**, via a Settings switch; the paragraph
+    above describes the switch's default, not a constant.)
+
+29. Camera-lifetime toggle and em dashes out of the frontend ← done (verified:
+    `flutter analyze` clean, full `flutter test` green at **738 tests**). **No DB
+    migration, no schema change, no new dependency.** Nothing here touches the
+    descriptor, `assets/card_hashes.json`, the detection algorithm or any
+    scan/matching/quality threshold.
+    **Step 28's camera lifetime is now a preference, not a constant.** That step
+    made `cameraService`/`scanCamera` `@Riverpod(keepAlive: true)` and recorded the
+    cost as *accepted*: a bound camera and a lit OS privacy indicator while
+    browsing the collection afterwards. New `AppSettings.keepCameraReady`
+    ("Keep the camera ready", **default true**, `settings.keep_camera_ready` in
+    `meta`, guarded `_parseBool` like every bool since step 11), with a switch in
+    Settings → Scanning whose subtitle names the *cost* — the benefit is obvious
+    once felt, the indicator is not, and that asymmetry is the only reason the
+    switch exists.
+    **The mechanism is a `KeepAliveLink`, which is the per-value form of
+    `keepAlive:` that the annotation cannot express.** Both providers are back to
+    plain `@riverpod` and call one private `_pinWhileCameraKeptReady(ref)`: on, it
+    takes `ref.keepAlive()` and the behaviour is step 28's exactly; off, nothing
+    pins and the old teardown chain runs again on every scan-screen exit
+    (`ScanScreen` unmounts → `ScanController` → `artReadings` → `scanCamera`'s
+    `onDispose(camera.stop)` → `cameraService` → `service.dispose()`). **Both
+    halves are still needed** for the reason `scanCamera`'s doc already gave: a
+    pinned service behind an unpinned gate is stopped anyway. And the *provider*
+    disposing alongside the service is load-bearing rather than incidental —
+    `_disposed` is one-way, so re-entry can only work by building a new instance,
+    which is precisely what an unpinned provider gives for free.
+    **Three things this design is avoiding, all of them already-paid-for
+    knowledge.** There is no exit-time provider write: step 21 established that
+    Riverpod asserts on cross-provider writes from a provider's `build`, its own
+    `ref.onDispose`, and every widget life-cycle including `dispose`. The decision
+    is `ref.read`, **never `ref.watch`** — watching would *rebuild* `cameraService`
+    on a toggle, replacing the `CameraScanService` while `scanCamera` reopens the
+    camera behind it, i.e. opening the camera in Settings, the exact thing the
+    switch exists to prevent. And the listener only ever **closes** the link, which
+    keeps `ref.keepAlive()` out of a callback where `Ref` asserts on life-cycle
+    use; `KeepAliveLink.close` touches no `Ref`, double-closing is a no-op, and
+    closing the last link *schedules* disposal rather than reentering it. The
+    consequence, deliberate and documented: turning the setting **off** releases
+    the camera at once, turning it **on** takes effect at the next Log Cards entry.
+    `ScanCameraActive` stays unconditionally `keepAlive` — one bool and one
+    `AppLifecycleListener`, so there is nothing to release.
+    **Both halves were verified to fail before being kept**, which mattered more
+    than usual here because either failure is silent: with the pin made
+    unconditional the new "the setting releases the camera" case fails, and with it
+    removed the pre-existing "the camera survives leaving and re-entering" case
+    fails. That older case also had to gain
+    `keepCameraReadyProvider.overrideWithValue(true)` — it builds a bare
+    `ProviderContainer`, which would otherwise reach the real settings controller
+    and the database.
+    **Em dashes are gone from everything the user can read.** Eleven code lines:
+    ten `AppStrings` constants and `kNoPrice`, which is now `'-'` (a dash is still
+    not `0.00`, which is the whole argument that constant's doc makes). Replacements
+    are colons, full stops or parentheses as each sentence wanted; the three
+    status-banner strings are the same length or shorter, so the fixed-height
+    banner inside the reticle is unaffected. **No test assertion broke**, because
+    every consumer references the constant symbolically rather than retyping the
+    literal — only prose needed updating (`money_test.dart`'s comment,
+    `collection_value_csv.dart`'s doc contrasting the CSV's empty cell with
+    money.dart's mark). Two developer-facing literals went too: `hash_index.dart`'s
+    ROI-mismatch `FormatException`, which can reach the screen through step 16's
+    index-load error panel, and `collection_scroll_slider.dart`'s `assert`.
+    **Explicitly out of scope**: the ~800 `///` and `//` comments in `lib/` and
+    ~200 in `test/`. The check is `grep -rn '—' lib --include='*.dart'` returning
+    nothing on a line that is not a comment.
+    **Still open**, unchanged: `maxHammingDistance` at 72,
+    `CardDetectionTuning.innerQuadMinAreaRatio` at 0.78, the passcode ROI filter
+    off, `artAgreementFrames` at 2, every `FrameQualityTuning` threshold still
+    uncalibrated on device, and whether `kPriceTtl` at 24 h is right.
 
 ## Standing rules
 

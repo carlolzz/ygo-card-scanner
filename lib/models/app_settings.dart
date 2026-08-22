@@ -23,6 +23,7 @@ class AppSettings {
     this.themeMode = AppThemeMode.dark,
     this.showScanDiagnostics = false,
     this.showScanHelp = true,
+    this.keepCameraReady = true,
     this.confirmBeforeDelete = true,
     this.collectionViewMode = CollectionViewMode.standard,
     this.collectionSortBy = CollectionSortBy.name,
@@ -49,6 +50,18 @@ class AppSettings {
   /// screen. On by default — it teaches the three entry points — but it covers
   /// camera real estate a returning user no longer needs.
   final bool showScanHelp;
+
+  /// Whether the camera is held open after leaving the scan screen, so a return
+  /// to Log Cards does not pay `CameraController.initialize()` and a fresh
+  /// `startImageStream` all over again (a visible second of black).
+  ///
+  /// On by default, because the reload is the thing the user actually reported.
+  /// The cost is the other half of the trade, and it is the reason this is a
+  /// switch rather than a constant: a bound camera keeps the OS privacy
+  /// indicator lit while they browse the collection afterwards.
+  /// `CameraService.frameProcessingEnabled` already keeps that to an idle
+  /// preview rather than a running recognition pipeline.
+  final bool keepCameraReady;
 
   /// Whether removing a card from the collection (deleting, or decrementing the
   /// last copy) asks for confirmation first. On by default — a deletion can't
@@ -85,6 +98,7 @@ class AppSettings {
     AppThemeMode? themeMode,
     bool? showScanDiagnostics,
     bool? showScanHelp,
+    bool? keepCameraReady,
     bool? confirmBeforeDelete,
     CollectionViewMode? collectionViewMode,
     CollectionSortBy? collectionSortBy,
@@ -97,6 +111,7 @@ class AppSettings {
       themeMode: themeMode ?? this.themeMode,
       showScanDiagnostics: showScanDiagnostics ?? this.showScanDiagnostics,
       showScanHelp: showScanHelp ?? this.showScanHelp,
+      keepCameraReady: keepCameraReady ?? this.keepCameraReady,
       confirmBeforeDelete: confirmBeforeDelete ?? this.confirmBeforeDelete,
       collectionViewMode: collectionViewMode ?? this.collectionViewMode,
       collectionSortBy: collectionSortBy ?? this.collectionSortBy,

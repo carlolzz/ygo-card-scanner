@@ -204,6 +204,24 @@ void main() {
     });
   });
 
+  // The switch behind the camera's lifetime. It defaults to on, so the only
+  // thing to persist is the user turning it off — which is also the direction
+  // that has an immediate effect (the camera is released at once; turning it
+  // back on waits for the next Log Cards entry).
+  testWidgets('switching off "keep the camera ready" persists it', (
+    tester,
+  ) async {
+    await tester.runAsync(() async {
+      await openSettings(tester);
+
+      await scrollToDatabaseSection(tester);
+      await tester.tap(find.text(AppStrings.settingsKeepCameraReadyLabel));
+      await pumpUntilSettled(tester);
+
+      expect(await MetaDao(testDb).get('settings.keep_camera_ready'), 'false');
+    });
+  });
+
   testWidgets('re-sync asks for confirmation and does nothing when cancelled', (
     tester,
   ) async {
@@ -255,9 +273,7 @@ void main() {
     await tester.runAsync(() async {
       await tester.pumpWidget(
         ProviderScope(
-          overrides: [
-            appDatabaseProvider.overrideWith((ref) async => testDb),
-          ],
+          overrides: [appDatabaseProvider.overrideWith((ref) async => testDb)],
           child: MaterialApp(
             theme: buildAppTheme(brightness: Brightness.light),
             home: const SettingsScreen(),
@@ -306,5 +322,4 @@ void main() {
       expect(const AppSettings().defaultCondition, isNot(CardCondition.mint));
     });
   });
-
 }

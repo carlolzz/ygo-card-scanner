@@ -51,7 +51,7 @@ class HashIndex {
       if (!matches) {
         throw FormatException(
           'index built for art-box ROI $roi, but this build crops '
-          '$expected — rebuild assets/card_hashes.json '
+          '$expected. Rebuild assets/card_hashes.json '
           '(tools/build_hash_index.py) or restore ArtMatchTuning.artBoxRoi',
         );
       }

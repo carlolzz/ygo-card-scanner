@@ -12,9 +12,9 @@ void main() {
     expect(formatEur(1234.5), '€1234.50');
   });
 
-  // An em dash, not "0.00" — a card with no known price is not a card worth
-  // nothing, and the difference matters beside a total that says how many cards
-  // were skipped.
+  // A dash, deliberately not "0.00": a card with no known price is not a card
+  // worth nothing, and the difference matters beside a total that says how many
+  // cards were skipped.
   test('an unknown figure is a dash, never a zero', () {
     expect(formatEur(null), kNoPrice);
     expect(formatUsd(null), kNoPrice);

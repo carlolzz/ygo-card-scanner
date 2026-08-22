@@ -9,10 +9,10 @@
 /// and inventing one would turn a stated estimate into a wrong number.
 library;
 
-/// Shown in place of a figure the API did not supply. An em dash, not `0.00` —
-/// a card with no known price is not a card worth nothing, and the difference
-/// matters when the total below it says how many cards were skipped.
-const String kNoPrice = '—';
+/// Shown in place of a figure the API did not supply. A dash, deliberately not
+/// `0.00`: a card with no known price is not a card worth nothing, and the
+/// difference matters when the total below it says how many cards were skipped.
+const String kNoPrice = '-';
 
 /// Cardmarket, in euros.
 String formatEur(double? value) => _format(value, '€');

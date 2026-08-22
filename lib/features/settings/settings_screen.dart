@@ -170,6 +170,20 @@ class _SettingsBody extends ConsumerWidget {
           value: settings.showScanHelp,
           onChanged: controller.setShowScanHelp,
         ),
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          activeThumbColor: palette.accent,
+          title: Text(
+            AppStrings.settingsKeepCameraReadyLabel,
+            style: TextStyle(color: palette.onSurface),
+          ),
+          subtitle: Text(
+            AppStrings.settingsKeepCameraReadyDescription,
+            style: TextStyle(color: palette.onSurfaceMuted),
+          ),
+          value: settings.keepCameraReady,
+          onChanged: controller.setKeepCameraReady,
+        ),
         const Divider(height: AppSpacing.xl),
         const _SectionHeader(title: AppStrings.settingsDatabaseSection),
         const _ResyncSection(),

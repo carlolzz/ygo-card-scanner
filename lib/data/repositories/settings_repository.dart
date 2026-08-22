@@ -19,6 +19,7 @@ const _languageKey = 'settings.language';
 const _themeModeKey = 'settings.theme_mode';
 const _showScanDiagnosticsKey = 'settings.show_scan_diagnostics';
 const _showScanHelpKey = 'settings.show_scan_help';
+const _keepCameraReadyKey = 'settings.keep_camera_ready';
 const _confirmBeforeDeleteKey = 'settings.confirm_before_delete';
 const _collectionViewModeKey = 'settings.collection_view_mode';
 const _collectionSortByKey = 'settings.collection_sort_by';
@@ -59,6 +60,10 @@ class SettingsRepository {
         await _metaDao.get(_showScanHelpKey),
         defaults.showScanHelp,
       ),
+      keepCameraReady: _parseBool(
+        await _metaDao.get(_keepCameraReadyKey),
+        defaults.keepCameraReady,
+      ),
       confirmBeforeDelete: _parseBool(
         await _metaDao.get(_confirmBeforeDeleteKey),
         defaults.confirmBeforeDelete,
@@ -90,6 +95,10 @@ class SettingsRepository {
       settings.showScanDiagnostics.toString(),
     );
     await _metaDao.set(_showScanHelpKey, settings.showScanHelp.toString());
+    await _metaDao.set(
+      _keepCameraReadyKey,
+      settings.keepCameraReady.toString(),
+    );
     await _metaDao.set(
       _confirmBeforeDeleteKey,
       settings.confirmBeforeDelete.toString(),

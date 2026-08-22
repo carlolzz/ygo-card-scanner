@@ -90,7 +90,7 @@ String _basis(PriceBasis basis) => switch (basis) {
 };
 
 /// Two decimals and nothing else — deliberately *not* `core/money.dart`'s
-/// `formatEur`/`formatUsd`, which embed a currency symbol and render an em dash
+/// `formatEur`/`formatUsd`, which embed a currency symbol and render a dash
 /// for a missing figure. Both are right on screen and wrong in a column
 /// something else has to parse.
 String _money(double? value) => value == null ? '' : value.toStringAsFixed(2);

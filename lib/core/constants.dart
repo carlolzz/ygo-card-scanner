@@ -41,7 +41,7 @@ class AppStrings {
   /// eBay, Amazon and CoolStuffInc were listed here until step 26. They were
   /// shown and nothing else, so they were dropped along with their columns.
   static const String pricesCardLevelNote =
-      'The lowest price found across every version of this card — see "By set" '
+      'The lowest price found across every version of this card. See "By set" '
       'below for what a particular printing is worth. Cardmarket is in euros, '
       'TCGplayer in US dollars.';
 
@@ -255,8 +255,8 @@ class AppStrings {
   // was already centred in the reticle, with no way out and no explanation.
   // These four say what is actually wrong and, for the last one, what to do.
   static const String scanBlurry = 'Hold steady';
-  static const String scanGlare = 'Too much glare — tilt the card';
-  static const String scanIdentifying = 'Card found — identifying…';
+  static const String scanGlare = 'Too much glare: tilt the card';
+  static const String scanIdentifying = 'Card found, identifying…';
   static const String scanUnidentified = 'Can\'t identify this card';
   static const String scanShowGuessesButton = 'Show best guesses';
   static const String scanUnknownTitle = 'Not recognized';
@@ -284,7 +284,7 @@ class AppStrings {
   // Every hit the index ranks is now presented, so the review gate has to be
   // able to say how sure it is: past `ArtMatchTuning.autoMatchMaxDistance` the
   // card is still shown, but as a guess to be checked against the artwork.
-  static const String scanLowConfidence = 'Best guess — check the picture';
+  static const String scanLowConfidence = 'Best guess: check the picture';
   static const String scanNotThisCardButton = 'Not the right card?';
   static const String scanCandidatesTitle = 'Is it one of these?';
   static const String scanCandidatesSubtitle =
@@ -293,7 +293,7 @@ class AppStrings {
   // Bottom help panel on the scan screen — the three ways to log a card.
   static const String scanHelpTitle = 'Three ways to log a card';
   static const String scanHelpArtwork =
-      'Fill the box with the card — its artwork is recognised automatically.';
+      'Fill the box with the card. Its artwork is recognised automatically.';
   static const String scanHelpCode =
       'Tap the number icon to read the printed 8-digit code instead.';
   static const String scanHelpManual =
@@ -332,7 +332,7 @@ class AppStrings {
   static const String scanCaptureButton = '[ save this frame ]';
   static const String scanCaptureSubject = 'YGO Scanner recognition sample';
   static const String scanCaptureDoneMessage =
-      'Frame saved — pick where to '
+      'Frame saved. Pick where to '
       'send it.';
   // Backing out of the share sheet used to report the line above, which then
   // told the user to pick a destination they had just declined to pick — for
@@ -367,7 +367,7 @@ class AppStrings {
   static const String addCardSearchHint = 'Search by name';
   static const String addCardSearchEmptyMessage = 'No cards found.';
   static const String addCardPrintingTitle = 'Pick a printing';
-  static const String addCardPrintingSkip = "Skip — I don't have this printing";
+  static const String addCardPrintingSkip = "Skip: I don't have this printing";
   static const String addCardConditionTitle = 'Condition & edition';
   static const String addCardSaveButton = 'Save to collection';
   static const String addCardSavedMessage = 'Added to your collection.';
@@ -398,13 +398,20 @@ class AppStrings {
   static const String settingsScanHelpDescription =
       'Show the "three ways to log a card" box at the bottom of the scan '
       'screen.';
+  static const String settingsKeepCameraReadyLabel = 'Keep the camera ready';
+  // The benefit is obvious once you've felt it; the cost is not, and it is the
+  // reason this is a switch at all. Say both.
+  static const String settingsKeepCameraReadyDescription =
+      'Hold the camera open after you leave Log Cards, so it does not reload '
+      'when you come back. The camera stays bound while you browse, so your '
+      'phone keeps showing its camera indicator.';
   static const String settingsDatabaseSection = 'Card database';
   static const String settingsLastSyncedLabel = 'Last synced';
   static const String settingsNeverSynced = 'Never';
   static const String settingsResyncButton = 'Re-sync now';
   static const String settingsResyncDialogTitle = 'Re-sync card database?';
   static const String settingsResyncDialogMessage =
-      'This downloads the full card database again — several megabytes. Your '
+      'This downloads the full card database again (several megabytes). Your '
       'collection is not affected.';
   static const String settingsResyncDialogCancel = 'Cancel';
   static const String settingsResyncDialogConfirm = 'Re-sync';
@@ -422,7 +429,7 @@ class AppStrings {
   static const String statisticsExportButton = 'Export collection to CSV';
   static const String statisticsExportRunningMessage = 'Exporting…';
   static const String statisticsExportDoneMessage =
-      'Exported — choose where to save it.';
+      'Exported. Choose where to save it.';
   // Backing out of the share sheet used to report the line above, telling the
   // user to choose a destination they had just declined to choose — for a file
   // written to the app-documents directory, which Android does not let them
@@ -496,7 +503,7 @@ class AppStrings {
   static const String statisticsValueNote =
       'TCGplayer prices each copy at the set and rarity you recorded, falling '
       'back to the card\'s lowest printing where no set is recorded. '
-      'Cardmarket is always that lowest-printing floor — no euro price exists '
+      'Cardmarket is always that lowest-printing floor; no euro price exists '
       'per printing. Condition and edition are ignored on both.';
 
   /// How much of the valuation got a real per-printing figure rather than the

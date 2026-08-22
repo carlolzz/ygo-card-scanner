@@ -81,15 +81,21 @@ void main() {
     );
   });
 
-  // The camera is the most expensive of the three, and the last to be made to
-  // survive: `CameraController.initialize()` plus eight metering round-trips and
-  // a `startImageStream`, paid on every single entry to Log Cards because the
-  // whole chain below the screen was autoDispose. Leaving the screen ran
-  // `cameraService`'s `onDispose(service.dispose)`, which sets `_disposed`
-  // **permanently** — so a re-entry could not even reuse the instance, it had to
-  // build a new one.
+  // The camera is the most expensive of the three, and the only one the user
+  // gets a say over: `CameraController.initialize()` plus eight metering
+  // round-trips and a `startImageStream`, paid on every single entry to Log
+  // Cards because the whole chain below the screen was autoDispose. Leaving the
+  // screen ran `cameraService`'s `onDispose(service.dispose)`, which sets
+  // `_disposed` **permanently** — so a re-entry could not even reuse the
+  // instance, it had to build a new one.
+  //
+  // The two cases below are the two halves of the "Keep the camera ready"
+  // switch, and both have to be real: the first is the reported bug staying
+  // fixed, the second is the setting doing anything at all.
   test('the camera survives leaving and re-entering the scan screen', () async {
-    final container = ProviderContainer();
+    final container = ProviderContainer(
+      overrides: [keepCameraReadyProvider.overrideWithValue(true)],
+    );
     addTearDown(container.dispose);
 
     // Constructing `CameraScanService` does no platform work — all hardware
@@ -107,12 +113,41 @@ void main() {
       container.read(cameraServiceProvider),
       same(service),
       reason:
-          'cameraServiceProvider must be keepAlive. As autoDispose, leaving Log '
-          'Cards disposed the service for good and every return paid '
-          'initialize() again — the reported "the camera has to reload every '
-          'time I come back" delay.',
+          'With "Keep the camera ready" on, cameraServiceProvider must hold a '
+          'KeepAliveLink. Without one, leaving Log Cards disposes the service '
+          'for good and every return pays initialize() again — the reported '
+          '"the camera has to reload every time I come back" delay.',
     );
   });
+
+  test(
+    'turning the setting off lets the camera go on leaving the screen',
+    () async {
+      final container = ProviderContainer(
+        overrides: [keepCameraReadyProvider.overrideWithValue(false)],
+      );
+      addTearDown(container.dispose);
+
+      final subscription = container.listen(
+        cameraServiceProvider,
+        (previous, next) {},
+      );
+      container.read(cameraServiceProvider);
+      subscription.close();
+      // Disposal is scheduled, not synchronous — the same turn the keepAlive
+      // cases above wait out.
+      await Future<void>.delayed(Duration.zero);
+
+      expect(
+        container.exists(cameraServiceProvider),
+        isFalse,
+        reason:
+            'The setting has to actually release the camera, or it is a switch '
+            'that does nothing: the service disposing is what stops the camera '
+            'and puts out the OS privacy indicator while the user browses.',
+      );
+    },
+  );
 
   test('the scan-paused flag survives being written and read back', () async {
     // The same trap as above, but this one had actually sprung: nothing watches

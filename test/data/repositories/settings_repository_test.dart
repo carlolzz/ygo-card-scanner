@@ -35,6 +35,7 @@ void main() {
     expect(settings.themeMode, AppThemeMode.dark);
     expect(settings.showScanDiagnostics, isFalse);
     expect(settings.showScanHelp, isTrue);
+    expect(settings.keepCameraReady, isTrue);
     expect(settings.confirmBeforeDelete, isTrue);
     expect(settings.collectionViewMode, CollectionViewMode.standard);
     expect(settings.collectionSortBy, CollectionSortBy.name);
@@ -50,6 +51,7 @@ void main() {
         themeMode: AppThemeMode.light,
         showScanDiagnostics: true,
         showScanHelp: false,
+        keepCameraReady: false,
         confirmBeforeDelete: false,
         collectionViewMode: CollectionViewMode.minifyFull,
         collectionSortBy: CollectionSortBy.quantity,
@@ -65,6 +67,7 @@ void main() {
     expect(settings.themeMode, AppThemeMode.light);
     expect(settings.showScanDiagnostics, isTrue);
     expect(settings.showScanHelp, isFalse);
+    expect(settings.keepCameraReady, isFalse);
     expect(settings.confirmBeforeDelete, isFalse);
     expect(settings.collectionViewMode, CollectionViewMode.minifyFull);
     expect(settings.collectionSortBy, CollectionSortBy.quantity);
@@ -86,12 +89,14 @@ void main() {
   test('a malformed boolean falls back to its default', () async {
     await metaDao.set('settings.show_scan_diagnostics', 'yes');
     await metaDao.set('settings.show_scan_help', '1');
+    await metaDao.set('settings.keep_camera_ready', 'off');
     await metaDao.set('settings.confirm_before_delete', '');
 
     final settings = await repository.load();
 
     expect(settings.showScanDiagnostics, isFalse);
     expect(settings.showScanHelp, isTrue);
+    expect(settings.keepCameraReady, isTrue);
     expect(settings.confirmBeforeDelete, isTrue);
   });
 

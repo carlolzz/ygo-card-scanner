@@ -49,8 +49,7 @@ class CollectionScrollSlider extends StatefulWidget {
   static const Key bubbleKey = Key('collection-scroll-slider-bubble');
 
   @override
-  State<CollectionScrollSlider> createState() =>
-      _CollectionScrollSliderState();
+  State<CollectionScrollSlider> createState() => _CollectionScrollSliderState();
 }
 
 class _CollectionScrollSliderState extends State<CollectionScrollSlider> {
@@ -279,7 +278,7 @@ class _Gutter extends StatelessWidget {
       builder: (context, constraints) {
         assert(
           constraints.hasBoundedHeight,
-          'CollectionScrollSlider needs a bounded height — it derives the '
+          'CollectionScrollSlider needs a bounded height: it derives the '
           'track from its own constraints.',
         );
         final height = constraints.maxHeight;
@@ -341,8 +340,7 @@ class _Gutter extends StatelessWidget {
                       ),
                     ),
                     Positioned(
-                      top:
-                          CollectionScrollSliderTokens.trackInset + thumbTop,
+                      top: CollectionScrollSliderTokens.trackInset + thumbTop,
                       height: thumbExtent,
                       left: 0,
                       right: 0,

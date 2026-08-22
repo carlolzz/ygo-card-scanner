@@ -43,6 +43,12 @@ class SettingsController extends _$SettingsController {
   Future<void> setShowScanHelp(bool value) =>
       _update((s) => s.copyWith(showScanHelp: value));
 
+  /// Read at build time by `cameraService`/`scanCamera`, so turning it *on*
+  /// takes effect at the next Log Cards entry rather than immediately. Turning
+  /// it *off* releases the camera at once — see `keepCameraReady`.
+  Future<void> setKeepCameraReady(bool value) =>
+      _update((s) => s.copyWith(keepCameraReady: value));
+
   Future<void> setConfirmBeforeDelete(bool value) =>
       _update((s) => s.copyWith(confirmBeforeDelete: value));
 

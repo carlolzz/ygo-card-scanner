@@ -65,16 +65,25 @@ class _FakeCamera implements CameraService {
   set artCaptureEnabled(bool enabled) {}
 
   @override
+  set frameProcessingEnabled(bool enabled) {}
+
+  @override
   Future<void> setExposureCompensation(double ev) async {}
 
   @override
   ValueListenable<CameraController?> get preview => _preview;
 
   @override
+  ValueListenable<bool> get streaming => ValueNotifier<bool>(_frame != null);
+
+  @override
   Future<void> start() async {}
 
   @override
   Future<void> stop() async {}
+
+  @override
+  Future<void> restart() async {}
 
   @override
   Future<void> dispose() async {}
@@ -90,12 +99,7 @@ class _IdentityCardDetector implements CardDetector {
   Future<DetectedCard?> detectCard(ArtFrame frame, {Rect? searchRoi}) async =>
       DetectedCard(
         image: frame.oriented(),
-        quad: const [
-          Offset(0, 0),
-          Offset(1, 0),
-          Offset(1, 1),
-          Offset(0, 1),
-        ],
+        quad: const [Offset(0, 0), Offset(1, 0), Offset(1, 1), Offset(0, 1)],
       );
 }
 
@@ -111,12 +115,7 @@ class _RoiSensitiveDetector implements CardDetector {
     if (searchRoi != ArtMatchTuning.cardSearchRoi) return null;
     return DetectedCard(
       image: frame.oriented(),
-      quad: const [
-        Offset(0, 0),
-        Offset(1, 0),
-        Offset(1, 1),
-        Offset(0, 1),
-      ],
+      quad: const [Offset(0, 0), Offset(1, 0), Offset(1, 1), Offset(0, 1)],
     );
   }
 }
@@ -242,40 +241,42 @@ void main() {
     expect(candidates.last.distance, greaterThan(0));
   });
 
-  test('rankFrame ranks near hits (DB or not) with no repository read',
-      () async {
-    final frame = syntheticFrame();
-    final hash = expectedHash(frame, ArtMatchTuning.artBoxRoi);
-    final index = HashIndex(
-      version: 1,
-      algorithm: 'phash',
-      hashSize: HashIndex.kExpectedHashSize,
-      hashes: {
-        darkMagician: hash, // in the db
-        'not_in_db': hash, // equally close, but no cards row
-        'far': hash.complement(),
-      },
-    );
-    final matcher = PHashArtMatcher(
-      camera: _FakeCamera(frame),
-      index: index,
-      repository: repository,
-      detector: const _IdentityCardDetector(),
-    );
+  test(
+    'rankFrame ranks near hits (DB or not) with no repository read',
+    () async {
+      final frame = syntheticFrame();
+      final hash = expectedHash(frame, ArtMatchTuning.artBoxRoi);
+      final index = HashIndex(
+        version: 1,
+        algorithm: 'phash',
+        hashSize: HashIndex.kExpectedHashSize,
+        hashes: {
+          darkMagician: hash, // in the db
+          'not_in_db': hash, // equally close, but no cards row
+          'far': hash.complement(),
+        },
+      );
+      final matcher = PHashArtMatcher(
+        camera: _FakeCamera(frame),
+        index: index,
+        repository: repository,
+        detector: const _IdentityCardDetector(),
+      );
 
-    final result = await matcher.rankFrame();
-    final ranked = result.matches;
+      final result = await matcher.rankFrame();
+      final ranked = result.matches;
 
-    expect(result.status, ArtFrameStatus.detected);
-    // Pure ranking keeps every near hit — the DB filter lives in match(), not
-    // here — but the far complement is still beyond the gate.
-    expect(
-      ranked.map((m) => m.passcode),
-      containsAll(<String>['not_in_db', darkMagician]),
-    );
-    expect(ranked.any((m) => m.passcode == 'far'), isFalse);
-    expect(ranked.first.distance, 0);
-  });
+      expect(result.status, ArtFrameStatus.detected);
+      // Pure ranking keeps every near hit — the DB filter lives in match(), not
+      // here — but the far complement is still beyond the gate.
+      expect(
+        ranked.map((m) => m.passcode),
+        containsAll(<String>['not_in_db', darkMagician]),
+      );
+      expect(ranked.any((m) => m.passcode == 'far'), isFalse);
+      expect(ranked.first.distance, 0);
+    },
+  );
 
   test('returns empty when there is no frame yet', () async {
     final matcher = PHashArtMatcher(
@@ -284,7 +285,9 @@ void main() {
         version: 1,
         algorithm: 'phash',
         hashSize: HashIndex.kExpectedHashSize,
-        hashes: {darkMagician: PerceptualHash.parseHex('0' * PerceptualHash.hexChars)},
+        hashes: {
+          darkMagician: PerceptualHash.parseHex('0' * PerceptualHash.hexChars),
+        },
       ),
       repository: repository,
       detector: const _IdentityCardDetector(),
@@ -301,10 +304,7 @@ void main() {
       version: 1,
       algorithm: 'phash',
       hashSize: HashIndex.kExpectedHashSize,
-      hashes: {
-        darkMagician:
-            hash.complement(),
-      },
+      hashes: {darkMagician: hash.complement()},
     );
     final matcher = PHashArtMatcher(
       camera: _FakeCamera(frame),
@@ -322,7 +322,9 @@ void main() {
         version: 1,
         algorithm: 'phash',
         hashSize: HashIndex.kExpectedHashSize,
-        hashes: {darkMagician: PerceptualHash.parseHex('0' * PerceptualHash.hexChars)},
+        hashes: {
+          darkMagician: PerceptualHash.parseHex('0' * PerceptualHash.hexChars),
+        },
       ),
       repository: repository,
       detector: const _IdentityCardDetector(),
@@ -333,85 +335,95 @@ void main() {
     expect(result.nearest, isEmpty);
   });
 
-  test('rankFrame(includeNearest) surfaces the nearest hit past the gate',
-      () async {
-    final frame = syntheticFrame();
-    final hash = expectedHash(frame, ArtMatchTuning.artBoxRoi);
-    // The only entry is the frame's complement (maximum distance): beyond the match
-    // gate, so it is not a match — but the overlay still needs to see it.
-    final far = hash.complement();
-    final matcher = PHashArtMatcher(
-      camera: _FakeCamera(frame),
-      index: HashIndex(
-        version: 1,
-        algorithm: 'phash',
-        hashSize: HashIndex.kExpectedHashSize,
-        hashes: {'far': far},
-      ),
-      repository: repository,
-      detector: const _IdentityCardDetector(),
-    );
-    final result = await matcher.rankFrame(includeNearest: true);
-    expect(result.status, ArtFrameStatus.detected);
-    expect(result.matches, isEmpty); // nothing within the gate
-    expect(result.nearest.map((m) => m.passcode), ['far']);
-  });
-
-  group('search region fallback', () {
-    // The reticle-to-frame mapping is the one part of the pipeline that can be
-    // wrong with no visible symptom, and if it were wrong on some device then
-    // nothing would ever be detected there. Retrying over the whole frame turns
-    // that cliff into a slower path.
-    test('retries over the whole frame when the guide box finds nothing',
-        () async {
+  test(
+    'rankFrame(includeNearest) surfaces the nearest hit past the gate',
+    () async {
       final frame = syntheticFrame();
-      final detector = _RoiSensitiveDetector();
+      final hash = expectedHash(frame, ArtMatchTuning.artBoxRoi);
+      // The only entry is the frame's complement (maximum distance): beyond the match
+      // gate, so it is not a match — but the overlay still needs to see it.
+      final far = hash.complement();
       final matcher = PHashArtMatcher(
         camera: _FakeCamera(frame),
         index: HashIndex(
           version: 1,
           algorithm: 'phash',
           hashSize: HashIndex.kExpectedHashSize,
-          hashes: {
-            darkMagician: expectedHash(frame, ArtMatchTuning.artBoxRoi),
-          },
+          hashes: {'far': far},
         ),
         repository: repository,
-        detector: detector,
+        detector: const _IdentityCardDetector(),
       );
-
-      // A viewport is what makes the first pass a reticle-derived region rather
-      // than the whole frame.
-      final result = await matcher.rankFrame(
-        viewportSize: const Size(1080, 2340),
-      );
-
+      final result = await matcher.rankFrame(includeNearest: true);
       expect(result.status, ArtFrameStatus.detected);
-      expect(detector.searchRois, hasLength(2));
-      expect(detector.searchRois.first, isNot(ArtMatchTuning.cardSearchRoi));
-      expect(detector.searchRois.last, ArtMatchTuning.cardSearchRoi);
-    });
+      expect(result.matches, isEmpty); // nothing within the gate
+      expect(result.nearest.map((m) => m.passcode), ['far']);
+    },
+  );
 
-    test('does not retry when the first pass already searched the whole frame',
-        () async {
-      final detector = _RoiSensitiveDetector();
-      final matcher = PHashArtMatcher(
-        camera: _FakeCamera(syntheticFrame()),
-        index: HashIndex(
-          version: 1,
-          algorithm: 'phash',
-          hashSize: HashIndex.kExpectedHashSize,
-          hashes: {darkMagician: PerceptualHash.parseHex('0' * PerceptualHash.hexChars)},
-        ),
-        repository: repository,
-        detector: detector,
-      );
+  group('search region fallback', () {
+    // The reticle-to-frame mapping is the one part of the pipeline that can be
+    // wrong with no visible symptom, and if it were wrong on some device then
+    // nothing would ever be detected there. Retrying over the whole frame turns
+    // that cliff into a slower path.
+    test(
+      'retries over the whole frame when the guide box finds nothing',
+      () async {
+        final frame = syntheticFrame();
+        final detector = _RoiSensitiveDetector();
+        final matcher = PHashArtMatcher(
+          camera: _FakeCamera(frame),
+          index: HashIndex(
+            version: 1,
+            algorithm: 'phash',
+            hashSize: HashIndex.kExpectedHashSize,
+            hashes: {
+              darkMagician: expectedHash(frame, ArtMatchTuning.artBoxRoi),
+            },
+          ),
+          repository: repository,
+          detector: detector,
+        );
 
-      // No viewport (every host test, and the scan screen before it lays out).
-      await matcher.rankFrame();
+        // A viewport is what makes the first pass a reticle-derived region rather
+        // than the whole frame.
+        final result = await matcher.rankFrame(
+          viewportSize: const Size(1080, 2340),
+        );
 
-      expect(detector.searchRois, [ArtMatchTuning.cardSearchRoi]);
-    });
+        expect(result.status, ArtFrameStatus.detected);
+        expect(detector.searchRois, hasLength(2));
+        expect(detector.searchRois.first, isNot(ArtMatchTuning.cardSearchRoi));
+        expect(detector.searchRois.last, ArtMatchTuning.cardSearchRoi);
+      },
+    );
+
+    test(
+      'does not retry when the first pass already searched the whole frame',
+      () async {
+        final detector = _RoiSensitiveDetector();
+        final matcher = PHashArtMatcher(
+          camera: _FakeCamera(syntheticFrame()),
+          index: HashIndex(
+            version: 1,
+            algorithm: 'phash',
+            hashSize: HashIndex.kExpectedHashSize,
+            hashes: {
+              darkMagician: PerceptualHash.parseHex(
+                '0' * PerceptualHash.hexChars,
+              ),
+            },
+          ),
+          repository: repository,
+          detector: detector,
+        );
+
+        // No viewport (every host test, and the scan screen before it lays out).
+        await matcher.rankFrame();
+
+        expect(detector.searchRois, [ArtMatchTuning.cardSearchRoi]);
+      },
+    );
 
     test('reports notDetected when neither pass finds a card', () async {
       final matcher = PHashArtMatcher(
@@ -420,7 +432,11 @@ void main() {
           version: 1,
           algorithm: 'phash',
           hashSize: HashIndex.kExpectedHashSize,
-          hashes: {darkMagician: PerceptualHash.parseHex('0' * PerceptualHash.hexChars)},
+          hashes: {
+            darkMagician: PerceptualHash.parseHex(
+              '0' * PerceptualHash.hexChars,
+            ),
+          },
         ),
         repository: repository,
         detector: const _BlindCardDetector(),

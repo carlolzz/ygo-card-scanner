@@ -6,11 +6,11 @@ import 'package:flutter/foundation.dart' show listEquals;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:share_plus/share_plus.dart';
 
 import '../../core/constants.dart';
 import '../../core/routes.dart';
 import '../../core/theme/tokens.dart';
+import '../../data/export/file_share.dart';
 import '../../models/card_condition.dart';
 import '../../models/card_edition.dart';
 import '../../models/card_language.dart';
@@ -35,9 +35,10 @@ import 'scan_state.dart';
 /// review panel that appears on a match. Continuous — after each confirm the
 /// loop resumes for the next card.
 ///
-/// Stateful only to bridge app lifecycle: the camera is released when the app
-/// is backgrounded and restarted on return. No transition logic lives here —
-/// that's all in [ScanController].
+/// Stateful only to clear the process-wide scan pause on entry (see below). App
+/// lifecycle is no longer bridged from here — [ScanCameraActive] owns its own
+/// listener, because the camera now outlives this screen. No transition logic
+/// lives here either; that's all in [ScanController].
 class ScanScreen extends ConsumerStatefulWidget {
   const ScanScreen({super.key});
 
@@ -45,12 +46,10 @@ class ScanScreen extends ConsumerStatefulWidget {
   ConsumerState<ScanScreen> createState() => _ScanScreenState();
 }
 
-class _ScanScreenState extends ConsumerState<ScanScreen>
-    with WidgetsBindingObserver {
+class _ScanScreenState extends ConsumerState<ScanScreen> {
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addObserver(this);
     // **Clear any pause left behind by a previous scanning session.**
     //
     // [ScanPaused] is `keepAlive` — deliberately, since its writer and reader
@@ -80,33 +79,16 @@ class _ScanScreenState extends ConsumerState<ScanScreen>
   }
 
   @override
-  void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
-    super.dispose();
-  }
-
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    // Keep the camera through the transient `inactive` state: on first launch
-    // the OS camera-permission dialog briefly makes the app inactive, and
-    // releasing the camera there (then restarting on resume) is exactly the
-    // churn that used to leave the preview dead until you re-entered the screen.
-    // Release only on a genuine background.
-    switch (state) {
-      case AppLifecycleState.resumed:
-      case AppLifecycleState.inactive:
-        ref.read(scanCameraActiveProvider.notifier).set(active: true);
-      case AppLifecycleState.hidden:
-      case AppLifecycleState.paused:
-      case AppLifecycleState.detached:
-        ref.read(scanCameraActiveProvider.notifier).set(active: false);
-    }
-  }
-
-  @override
   Widget build(BuildContext context) {
     final scan = ref.watch(scanControllerProvider);
     final palette = AppPalette.of(context);
+    // The camera is being pointed at something rather than a result waiting on
+    // the user. One local, shared by the app bar below and passed to
+    // [_TopOverlays], so the two cannot drift: an action that stays up during a
+    // review paints on top of the panel the user is filling in.
+    final scanning =
+        scan.status == ScanStatus.detecting ||
+        scan.status == ScanStatus.reading;
 
     return Scaffold(
       backgroundColor: palette.background,
@@ -115,39 +97,49 @@ class _ScanScreenState extends ConsumerState<ScanScreen>
         backgroundColor: Colors.transparent,
         elevation: 0,
         title: const Text(AppStrings.scanTitle),
+        // **Every action is gated on the camera being live.** The app bar is
+        // transparent over `extendBodyBehindAppBar`, so these float above the
+        // body — including above a review panel, which grows upward from the
+        // bottom and is exactly where the user is typing. The panels are now
+        // capped below the app bar too (see [_ScanBottomPanel]); this is the
+        // other half, because an icon hovering over the top of that panel reads
+        // as part of it and is a mis-tap waiting to happen.
         actions: [
-          // Developer aid: overlay the per-frame detection status + candidate
-          // distances so recognition can be tuned from real numbers. A shortcut
-          // for the persisted Settings toggle — both write the same value.
-          IconButton(
-            tooltip: AppStrings.scanDiagnosticsTooltip,
-            icon: Icon(
-              ref.watch(scanDiagnosticsEnabledProvider)
-                  ? Icons.bug_report
-                  : Icons.bug_report_outlined,
+          if (scanning) ...[
+            // Developer aid: overlay the per-frame detection status + candidate
+            // distances so recognition can be tuned from real numbers. A shortcut
+            // for the persisted Settings toggle — both write the same value.
+            IconButton(
+              tooltip: AppStrings.scanDiagnosticsTooltip,
+              icon: Icon(
+                ref.watch(scanDiagnosticsEnabledProvider)
+                    ? Icons.bug_report
+                    : Icons.bug_report_outlined,
+              ),
+              onPressed: () => ref
+                  .read(settingsControllerProvider.notifier)
+                  .setShowScanDiagnostics(
+                    !ref.read(scanDiagnosticsEnabledProvider),
+                  ),
             ),
-            onPressed: () => ref
-                .read(settingsControllerProvider.notifier)
-                .setShowScanDiagnostics(
-                  !ref.read(scanDiagnosticsEnabledProvider),
-                ),
-          ),
-          // Beside the toggle that produces what it saves: the matcher only
-          // retains `lastSample` while diagnostics is on. Deliberately *not*
-          // gated on the status as well — unlike the readout, which
-          // [_TopOverlays] hides behind a panel because it goes stale there, the
-          // retained sample is exactly the frame that produced the result on
-          // screen, so this stays usable in `matched`/`candidates`. That is when
-          // a wrong answer is worth capturing.
-          if (ref.watch(scanDiagnosticsEnabledProvider))
-            const _CaptureSampleButton(),
+            // Beside the toggle that produces what it saves: the matcher only
+            // retains `lastSample` while diagnostics is on. This used to stay up
+            // during `matched`/`candidates` on the grounds that the retained
+            // sample is exactly the frame that produced the result on screen —
+            // true, and overruled: `lastSample` survives a dismiss, so the frame
+            // behind a wrong answer is still one tap away, and not overlapping
+            // the review panel is worth more than saving that tap.
+            if (ref.watch(scanDiagnosticsEnabledProvider))
+              const _CaptureSampleButton(),
+          ],
           // The other recognition tool: read the printed 8-digit code when the
           // artwork won't resolve (glare, two near-identical arts, etc.). A
           // toggle, not a one-shot — it stays on until switched off here (or on
           // the reading panel), so a whole stack can be logged by code.
-          if (scan.status == ScanStatus.detecting ||
-              scan.status == ScanStatus.reading ||
-              scan.status == ScanStatus.readingCode)
+          //
+          // `readingCode` on top of [scanning]: that state's panel is a spinner
+          // and a way out, not a form, and this icon is the other way out.
+          if (scanning || scan.status == ScanStatus.readingCode)
             IconButton(
               tooltip: scan.mode == ScanMode.passcode
                   ? AppStrings.scanExitCodeTooltip
@@ -164,11 +156,14 @@ class _ScanScreenState extends ConsumerState<ScanScreen>
                         .read(scanControllerProvider.notifier)
                         .requestPasscodeRead,
             ),
-          IconButton(
-            tooltip: AppStrings.scanManualTooltip,
-            icon: const Icon(Icons.keyboard),
-            onPressed: () => context.push(AppRoutes.addCard),
-          ),
+          // Every panel already offers its own route to manual search, so this
+          // loses nothing by standing down while one is up.
+          if (scanning)
+            IconButton(
+              tooltip: AppStrings.scanManualTooltip,
+              icon: const Icon(Icons.keyboard),
+              onPressed: () => context.push(AppRoutes.addCard),
+            ),
         ],
       ),
       body: Stack(
@@ -176,8 +171,7 @@ class _ScanScreenState extends ConsumerState<ScanScreen>
         children: [
           const _ViewportProbe(),
           const _CameraLayer(),
-          if (scan.status == ScanStatus.detecting ||
-              scan.status == ScanStatus.reading) ...[
+          if (scanning) ...[
             _ReticleOverlay(status: scan.status, hint: scan.hint),
             const _SearchRoiOverlay(),
             const _DetectionOutline(),
@@ -196,9 +190,7 @@ class _ScanScreenState extends ConsumerState<ScanScreen>
           // The bottom is free while scanning — show the how-to there, unless
           // the user has switched it off. It never coexists with the panels
           // above (all other statuses render one).
-          else if ((scan.status == ScanStatus.detecting ||
-                  scan.status == ScanStatus.reading) &&
-              ref.watch(scanHelpEnabledProvider))
+          else if (scanning && ref.watch(scanHelpEnabledProvider))
             const _HelpPanel(),
           // Last, so the top overlays stay above every panel.
           _TopOverlays(status: scan.status),
@@ -212,6 +204,56 @@ class _ScanScreenState extends ConsumerState<ScanScreen>
 /// regardless of the user's theme: these sit on live camera imagery rather than
 /// on app chrome, and a light scrim behind a viewfinder reads as a glitch.
 final Color _cameraScrim = AppPalette.dark.background;
+
+/// The sheet every scan result rises into, from the bottom of the screen.
+///
+/// One widget because four panels ([_MatchedPanel], [_CandidatePanel],
+/// [_ReadingCodePanel] and [_BottomMessage]) each repeated the same
+/// `Align(bottomCenter)` → rounded surface → `SafeArea(top: false)` shape, and
+/// because the **height cap** below has to hold for all of them or it holds for
+/// none.
+///
+/// **The cap is the point.** `Scaffold(extendBodyBehindAppBar: true)` with a
+/// transparent `AppBar` means the body owns the full screen, so a panel whose
+/// height is content-driven — `_MatchedPanel` is a set picker, three chip rows,
+/// a quantity row and two buttons — simply grew up behind the app bar until the
+/// icons were sitting on the card name and the set field. Reserving
+/// `MediaQuery.padding.top` gives it back: with `extendBodyBehindAppBar` that
+/// padding *already includes* `kToolbarHeight`, the same fact `_TopOverlays`
+/// documents after step 19 found the toolbar being added to it a second time.
+///
+/// Nothing overflows under the cap — every panel either scrolls
+/// (`SingleChildScrollView`) or gives its list a `Flexible` — it just stops
+/// growing and starts scrolling, which is the right behaviour for a form taller
+/// than the screen anyway.
+class _ScanBottomPanel extends StatelessWidget {
+  const _ScanBottomPanel({required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = AppPalette.of(context);
+    return Padding(
+      padding: EdgeInsets.only(top: MediaQuery.paddingOf(context).top),
+      child: Align(
+        alignment: Alignment.bottomCenter,
+        child: Container(
+          width: double.infinity,
+          decoration: BoxDecoration(
+            color: palette.surface,
+            borderRadius: BorderRadius.vertical(
+              top: Radius.circular(AppRadius.lg),
+            ),
+          ),
+          // `top: false` — the panel is bottom-anchored, and its own top inset
+          // is already handled by the padding above.
+          child: SafeArea(top: false, child: child),
+        ),
+      ),
+    );
+  }
+}
 
 /// The live preview, or a neutral background until the camera is ready. Reads
 /// the controller from [cameraServiceProvider] without forcing it to start —
@@ -770,16 +812,19 @@ class _PasscodeReticle extends StatelessWidget {
       builder: (context, constraints) {
         return Center(
           child: Container(
-            width: constraints.maxWidth * ScanPasscodeReticleTokens.widthFraction,
+            width:
+                constraints.maxWidth * ScanPasscodeReticleTokens.widthFraction,
             height:
-                constraints.maxHeight * ScanPasscodeReticleTokens.heightFraction,
+                constraints.maxHeight *
+                ScanPasscodeReticleTokens.heightFraction,
             decoration: BoxDecoration(
               border: Border.all(
                 color: AppPalette.dark.accent,
                 width: ScanPasscodeReticleTokens.borderWidth,
               ),
-              borderRadius:
-                  BorderRadius.circular(ScanPasscodeReticleTokens.cornerRadius),
+              borderRadius: BorderRadius.circular(
+                ScanPasscodeReticleTokens.cornerRadius,
+              ),
             ),
           ),
         );
@@ -833,7 +878,9 @@ class _HelpPanel extends StatelessWidget {
                 ),
                 const SizedBox(height: AppSpacing.xs),
                 const _HelpLine(
-                    Icons.center_focus_strong, AppStrings.scanHelpArtwork),
+                  Icons.center_focus_strong,
+                  AppStrings.scanHelpArtwork,
+                ),
                 const _HelpLine(Icons.pin, AppStrings.scanHelpCode),
                 const _HelpLine(Icons.keyboard, AppStrings.scanHelpManual),
               ],
@@ -1189,14 +1236,15 @@ class _CaptureSampleButtonState extends ConsumerState<_CaptureSampleButton> {
     setState(() => _busy = false);
     // App documents isn't browsable on Android, so sharing is the only way the
     // files reach a machine that can look at them — same route as the CSV
-    // export.
+    // export, and the same fix: the message is chosen *after* the sheet
+    // resolves, not before it opens.
     if (paths.isNotEmpty) {
-      await SharePlus.instance.share(
-        ShareParams(
-          files: [for (final path in paths) XFile(path)],
-          subject: AppStrings.scanCaptureSubject,
-        ),
-      );
+      final outcome = await ref
+          .read(fileShareProvider)
+          .shareFiles(paths, subject: AppStrings.scanCaptureSubject);
+      if (outcome == ShareOutcome.cancelled) {
+        message = AppStrings.scanCaptureCancelledMessage;
+      }
     }
     if (!mounted) return;
     ScaffoldMessenger.of(
@@ -1249,25 +1297,27 @@ class _StatusBanner extends ConsumerWidget {
     if (ref.watch(scanDiagnosticsEnabledProvider)) {
       return _banner(context, ref, cameraReady: null);
     }
-    // No ticker needed, unlike `_DiagnosticsBox`: `preview` is a
-    // `ValueListenable` and the controller is itself a `Listenable`, so
-    // readiness pushes. The same pair `_CameraLayer` subscribes to, and for the
-    // same reason — sampling a getter would latch the opening state forever.
-    return ValueListenableBuilder<CameraController?>(
-      valueListenable: ref.watch(cameraServiceProvider).preview,
-      builder: (context, controller, _) {
-        if (controller == null) {
-          // Also the state after `CameraService.stop()` released it. Correct
-          // here: the reticle is only drawn while the camera is meant to be up,
-          // so "opening" is what a released camera is about to do.
-          return _banner(context, ref, cameraReady: false);
-        }
-        return ListenableBuilder(
-          listenable: controller,
-          builder: (context, _) =>
-              _banner(context, ref, cameraReady: controller.value.isInitialized),
-        );
-      },
+    // **Readiness is "a frame has arrived", not "the controller initialized".**
+    // `_start` publishes the controller the instant `initialize()` returns —
+    // before metering, before `startImageStream` — because the picture is worth
+    // showing that early. Reading readiness from `value.isInitialized` therefore
+    // announced "Camera: available" over a preview that had not streamed
+    // anything yet, which is precisely the complaint. `streaming` is the honest
+    // signal, and the one the diagnostics `cam:` line has always used — so the
+    // two now flip at the same moment instead of contradicting each other.
+    //
+    // No ticker needed, unlike `_DiagnosticsBox`: this is a `ValueListenable`,
+    // so readiness pushes. Sampling a getter would latch the opening state
+    // forever, since `cameraServiceProvider` hands out one instance and never
+    // republishes it.
+    return ValueListenableBuilder<bool>(
+      valueListenable: ref.watch(cameraServiceProvider).streaming,
+      // False is also the state after `CameraService.stop()` released the
+      // camera, and while a watchdog restart is in flight. Correct in both: the
+      // reticle is only drawn while the camera is meant to be up, so "opening"
+      // is what a released camera is about to do.
+      builder: (context, streaming, _) =>
+          _banner(context, ref, cameraReady: streaming),
     );
   }
 
@@ -1318,13 +1368,50 @@ class _StatusBanner extends ConsumerWidget {
           // Once up, the answer stays on screen rather than flashing past: the
           // question ("is the camera ready?") is asked again every time a scan
           // feels unresponsive.
+          //
+          // And it doubles as the restart control, which is why it is a row.
+          // `camera_android_camerax` can black out the *preview surface* while
+          // frames keep arriving (flutter/flutter#27688) — undetectable from
+          // Dart, so no watchdog can catch it: every signal reads healthy and
+          // the screen is black. The line claiming the camera is available is
+          // exactly what the user is staring at when that happens, which makes
+          // it the right thing to tap. It costs no app-bar width either, and
+          // with diagnostics on there are already four actions up there.
           if (cameraReady == true)
-            Text(
-              AppStrings.scanCameraAvailable,
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                color: AppPalette.dark.onSurfaceMuted,
-                fontSize: ScanStatusBannerTokens.cameraLineFontSize,
+            InkWell(
+              onTap: () =>
+                  ref.read(scanControllerProvider.notifier).restartCamera(),
+              borderRadius: BorderRadius.circular(AppRadius.sm),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: AppSpacing.xs),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // Flexible because the banner now lives inside the guide
+                    // box, which is a good deal narrower than the 0.8-of-width
+                    // bound below — the label plus the glyph overflows it on a
+                    // small viewport otherwise.
+                    Flexible(
+                      child: Text(
+                        AppStrings.scanCameraAvailable,
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: AppPalette.dark.onSurfaceMuted,
+                          fontSize: ScanStatusBannerTokens.cameraLineFontSize,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: AppSpacing.xs),
+                    Tooltip(
+                      message: AppStrings.scanRestartCameraTooltip,
+                      child: Icon(
+                        Icons.refresh,
+                        size: ScanStatusBannerTokens.restartIconSize,
+                        color: AppPalette.dark.onSurfaceMuted,
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
           Row(
@@ -1391,198 +1478,170 @@ class _MatchedPanel extends ConsumerWidget {
     final card = state.matchedCard!;
     final palette = AppPalette.of(context);
 
-    return Align(
-      alignment: Alignment.bottomCenter,
-      child: Container(
-        width: double.infinity,
-        decoration: BoxDecoration(
-          color: palette.surface,
-          borderRadius: BorderRadius.vertical(
-            top: Radius.circular(AppRadius.lg),
-          ),
-        ),
-        child: SafeArea(
-          top: false,
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.all(AppSpacing.lg),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
+    return _ScanBottomPanel(
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.all(AppSpacing.lg),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    CardArtThumbnail(
-                      card: card,
-                      size: CardThumbnailSizes.list,
-                    ),
-                    const SizedBox(width: AppSpacing.md),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            card.name,
+                CardArtThumbnail(card: card, size: CardThumbnailSizes.list),
+                const SizedBox(width: AppSpacing.md),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        card.name,
+                        style: TextStyle(
+                          color: palette.onSurface,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 18,
+                        ),
+                      ),
+                      if (card.type != null)
+                        Text(
+                          card.type!,
+                          style: TextStyle(color: palette.onSurfaceMuted),
+                        ),
+                      // Say so when the app is guessing. Matches past
+                      // `autoMatchMaxDistance` are shown rather than
+                      // withheld, which is only defensible if the user can
+                      // tell the difference — the picture above plus this
+                      // line are how they check before confirming.
+                      if (_isLowConfidence(state))
+                        Padding(
+                          padding: const EdgeInsets.only(top: AppSpacing.xs),
+                          child: Text(
+                            AppStrings.scanLowConfidence,
                             style: TextStyle(
-                              color: palette.onSurface,
-                              fontWeight: FontWeight.bold,
-                              fontSize: 18,
+                              color: palette.accent,
+                              fontSize: ScanHelpTokens.lineFontSize,
                             ),
                           ),
-                          if (card.type != null)
-                            Text(
-                              card.type!,
-                              style: TextStyle(
-                                color: palette.onSurfaceMuted,
-                              ),
-                            ),
-                          // Say so when the app is guessing. Matches past
-                          // `autoMatchMaxDistance` are shown rather than
-                          // withheld, which is only defensible if the user can
-                          // tell the difference — the picture above plus this
-                          // line are how they check before confirming.
-                          if (_isLowConfidence(state))
-                            Padding(
-                              padding: const EdgeInsets.only(
-                                top: AppSpacing.xs,
-                              ),
-                              child: Text(
-                                AppStrings.scanLowConfidence,
-                                style: TextStyle(
-                                  color: palette.accent,
-                                  fontSize: ScanHelpTokens.lineFontSize,
-                                ),
-                              ),
-                            ),
-                        ],
-                      ),
-                    ),
-                    IconButton(
-                      tooltip: AppStrings.scanRescanButton,
-                      icon: Icon(Icons.close, color: palette.onSurface),
-                      onPressed: controller.dismiss,
-                    ),
-                  ],
-                ),
-                const SizedBox(height: AppSpacing.md),
-                // First, above the chips: its search field opens the keyboard,
-                // which covers everything below it. Self-hides (and supplies its
-                // own trailing gap) when the card has no known printings.
-                _SetPicker(
-                  passcode: card.passcode,
-                  printingId: state.printingId,
-                ),
-                Wrap(
-                  spacing: AppSpacing.xs,
-                  children: [
-                    for (final condition in CardCondition.values)
-                      LabeledChoiceChip(
-                        label: condition.shortCode,
-                        selected: state.condition == condition,
-                        selectedColor:
-                            ConditionChipColors.byShortCode[condition.shortCode]!,
-                        onSelected: () => controller.setCondition(condition),
-                      ),
-                  ],
-                ),
-                const SizedBox(height: AppSpacing.sm),
-                Wrap(
-                  spacing: AppSpacing.xs,
-                  children: [
-                    for (final edition in CardEdition.values)
-                      LabeledChoiceChip(
-                        label: edition.label,
-                        selected: state.edition == edition,
-                        selectedColor: palette.accent,
-                        onSelected: () => controller.setEdition(edition),
-                      ),
-                  ],
-                ),
-                const SizedBox(height: AppSpacing.sm),
-                Wrap(
-                  spacing: AppSpacing.xs,
-                  children: [
-                    for (final language in kCardLanguages)
-                      LabeledChoiceChip(
-                        label: languageLabel(language),
-                        selected: state.language == language,
-                        selectedColor: palette.accent,
-                        onSelected: () => controller.setLanguage(language),
-                      ),
-                  ],
-                ),
-                const SizedBox(height: AppSpacing.md),
-                Row(
-                  children: [
-                    Text(
-                      AppStrings.collectionQuantityLabel,
-                      style: TextStyle(color: palette.onSurface),
-                    ),
-                    const Spacer(),
-                    IconButton(
-                      icon: const Icon(Icons.remove_circle_outline),
-                      onPressed: () =>
-                          controller.setQuantity(state.quantity - 1),
-                    ),
-                    Text(
-                      '${state.quantity}',
-                      style: TextStyle(
-                        color: palette.onSurface,
-                        fontSize: 18,
-                      ),
-                    ),
-                    IconButton(
-                      icon: const Icon(Icons.add_circle_outline),
-                      color: palette.accent,
-                      onPressed: () =>
-                          controller.setQuantity(state.quantity + 1),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: AppSpacing.md),
-                SizedBox(
-                  width: double.infinity,
-                  child: FilledButton(
-                    onPressed: () async {
-                      await controller.confirm();
-                      if (context.mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text(AppStrings.scanSavedMessage),
-                          ),
-                        );
-                      }
-                    },
-                    child: const Text(AppStrings.scanConfirmButton),
+                        ),
+                    ],
                   ),
                 ),
-                // An automatic artwork guess can be wrong, so always offer a way
-                // off it — the escape hatch is what makes presenting a marginal
-                // guess reasonable in the first place. Shown for every artwork
-                // match; an OCR passcode match is exact and carries no
-                // candidates, so it keeps the panel it always had.
-                if (state.candidates.isNotEmpty)
-                  SizedBox(
-                    width: double.infinity,
-                    child: TextButton(
-                      onPressed: () {
-                        // With alternatives, show them; the candidate panel ends
-                        // in "search by name" anyway. With only this one, skip
-                        // the middle step — a one-row "is it one of these?"
-                        // listing the card just rejected is noise.
-                        if (state.candidates.length > 1) {
-                          controller.showCandidates();
-                        } else {
-                          controller.dismiss();
-                          context.push(AppRoutes.addCard);
-                        }
-                      },
-                      child: const Text(AppStrings.scanNotThisCardButton),
-                    ),
+                IconButton(
+                  tooltip: AppStrings.scanRescanButton,
+                  icon: Icon(Icons.close, color: palette.onSurface),
+                  onPressed: controller.dismiss,
+                ),
+              ],
+            ),
+            const SizedBox(height: AppSpacing.md),
+            // First, above the chips: its search field opens the keyboard,
+            // which covers everything below it. Self-hides (and supplies its
+            // own trailing gap) when the card has no known printings.
+            _SetPicker(passcode: card.passcode, printingId: state.printingId),
+            Wrap(
+              spacing: AppSpacing.xs,
+              children: [
+                for (final condition in CardCondition.values)
+                  LabeledChoiceChip(
+                    label: condition.shortCode,
+                    selected: state.condition == condition,
+                    selectedColor:
+                        ConditionChipColors.byShortCode[condition.shortCode]!,
+                    onSelected: () => controller.setCondition(condition),
                   ),
               ],
             ),
-          ),
+            const SizedBox(height: AppSpacing.sm),
+            Wrap(
+              spacing: AppSpacing.xs,
+              children: [
+                for (final edition in CardEdition.values)
+                  LabeledChoiceChip(
+                    label: edition.label,
+                    selected: state.edition == edition,
+                    selectedColor: palette.accent,
+                    onSelected: () => controller.setEdition(edition),
+                  ),
+              ],
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            Wrap(
+              spacing: AppSpacing.xs,
+              children: [
+                for (final language in kCardLanguages)
+                  LabeledChoiceChip(
+                    label: languageLabel(language),
+                    selected: state.language == language,
+                    selectedColor: palette.accent,
+                    onSelected: () => controller.setLanguage(language),
+                  ),
+              ],
+            ),
+            const SizedBox(height: AppSpacing.md),
+            Row(
+              children: [
+                Text(
+                  AppStrings.collectionQuantityLabel,
+                  style: TextStyle(color: palette.onSurface),
+                ),
+                const Spacer(),
+                IconButton(
+                  icon: const Icon(Icons.remove_circle_outline),
+                  onPressed: () => controller.setQuantity(state.quantity - 1),
+                ),
+                Text(
+                  '${state.quantity}',
+                  style: TextStyle(color: palette.onSurface, fontSize: 18),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.add_circle_outline),
+                  color: palette.accent,
+                  onPressed: () => controller.setQuantity(state.quantity + 1),
+                ),
+              ],
+            ),
+            const SizedBox(height: AppSpacing.md),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton(
+                onPressed: () async {
+                  await controller.confirm();
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text(AppStrings.scanSavedMessage),
+                      ),
+                    );
+                  }
+                },
+                child: const Text(AppStrings.scanConfirmButton),
+              ),
+            ),
+            // An automatic artwork guess can be wrong, so always offer a way
+            // off it — the escape hatch is what makes presenting a marginal
+            // guess reasonable in the first place. Shown for every artwork
+            // match; an OCR passcode match is exact and carries no
+            // candidates, so it keeps the panel it always had.
+            if (state.candidates.isNotEmpty)
+              SizedBox(
+                width: double.infinity,
+                child: TextButton(
+                  onPressed: () {
+                    // With alternatives, show them; the candidate panel ends
+                    // in "search by name" anyway. With only this one, skip
+                    // the middle step — a one-row "is it one of these?"
+                    // listing the card just rejected is noise.
+                    if (state.candidates.length > 1) {
+                      controller.showCandidates();
+                    } else {
+                      controller.dismiss();
+                      context.push(AppRoutes.addCard);
+                    }
+                  },
+                  child: const Text(AppStrings.scanNotThisCardButton),
+                ),
+              ),
+          ],
         ),
       ),
     );
@@ -1659,106 +1718,93 @@ class _CandidatePanel extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final controller = ref.read(scanControllerProvider.notifier);
     final palette = AppPalette.of(context);
-    return Align(
-      alignment: Alignment.bottomCenter,
-      child: Container(
-        width: double.infinity,
-        decoration: BoxDecoration(
-          color: palette.surface,
-          borderRadius: BorderRadius.vertical(top: Radius.circular(AppRadius.lg)),
-        ),
-        child: SafeArea(
-          top: false,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(
-                  AppSpacing.lg,
-                  AppSpacing.lg,
-                  AppSpacing.lg,
-                  AppSpacing.xs,
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+    return _ScanBottomPanel(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(
+              AppSpacing.lg,
+              AppSpacing.lg,
+              AppSpacing.lg,
+              AppSpacing.xs,
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
                   children: [
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            AppStrings.scanCandidatesTitle,
-                            style: TextStyle(
-                              color: palette.onSurface,
-                              fontWeight: FontWeight.bold,
-                              fontSize: 18,
-                            ),
-                          ),
+                    Expanded(
+                      child: Text(
+                        AppStrings.scanCandidatesTitle,
+                        style: TextStyle(
+                          color: palette.onSurface,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 18,
                         ),
-                        IconButton(
-                          tooltip: AppStrings.scanRescanButton,
-                          icon: Icon(Icons.close, color: palette.onSurface),
-                          onPressed: controller.dismiss,
-                        ),
-                      ],
+                      ),
                     ),
-                    Text(
-                      AppStrings.scanCandidatesSubtitle,
-                      style: TextStyle(color: palette.onSurfaceMuted),
+                    IconButton(
+                      tooltip: AppStrings.scanRescanButton,
+                      icon: Icon(Icons.close, color: palette.onSurface),
+                      onPressed: controller.dismiss,
                     ),
                   ],
                 ),
-              ),
-              Flexible(
-                child: ListView.builder(
-                  shrinkWrap: true,
-                  padding: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
-                  itemCount: candidates.length,
-                  itemBuilder: (context, index) {
-                    final candidate = candidates[index];
-                    return ListTile(
-                      leading: CardArtThumbnail(
-                        card: candidate.card,
-                        size: CardThumbnailSizes.list,
-                      ),
-                      title: Text(
-                        candidate.card.name,
-                        style: TextStyle(color: palette.onSurface),
-                      ),
-                      subtitle: candidate.card.type != null
-                          ? Text(
-                              candidate.card.type!,
-                              style: TextStyle(
-                                color: palette.onSurfaceMuted,
-                              ),
-                            )
-                          : null,
-                      onTap: () => controller.selectCandidate(candidate.card),
-                    );
-                  },
+                Text(
+                  AppStrings.scanCandidatesSubtitle,
+                  style: TextStyle(color: palette.onSurfaceMuted),
                 ),
-              ),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(
-                  AppSpacing.lg,
-                  AppSpacing.xs,
-                  AppSpacing.lg,
-                  AppSpacing.md,
-                ),
-                child: SizedBox(
-                  width: double.infinity,
-                  child: OutlinedButton(
-                    onPressed: () {
-                      controller.dismiss();
-                      context.push(AppRoutes.addCard);
-                    },
-                    child: const Text(AppStrings.scanUnknownSearchButton),
-                  ),
-                ),
-              ),
-            ],
+              ],
+            ),
           ),
-        ),
+          Flexible(
+            child: ListView.builder(
+              shrinkWrap: true,
+              padding: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
+              itemCount: candidates.length,
+              itemBuilder: (context, index) {
+                final candidate = candidates[index];
+                return ListTile(
+                  leading: CardArtThumbnail(
+                    card: candidate.card,
+                    size: CardThumbnailSizes.list,
+                  ),
+                  title: Text(
+                    candidate.card.name,
+                    style: TextStyle(color: palette.onSurface),
+                  ),
+                  subtitle: candidate.card.type != null
+                      ? Text(
+                          candidate.card.type!,
+                          style: TextStyle(color: palette.onSurfaceMuted),
+                        )
+                      : null,
+                  onTap: () => controller.selectCandidate(candidate.card),
+                );
+              },
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(
+              AppSpacing.lg,
+              AppSpacing.xs,
+              AppSpacing.lg,
+              AppSpacing.md,
+            ),
+            child: SizedBox(
+              width: double.infinity,
+              child: OutlinedButton(
+                onPressed: () {
+                  controller.dismiss();
+                  context.push(AppRoutes.addCard);
+                },
+                child: const Text(AppStrings.scanUnknownSearchButton),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -1796,59 +1842,48 @@ class _ReadingCodePanel extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final controller = ref.read(scanControllerProvider.notifier);
     final palette = AppPalette.of(context);
-    return Align(
-      alignment: Alignment.bottomCenter,
-      child: Container(
-        width: double.infinity,
-        decoration: BoxDecoration(
-          color: palette.surface,
-          borderRadius: BorderRadius.vertical(top: Radius.circular(AppRadius.lg)),
-        ),
-        child: SafeArea(
-          top: false,
-          child: Padding(
-            padding: const EdgeInsets.all(AppSpacing.lg),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
+    return _ScanBottomPanel(
+      child: Padding(
+        padding: const EdgeInsets.all(AppSpacing.lg),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
               children: [
-                Row(
-                  children: [
-                    SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: palette.accent,
-                      ),
-                    ),
-                    const SizedBox(width: AppSpacing.sm),
-                    Text(
-                      AppStrings.scanReadingCodeTitle,
-                      style: TextStyle(
-                        color: palette.onSurface,
-                        fontWeight: FontWeight.bold,
-                        fontSize: 18,
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: AppSpacing.xs),
-                Text(
-                  AppStrings.scanReadingCodeMessage,
-                  style: TextStyle(color: palette.onSurfaceMuted),
-                ),
-                const SizedBox(height: AppSpacing.md),
                 SizedBox(
-                  width: double.infinity,
-                  child: OutlinedButton(
-                    onPressed: controller.exitPasscodeMode,
-                    child: const Text(AppStrings.scanReadCodeCancelButton),
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: palette.accent,
+                  ),
+                ),
+                const SizedBox(width: AppSpacing.sm),
+                Text(
+                  AppStrings.scanReadingCodeTitle,
+                  style: TextStyle(
+                    color: palette.onSurface,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 18,
                   ),
                 ),
               ],
             ),
-          ),
+            const SizedBox(height: AppSpacing.xs),
+            Text(
+              AppStrings.scanReadingCodeMessage,
+              style: TextStyle(color: palette.onSurfaceMuted),
+            ),
+            const SizedBox(height: AppSpacing.md),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton(
+                onPressed: controller.exitPasscodeMode,
+                child: const Text(AppStrings.scanReadCodeCancelButton),
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -1908,56 +1943,40 @@ class _BottomMessage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = AppPalette.of(context);
-    return Align(
-      alignment: Alignment.bottomCenter,
-      child: Container(
-        width: double.infinity,
-        decoration: BoxDecoration(
-          color: palette.surface,
-          borderRadius: BorderRadius.vertical(
-            top: Radius.circular(AppRadius.lg),
-          ),
-        ),
-        child: SafeArea(
-          top: false,
-          child: Padding(
-            padding: const EdgeInsets.all(AppSpacing.lg),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title,
-                  style: TextStyle(
-                    color: palette.onSurface,
-                    fontWeight: FontWeight.bold,
-                    fontSize: 18,
-                  ),
-                ),
-                const SizedBox(height: AppSpacing.xs),
-                Text(
-                  message,
-                  style: TextStyle(color: palette.onSurfaceMuted),
-                ),
-                const SizedBox(height: AppSpacing.md),
-                SizedBox(
-                  width: double.infinity,
-                  child: FilledButton(
-                    onPressed: onPrimary,
-                    child: Text(primaryLabel),
-                  ),
-                ),
-                const SizedBox(height: AppSpacing.sm),
-                SizedBox(
-                  width: double.infinity,
-                  child: OutlinedButton(
-                    onPressed: onSecondary,
-                    child: Text(secondaryLabel),
-                  ),
-                ),
-              ],
+    return _ScanBottomPanel(
+      child: Padding(
+        padding: const EdgeInsets.all(AppSpacing.lg),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              title,
+              style: TextStyle(
+                color: palette.onSurface,
+                fontWeight: FontWeight.bold,
+                fontSize: 18,
+              ),
             ),
-          ),
+            const SizedBox(height: AppSpacing.xs),
+            Text(message, style: TextStyle(color: palette.onSurfaceMuted)),
+            const SizedBox(height: AppSpacing.md),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton(
+                onPressed: onPrimary,
+                child: Text(primaryLabel),
+              ),
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton(
+                onPressed: onSecondary,
+                child: Text(secondaryLabel),
+              ),
+            ),
+          ],
         ),
       ),
     );

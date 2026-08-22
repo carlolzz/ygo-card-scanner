@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:share_plus/share_plus.dart';
 
 import '../../core/constants.dart';
 import '../../core/money.dart';
@@ -9,6 +8,7 @@ import '../../core/routes.dart';
 import '../../core/theme/tokens.dart';
 import '../../data/export/collection_csv_parser.dart';
 import '../../data/export/collection_exporter.dart';
+import '../../data/export/file_share.dart';
 import '../../data/import/collection_import_plan.dart';
 import '../../data/import/collection_importer.dart';
 import '../../data/import/csv_file_source.dart';
@@ -142,7 +142,8 @@ class _StatisticsBody extends StatelessWidget {
   List<_BreakdownRow> _languageRows(Map<String, int> byLanguage) {
     final keys = byLanguage.keys.toList()..sort();
     return [
-      for (final key in keys) _BreakdownRow(languageLabel(key), byLanguage[key]!),
+      for (final key in keys)
+        _BreakdownRow(languageLabel(key), byLanguage[key]!),
     ];
   }
 
@@ -356,10 +357,8 @@ class _ValueResult extends StatelessWidget {
           child: OutlinedButton.icon(
             icon: const Icon(Icons.receipt_long),
             label: const Text(AppStrings.statisticsValueBreakdownButton),
-            onPressed: () => context.push(
-              AppRoutes.collectionValue,
-              extra: value,
-            ),
+            onPressed: () =>
+                context.push(AppRoutes.collectionValue, extra: value),
           ),
         ),
         const SizedBox(height: AppSpacing.sm),
@@ -380,6 +379,19 @@ class _ValueResult extends StatelessWidget {
     );
   }
 }
+
+/// What to tell the user once the share sheet has resolved.
+///
+/// Shared by both export buttons so the two formats cannot report a cancelled
+/// share differently. [ShareOutcome.unknown] reads as success on purpose: the
+/// file was written and the sheet was offered, and on a platform that cannot
+/// report the choice, claiming a cancellation that may not have happened is the
+/// worse of the two errors.
+String _exportMessage(ShareOutcome outcome) => switch (outcome) {
+  ShareOutcome.shared ||
+  ShareOutcome.unknown => AppStrings.statisticsExportDoneMessage,
+  ShareOutcome.cancelled => AppStrings.statisticsExportCancelledMessage,
+};
 
 /// Writes the per-card figures behind the totals to their own CSV.
 ///
@@ -416,16 +428,18 @@ class _ValueExportButtonState extends ConsumerState<_ValueExportButton> {
     }
     if (!mounted) return;
     setState(() => _running = false);
+    // The message is chosen *after* the sheet resolves. It used to be fixed
+    // before the sheet even opened, so a cancelled share still claimed success.
     if (path != null) {
-      await SharePlus.instance.share(
-        ShareParams(
-          files: [XFile(path)],
-          subject: AppStrings.statisticsValueExportSubject,
-        ),
-      );
+      final outcome = await ref.read(fileShareProvider).shareFiles([
+        path,
+      ], subject: AppStrings.statisticsValueExportSubject);
+      message = _exportMessage(outcome);
     }
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
   }
 
   @override
@@ -488,15 +502,15 @@ class _ExportButtonState extends ConsumerState<_ExportButton> {
     // lives at isn't browsable, so sharing is how the user saves it to
     // Downloads/Drive/Files or sends it on.
     if (path != null) {
-      await SharePlus.instance.share(
-        ShareParams(
-          files: [XFile(path)],
-          subject: AppStrings.statisticsExportSubject,
-        ),
-      );
+      final outcome = await ref.read(fileShareProvider).shareFiles([
+        path,
+      ], subject: AppStrings.statisticsExportSubject);
+      message = _exportMessage(outcome);
     }
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
   }
 
   @override
@@ -584,7 +598,9 @@ class _ImportButtonState extends ConsumerState<_ImportButton> {
 
   void _say(String message) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
   }
 
   @override
@@ -632,7 +648,10 @@ class _ImportPreviewDialogState extends State<_ImportPreviewDialog> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             _Count(plan.newEntries, AppStrings.statisticsImportNewLabel),
-            _Count(plan.matchedEntries, AppStrings.statisticsImportMatchedLabel),
+            _Count(
+              plan.matchedEntries,
+              AppStrings.statisticsImportMatchedLabel,
+            ),
             _Count(preview.skipped, AppStrings.statisticsImportSkippedLabel),
             _Count(
               plan.setsUnresolved,
@@ -662,24 +681,18 @@ class _ImportPreviewDialogState extends State<_ImportPreviewDialog> {
                         contentPadding: EdgeInsets.zero,
                         value: option,
                         activeColor: palette.accent,
-                        title: Text(
-                          switch (option) {
-                            ImportMergeStrategy.keepExisting =>
-                              AppStrings.statisticsImportKeepOption,
-                            ImportMergeStrategy.sumQuantities =>
-                              AppStrings.statisticsImportSumOption,
-                          },
-                          style: TextStyle(color: palette.onSurface),
-                        ),
-                        subtitle: Text(
-                          switch (option) {
-                            ImportMergeStrategy.keepExisting =>
-                              AppStrings.statisticsImportKeepDetail,
-                            ImportMergeStrategy.sumQuantities =>
-                              AppStrings.statisticsImportSumDetail,
-                          },
-                          style: TextStyle(color: palette.onSurfaceMuted),
-                        ),
+                        title: Text(switch (option) {
+                          ImportMergeStrategy.keepExisting =>
+                            AppStrings.statisticsImportKeepOption,
+                          ImportMergeStrategy.sumQuantities =>
+                            AppStrings.statisticsImportSumOption,
+                        }, style: TextStyle(color: palette.onSurface)),
+                        subtitle: Text(switch (option) {
+                          ImportMergeStrategy.keepExisting =>
+                            AppStrings.statisticsImportKeepDetail,
+                          ImportMergeStrategy.sumQuantities =>
+                            AppStrings.statisticsImportSumDetail,
+                        }, style: TextStyle(color: palette.onSurfaceMuted)),
                       ),
                   ],
                 ),

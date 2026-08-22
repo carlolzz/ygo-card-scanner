@@ -128,7 +128,8 @@ class AppStrings {
   static const String collectionFiltersReset = 'Reset';
   static const String collectionFiltersAdvanced = 'Advanced filters';
   static const String collectionMinifyButton = 'View';
-  static const String collectionMinifyTooltip = 'Change how much detail is '
+  static const String collectionMinifyTooltip =
+      'Change how much detail is '
       'shown';
 
   static const String collectionFilterConditionLabel = 'Condition';
@@ -144,8 +145,7 @@ class AppStrings {
   static const String collectionFilterCardTypeLabel = 'Card type';
   // One control, because YGOPRODeck stores both in `cards.race` — the monster
   // type on a monster, the Spell/Trap type on a Spell or Trap.
-  static const String collectionFilterRaceLabel =
-      'Monster / Spell / Trap type';
+  static const String collectionFilterRaceLabel = 'Monster / Spell / Trap type';
   static const String collectionFilterAttributeLabel = 'Attribute';
   static const String collectionFilterArchetypeLabel = 'Archetype';
   static const String collectionFilterAtkLabel = 'ATK';
@@ -238,6 +238,17 @@ class AppStrings {
   static const String scanCameraOpening = 'Camera: opening…';
   static const String scanCameraAvailable = 'Camera: available';
 
+  // The readiness line doubles as a restart control, for the one camera failure
+  // nothing in the app can detect: `camera_android_camerax` blacking out the
+  // preview surface while frames keep arriving (flutter/flutter#27688). Until
+  // now the only documented remedy was closing the app.
+  //
+  // No "restarting…" message goes with it: the banner *is* the feedback. A tap
+  // flips this very line back to [scanCameraOpening] and puts the spinner up,
+  // which is both more visible than a SnackBar and in the place the user is
+  // already looking.
+  static const String scanRestartCameraTooltip = 'Restart the camera';
+
   // The status banner used to say `scanDetecting` for every unresolved frame,
   // including ones where the card had been found, rectified and hashed and only
   // the *match* had failed — so the app told the user to point at a card that
@@ -320,8 +331,13 @@ class AppStrings {
   // for a few milliseconds inside a detector isolate and is written nowhere.
   static const String scanCaptureButton = '[ save this frame ]';
   static const String scanCaptureSubject = 'YGO Scanner recognition sample';
-  static const String scanCaptureDoneMessage = 'Frame saved — pick where to '
+  static const String scanCaptureDoneMessage =
+      'Frame saved — pick where to '
       'send it.';
+  // Backing out of the share sheet used to report the line above, which then
+  // told the user to pick a destination they had just declined to pick — for
+  // files sitting where Android will not let them browse.
+  static const String scanCaptureCancelledMessage = 'Sharing cancelled.';
   static const String scanCaptureNothingMessage =
       'No frame has been ranked yet.';
   static const String scanCaptureFailedMessage = 'Could not save the frame.';
@@ -407,8 +423,13 @@ class AppStrings {
   static const String statisticsExportRunningMessage = 'Exporting…';
   static const String statisticsExportDoneMessage =
       'Exported — choose where to save it.';
+  // Backing out of the share sheet used to report the line above, telling the
+  // user to choose a destination they had just declined to choose — for a file
+  // written to the app-documents directory, which Android does not let them
+  // browse to. The file is deliberately left in place: exporting again reuses
+  // it, and deleting is the one irreversible option here.
+  static const String statisticsExportCancelledMessage = 'Export cancelled.';
   static const String statisticsExportSubject = 'YGO collection export';
-  static const String statisticsExportEmptyMessage = 'Nothing to export yet.';
   static const String statisticsExportFailedMessage =
       'Export failed. Please try again.';
 
@@ -446,6 +467,7 @@ class AppStrings {
   static const String statisticsValueSection = 'Collection value';
   static const String statisticsValueButton = 'Calculate collection value';
   static const String statisticsValueRefreshButton = 'Refresh prices';
+
   /// Labelled asymmetrically on purpose. Since step 26 the TCGplayer total
   /// prices each copy at the set and rarity recorded, while Cardmarket has no
   /// per-printing figure to use and stays the card-level floor — so calling

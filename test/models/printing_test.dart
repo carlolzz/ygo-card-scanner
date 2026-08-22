@@ -15,25 +15,45 @@ const _mirrorForceDarkSaviors = Printing(
   setName: 'Dark Saviors',
   rarity: 'Ultra Rare',
 );
-const _sparse = Printing(id: 3, passcode: '44095762', setName: 'Legendary Duelists');
+const _sparse = Printing(
+  id: 3,
+  passcode: '44095762',
+  setName: 'Legendary Duelists',
+);
 
-const _all = [
-  _mirrorForceMetalRaiders,
-  _mirrorForceDarkSaviors,
-  _sparse,
-];
+const _all = [_mirrorForceMetalRaiders, _mirrorForceDarkSaviors, _sparse];
 
 void main() {
   group('displayLabel', () {
     test('joins the fields the row carries', () {
       expect(
         _mirrorForceMetalRaiders.displayLabel,
-        'MRD-EN094 · Metal Raiders · Super Rare',
+        'MRD-EN094 (Super Rare) Metal Raiders',
       );
+    });
+
+    // Set names run long enough to be ellipsised in a picker row, and a list of
+    // reprints showing a truncated name and no rarity cannot be picked from —
+    // so the two fields that form the `printings` UNIQUE key lead the label and
+    // the human-readable gloss is what gets lost to the edge.
+    test('puts the rarity ahead of the set name', () {
+      final label = _mirrorForceMetalRaiders.displayLabel;
+      expect(label.indexOf('Super Rare'), lessThan(label.indexOf('Metal')));
     });
 
     test('omits missing fields', () {
       expect(_sparse.displayLabel, 'Legendary Duelists');
+    });
+
+    test('omits the parentheses along with a missing rarity', () {
+      expect(
+        const Printing(
+          passcode: '1',
+          setCode: 'LOB-001',
+          setName: 'Legend of Blue Eyes',
+        ).displayLabel,
+        'LOB-001 Legend of Blue Eyes',
+      );
     });
 
     test('is empty when the row carries none of the three', () {
@@ -65,7 +85,9 @@ void main() {
 
     test('matches on set name, case-insensitively', () {
       expect(filterPrintings(_all, 'metal'), [_mirrorForceMetalRaiders]);
-      expect(filterPrintings(_all, 'METAL RAIDERS'), [_mirrorForceMetalRaiders]);
+      expect(filterPrintings(_all, 'METAL RAIDERS'), [
+        _mirrorForceMetalRaiders,
+      ]);
     });
 
     test('matches on set code', () {
@@ -77,14 +99,12 @@ void main() {
     });
 
     test('every term must match, in any order', () {
-      expect(
-        filterPrintings(_all, 'raiders super'),
-        [_mirrorForceMetalRaiders],
-      );
-      expect(
-        filterPrintings(_all, 'super raiders'),
-        [_mirrorForceMetalRaiders],
-      );
+      expect(filterPrintings(_all, 'raiders super'), [
+        _mirrorForceMetalRaiders,
+      ]);
+      expect(filterPrintings(_all, 'super raiders'), [
+        _mirrorForceMetalRaiders,
+      ]);
       // "Super Rare" is Metal Raiders, "Dark Saviors" is Ultra — no row has both.
       expect(filterPrintings(_all, 'saviors super'), isEmpty);
     });

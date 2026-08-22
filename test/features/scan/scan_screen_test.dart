@@ -37,6 +37,15 @@ const _dmCard = YgoCard(
   type: 'Normal Monster',
 );
 
+/// The seed's multi-printing card, so the review gate renders its set picker —
+/// which is what makes the panel tall enough to reach the app bar.
+const _mirrorForce = '44095762';
+const _mirrorForceCard = YgoCard(
+  passcode: _mirrorForce,
+  name: 'Mirror Force',
+  type: 'Trap Card',
+);
+
 /// Resolves the agreed artwork run to a fixed candidate — no camera or index.
 class _FakeArtMatcher implements ArtMatcher {
   _FakeArtMatcher(this.result);
@@ -78,8 +87,9 @@ void main() {
           overrides: [
             appDatabaseProvider.overrideWith((ref) async => testDb),
             artReadingsProvider.overrideWith((ref) => artReadings.stream),
-            passcodeReadingsProvider
-                .overrideWith((ref) => const Stream<PasscodeReading>.empty()),
+            passcodeReadingsProvider.overrideWith(
+              (ref) => const Stream<PasscodeReading>.empty(),
+            ),
             artMatcherProvider.overrideWith(
               (ref) async => _FakeArtMatcher(const [ArtCandidate(_dmCard, 2)]),
             ),
@@ -123,6 +133,113 @@ void main() {
     });
   });
 
+  // **The reported overlap.** `Scaffold(extendBodyBehindAppBar: true)` with a
+  // transparent `AppBar` means the body owns the full screen, and the review
+  // panel's height is content-driven — set picker, three chip rows, a quantity
+  // row, two buttons — so it grew up behind the icons until the bug/save/
+  // keyboard actions were sitting on the card name and the set field.
+  //
+  // Both halves are asserted here because either alone leaves a way to collide:
+  // the panel is capped below the app bar, *and* the actions stand down while a
+  // result is on screen.
+  group('a review panel never collides with the app bar', () {
+    /// Drives the machine to a `matched` panel on a small phone viewport.
+    ///
+    /// **Mirror Force, not Dark Magician**, and 393x640 rather than the taller
+    /// screens the other geometry tests use. Both choices are what make this
+    /// measure anything: Mirror Force is the seed's multi-printing card, so the
+    /// review gate renders `_SetPicker` on top of the three chip rows, and it is
+    /// that full-height panel on a small screen which used to reach the icons. A
+    /// short panel on a tall screen never collided and the assertion would pass
+    /// with the cap removed.
+    ///
+    /// The status-bar inset is not decoration either: with
+    /// `extendBodyBehindAppBar`, `Scaffold` reports the body's `padding.top` as
+    /// `max(view padding, app bar height)`, so a zero inset measures a screen no
+    /// device has — the trap step 21 documented on the diagnostics band.
+    Future<void> pumpMatched(WidgetTester tester) async {
+      tester.view.devicePixelRatio = 1;
+      tester.view.physicalSize = const Size(393, 640);
+      tester.view.padding = const FakeViewPadding(top: 39);
+      addTearDown(tester.view.reset);
+
+      final artReadings = StreamController<ArtReading>.broadcast();
+      addTearDown(artReadings.close);
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            appDatabaseProvider.overrideWith((ref) async => testDb),
+            cameraServiceProvider.overrideWith((ref) => _InertCamera()),
+            artReadingsProvider.overrideWith((ref) => artReadings.stream),
+            passcodeReadingsProvider.overrideWith(
+              (ref) => const Stream<PasscodeReading>.empty(),
+            ),
+            artMatcherProvider.overrideWith(
+              (ref) async =>
+                  _FakeArtMatcher(const [ArtCandidate(_mirrorForceCard, 2)]),
+            ),
+          ],
+          child: MaterialApp.router(routerConfig: buildAppRouter()),
+        ),
+      );
+
+      await tester.tap(find.text(AppStrings.homeTileLogCards));
+      await pumpUntilSettled(tester);
+
+      for (var i = 0; i < 3; i++) {
+        artReadings.add(ArtReading(i, const HashMatch(_mirrorForce, 2)));
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+        await tester.pump(const Duration(milliseconds: 20));
+      }
+      await pumpUntilSettled(tester);
+      expect(find.text(AppStrings.scanConfirmButton), findsOneWidget);
+    }
+
+    testWidgets('the panel stops below the app bar', (tester) async {
+      await tester.runAsync(() async {
+        await pumpMatched(tester);
+
+        // `MediaQuery.padding.top` inside the body is the app bar's own extent
+        // under `extendBodyBehindAppBar` — i.e. the line the panel must not
+        // cross. Measured from the same source the panel reserves, so the two
+        // cannot disagree about where the app bar ends.
+        final context = tester.element(find.byType(ScanScreen));
+        final appBarBottom = MediaQuery.paddingOf(context).top;
+        final panel = tester.getRect(
+          find
+              .ancestor(
+                of: find.text(AppStrings.scanConfirmButton),
+                matching: find.byType(SafeArea),
+              )
+              .last,
+        );
+
+        expect(
+          panel.top,
+          greaterThanOrEqualTo(appBarBottom),
+          reason: 'the review panel must not grow up behind the app bar',
+        );
+      });
+    });
+
+    testWidgets('the app-bar actions stand down', (tester) async {
+      await tester.runAsync(() async {
+        await pumpMatched(tester);
+
+        // The diagnostics toggle and the manual-search shortcut were shown in
+        // every status; the passcode pin was already gated. The save-frame
+        // button only appears with diagnostics on, and is covered by the
+        // sample-capture test — what matters here is that the two unconditional
+        // ones are gone.
+        expect(find.byIcon(Icons.bug_report_outlined), findsNothing);
+        expect(find.byIcon(Icons.bug_report), findsNothing);
+        expect(find.byIcon(Icons.keyboard), findsNothing);
+        expect(find.byIcon(Icons.pin_outlined), findsNothing);
+      });
+    });
+  });
+
   // Every hit the index ranks is now presented, however far out it sat, so the
   // review gate has to (a) say when it is guessing and (b) always offer a way
   // off the guess — a single candidate used to hide the escape hatch entirely.
@@ -139,11 +256,13 @@ void main() {
           overrides: [
             appDatabaseProvider.overrideWith((ref) async => testDb),
             artReadingsProvider.overrideWith((ref) => artReadings.stream),
-            passcodeReadingsProvider
-                .overrideWith((ref) => const Stream<PasscodeReading>.empty()),
+            passcodeReadingsProvider.overrideWith(
+              (ref) => const Stream<PasscodeReading>.empty(),
+            ),
             artMatcherProvider.overrideWith(
               // Exactly one candidate: the case that used to render no escape.
-              (ref) async => _FakeArtMatcher(const [ArtCandidate(_dmCard, far)]),
+              (ref) async =>
+                  _FakeArtMatcher(const [ArtCandidate(_dmCard, far)]),
             ),
           ],
           child: MaterialApp.router(routerConfig: buildAppRouter()),
@@ -176,8 +295,9 @@ void main() {
           overrides: [
             appDatabaseProvider.overrideWith((ref) async => testDb),
             artReadingsProvider.overrideWith((ref) => artReadings.stream),
-            passcodeReadingsProvider
-                .overrideWith((ref) => const Stream<PasscodeReading>.empty()),
+            passcodeReadingsProvider.overrideWith(
+              (ref) => const Stream<PasscodeReading>.empty(),
+            ),
             artMatcherProvider.overrideWith(
               (ref) async => _FakeArtMatcher(const [ArtCandidate(_dmCard, 2)]),
             ),
@@ -208,10 +328,12 @@ void main() {
           overrides: [
             appDatabaseProvider.overrideWith((ref) async => testDb),
             // Both streams inert: this test is about chrome, not recognition.
-            artReadingsProvider
-                .overrideWith((ref) => const Stream<ArtReading>.empty()),
-            passcodeReadingsProvider
-                .overrideWith((ref) => const Stream<PasscodeReading>.empty()),
+            artReadingsProvider.overrideWith(
+              (ref) => const Stream<ArtReading>.empty(),
+            ),
+            passcodeReadingsProvider.overrideWith(
+              (ref) => const Stream<PasscodeReading>.empty(),
+            ),
           ],
           child: MaterialApp.router(routerConfig: buildAppRouter()),
         ),
@@ -250,10 +372,12 @@ void main() {
         ProviderScope(
           overrides: [
             appDatabaseProvider.overrideWith((ref) async => testDb),
-            artReadingsProvider
-                .overrideWith((ref) => const Stream<ArtReading>.empty()),
-            passcodeReadingsProvider
-                .overrideWith((ref) => const Stream<PasscodeReading>.empty()),
+            artReadingsProvider.overrideWith(
+              (ref) => const Stream<ArtReading>.empty(),
+            ),
+            passcodeReadingsProvider.overrideWith(
+              (ref) => const Stream<PasscodeReading>.empty(),
+            ),
           ],
           child: MaterialApp.router(routerConfig: buildAppRouter()),
         ),
@@ -343,10 +467,12 @@ void main() {
           overrides: [
             appDatabaseProvider.overrideWith((ref) async => testDb),
             cameraServiceProvider.overrideWith((ref) => _InertCamera()),
-            artReadingsProvider
-                .overrideWith((ref) => const Stream<ArtReading>.empty()),
-            passcodeReadingsProvider
-                .overrideWith((ref) => const Stream<PasscodeReading>.empty()),
+            artReadingsProvider.overrideWith(
+              (ref) => const Stream<ArtReading>.empty(),
+            ),
+            passcodeReadingsProvider.overrideWith(
+              (ref) => const Stream<PasscodeReading>.empty(),
+            ),
           ],
           child: MaterialApp.router(routerConfig: buildAppRouter()),
         ),
@@ -410,8 +536,9 @@ void main() {
             appDatabaseProvider.overrideWith((ref) async => testDb),
             cameraServiceProvider.overrideWith((ref) => _InertCamera()),
             artReadingsProvider.overrideWith((ref) => artReadings.stream),
-            passcodeReadingsProvider
-                .overrideWith((ref) => const Stream<PasscodeReading>.empty()),
+            passcodeReadingsProvider.overrideWith(
+              (ref) => const Stream<PasscodeReading>.empty(),
+            ),
           ],
           child: MaterialApp.router(routerConfig: buildAppRouter()),
         ),
@@ -465,7 +592,8 @@ void main() {
       expect(
         scrollable.position.maxScrollExtent,
         0,
-        reason: 'the whole readout has to be visible at once — the lines that '
+        reason:
+            'the whole readout has to be visible at once — the lines that '
             'matter most for tuning are the last ones, so a box that scrolls '
             'hides exactly the wrong half',
       );
@@ -500,8 +628,9 @@ void main() {
             appDatabaseProvider.overrideWith((ref) async => testDb),
             cameraServiceProvider.overrideWith((ref) => _InertCamera()),
             artReadingsProvider.overrideWith((ref) => artReadings.stream),
-            passcodeReadingsProvider
-                .overrideWith((ref) => const Stream<PasscodeReading>.empty()),
+            passcodeReadingsProvider.overrideWith(
+              (ref) => const Stream<PasscodeReading>.empty(),
+            ),
           ],
           child: MaterialApp.router(routerConfig: buildAppRouter()),
         ),
@@ -554,7 +683,8 @@ void main() {
       expect(
         tester.getRect(capture).overlaps(tester.getRect(box)),
         isFalse,
-        reason: 'the capture button must not be painted over the readout it '
+        reason:
+            'the capture button must not be painted over the readout it '
             'sits beside — it belongs in the app bar, where it costs none of '
             'the band above the reticle',
       );
@@ -579,10 +709,12 @@ void main() {
             appDatabaseProvider.overrideWith((ref) async => testDb),
             cameraServiceProvider.overrideWith((ref) => camera),
             // Keep both reading streams inert so no real matcher/index loads.
-            artReadingsProvider
-                .overrideWith((ref) => const Stream<ArtReading>.empty()),
-            passcodeReadingsProvider
-                .overrideWith((ref) => const Stream<PasscodeReading>.empty()),
+            artReadingsProvider.overrideWith(
+              (ref) => const Stream<ArtReading>.empty(),
+            ),
+            passcodeReadingsProvider.overrideWith(
+              (ref) => const Stream<PasscodeReading>.empty(),
+            ),
           ],
           child: MaterialApp.router(routerConfig: buildAppRouter()),
         ),
@@ -626,10 +758,12 @@ void main() {
           overrides: [
             appDatabaseProvider.overrideWith((ref) async => testDb),
             cameraServiceProvider.overrideWith((ref) => _InertCamera()),
-            artReadingsProvider
-                .overrideWith((ref) => const Stream<ArtReading>.empty()),
-            passcodeReadingsProvider
-                .overrideWith((ref) => const Stream<PasscodeReading>.empty()),
+            artReadingsProvider.overrideWith(
+              (ref) => const Stream<ArtReading>.empty(),
+            ),
+            passcodeReadingsProvider.overrideWith(
+              (ref) => const Stream<PasscodeReading>.empty(),
+            ),
           ],
           child: const MaterialApp(home: SizedBox.shrink()),
         ),
@@ -646,10 +780,12 @@ void main() {
           overrides: [
             appDatabaseProvider.overrideWith((ref) async => testDb),
             cameraServiceProvider.overrideWith((ref) => _InertCamera()),
-            artReadingsProvider
-                .overrideWith((ref) => const Stream<ArtReading>.empty()),
-            passcodeReadingsProvider
-                .overrideWith((ref) => const Stream<PasscodeReading>.empty()),
+            artReadingsProvider.overrideWith(
+              (ref) => const Stream<ArtReading>.empty(),
+            ),
+            passcodeReadingsProvider.overrideWith(
+              (ref) => const Stream<PasscodeReading>.empty(),
+            ),
           ],
           child: const MaterialApp(home: ScanScreen()),
         ),
@@ -659,7 +795,8 @@ void main() {
       expect(
         container.read(scanPausedProvider),
         isFalse,
-        reason: 'a keepAlive pause left set by the autoDispose controller kills '
+        reason:
+            'a keepAlive pause left set by the autoDispose controller kills '
             'recognition for the whole process — the reported "declining a card '
             'stops the camera working" bug, which only relaunching cleared',
       );
@@ -678,10 +815,12 @@ void main() {
           overrides: [
             appDatabaseProvider.overrideWith((ref) async => testDb),
             cameraServiceProvider.overrideWith((ref) => camera),
-            artReadingsProvider
-                .overrideWith((ref) => const Stream<ArtReading>.empty()),
-            passcodeReadingsProvider
-                .overrideWith((ref) => const Stream<PasscodeReading>.empty()),
+            artReadingsProvider.overrideWith(
+              (ref) => const Stream<ArtReading>.empty(),
+            ),
+            passcodeReadingsProvider.overrideWith(
+              (ref) => const Stream<PasscodeReading>.empty(),
+            ),
           ],
           child: const MaterialApp(home: ScanScreen()),
         ),
@@ -721,7 +860,8 @@ void main() {
         expect(
           find.text(AppStrings.scanDetecting),
           findsNothing,
-          reason: '"Point at a card" is false while nothing is streaming — the '
+          reason:
+              '"Point at a card" is false while nothing is streaming — the '
               'readiness line replaces the hint rather than sitting above it',
         );
       });
@@ -733,12 +873,57 @@ void main() {
         await pumpScan(tester, camera);
 
         camera.previewNotifier.value = readyController();
+        camera.streamingNotifier.value = true;
         await pumpUntilSettled(tester);
 
         // Both: the readiness answer stays on screen, and the hint returns.
         expect(find.text(AppStrings.scanCameraAvailable), findsOneWidget);
         expect(find.text(AppStrings.scanDetecting), findsOneWidget);
         expect(find.text(AppStrings.scanCameraOpening), findsNothing);
+      });
+    });
+
+    // The defect this replaces: readiness was `controller.value.isInitialized`,
+    // and `_start` publishes the controller before metering and before
+    // `startImageStream` — so the banner announced an available camera over a
+    // preview that had not streamed a single frame. `streaming` is the signal
+    // the diagnostics `cam:` line has always used, so the two now agree.
+    testWidgets(
+      'an initialized camera that has not streamed is still opening',
+      (tester) async {
+        await tester.runAsync(() async {
+          final camera = _InertCamera();
+          await pumpScan(tester, camera);
+
+          camera.previewNotifier.value = readyController();
+          await pumpUntilSettled(tester);
+
+          expect(find.text(AppStrings.scanCameraOpening), findsOneWidget);
+          expect(find.text(AppStrings.scanCameraAvailable), findsNothing);
+        });
+      },
+    );
+
+    // The one camera failure nothing in the app can detect: CameraX blacking
+    // out the preview surface while frames keep arriving. Every signal reads
+    // healthy, so the readiness line — what the user is staring at when the
+    // screen is black — is the control.
+    testWidgets('the readiness line restarts the camera when tapped', (
+      tester,
+    ) async {
+      await tester.runAsync(() async {
+        final camera = _InertCamera();
+        await pumpScan(tester, camera);
+
+        camera.previewNotifier.value = readyController();
+        camera.streamingNotifier.value = true;
+        await pumpUntilSettled(tester);
+
+        expect(camera.restarts, 0);
+        await tester.tap(find.text(AppStrings.scanCameraAvailable));
+        await pumpUntilSettled(tester);
+
+        expect(camera.restarts, 1);
       });
     });
 
@@ -783,8 +968,19 @@ class _ObservablePreview extends ValueNotifier<CameraController?> {
 class _InertCamera implements CameraService {
   final _ObservablePreview previewNotifier = _ObservablePreview();
 
+  /// What the readiness banner reads. Separate from [previewNotifier] because
+  /// the two genuinely differ on a device: the controller is published the
+  /// instant `initialize()` returns, and frames start arriving later.
+  final ValueNotifier<bool> streamingNotifier = ValueNotifier<bool>(false);
+
+  /// Counts [restart] calls, for the tap-to-restart affordance on the banner.
+  int restarts = 0;
+
   @override
   ValueListenable<CameraController?> get preview => previewNotifier;
+
+  @override
+  ValueListenable<bool> get streaming => streamingNotifier;
 
   @override
   Stream<InputImage> get frames => const Stream<InputImage>.empty();
@@ -800,6 +996,9 @@ class _InertCamera implements CameraService {
 
   @override
   set artCaptureEnabled(bool enabled) {}
+
+  @override
+  set frameProcessingEnabled(bool enabled) {}
 
   @override
   Future<void> setExposureCompensation(double ev) async {}
@@ -818,6 +1017,9 @@ class _InertCamera implements CameraService {
 
   @override
   Future<void> stop() async {}
+
+  @override
+  Future<void> restart() async => restarts++;
 
   @override
   Future<void> dispose() async {}

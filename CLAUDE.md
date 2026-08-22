@@ -2379,6 +2379,157 @@ order):
     off, `artAgreementFrames` at 2, every `FrameQualityTuning` threshold still
     uncalibrated on device, and whether `kPriceTtl` at 24 h is right.
 
+28. Twelfth on-device feedback pass — camera lifetime, honest readiness, share
+    cancellation, panel overlap ← done (verified: `flutter analyze` clean, full
+    `flutter test` green at **736 tests**, `pytest tools/` green). **No DB
+    migration, no schema change, no new dependency.** Nothing here touches the
+    descriptor, `assets/card_hashes.json`, the detection algorithm or any
+    shape/matching/quality threshold.
+    **The camera opens once per app run.** The whole chain below the scan screen
+    was autoDispose, so leaving Log Cards was a full teardown — screen unmounts →
+    `ScanController` → `artReadings` → `scanCamera` → its
+    `onDispose(camera.stop)` → `cameraServiceProvider` loses its last listener →
+    `service.dispose()` sets `_disposed` **permanently**. A re-entry could not
+    even reuse the instance; it built a new one and paid `initialize()` plus eight
+    metering round-trips and a `startImageStream` again, which is the reported
+    second of black on every return from Settings. `cameraService` and
+    `scanCamera` are now `@Riverpod(keepAlive: true)`; nothing reads `scanCamera`
+    before the first Log Cards entry, so the camera is *kept*, never opened early.
+    **The lifecycle signal had to move with it.** It came from a
+    `WidgetsBindingObserver` on `_ScanScreenState`, which only exists while that
+    screen is mounted — fine while the camera died with the screen, and nothing at
+    all once it outlives it: the camera would stay bound while the app sat in
+    recents. `ScanCameraActive` now owns an `AppLifecycleListener` in its own
+    `build()` with `ref.onDispose(listener.dispose)`, and is `keepAlive` for the
+    same reason. The provider that *means* "the camera should be running" owning
+    the signal that decides it is the smallest correct home, and it keeps `App`
+    stateless. The switch carries over verbatim, `inactive → active` included
+    (step 15's permission-dialog fix). `_ScanScreenState` drops the mixin and
+    keeps only its post-frame `ScanPaused` reset.
+    **New `CameraService.frameProcessingEnabled`, and it is not optional.** With
+    the camera live off-screen, `_onFrame` would keep doing a full-frame luma copy
+    (~1 MB/s at `artFrameInterval`) into a cache nobody polls, forever.
+    `ScanController` owns it — set in `build()`, cleared from `ref.onDispose` —
+    since that controller's lifetime *is* "a screen is scanning". Checked **after**
+    the arrival bookkeeping, so the watchdog still measures the camera and not our
+    own gating. Two traps found writing it: the service must be **captured** in
+    `build()` rather than `ref.read` again inside the callback (Riverpod asserts on
+    any `Ref` use from a life-cycle, `onDispose` included — the same rule that
+    forces the `ScanPaused` reset to happen on entry), and **`retry()` has to
+    re-arm it on the replacement service**, because invalidating
+    `cameraServiceProvider` builds a fresh one whose flag starts false while the
+    controller is not itself rebuilt — without that line a retry brought the camera
+    back and left recognition permanently inert.
+    **The camera freeze: two real bugs, both in the watchdog.**
+    - **A failed restart killed the watchdog permanently.** `_restart()` enqueues
+      `_stop` then `_start` un-awaited, and `_enqueue`'s chain swallows errors —
+      so a `_start` that threw (camera busy, permission revoked mid-session, a
+      CameraX bind failure) never reached the `_startWatchdog()` that used to sit
+      at its tail. `_controller` stayed null → `_streamingSince` null →
+      `health.sinceLastFrame` null → the periodic callback returned early forever.
+      **Camera dead, screen black, no error surfaced** (the throw never reaches
+      `scanCamera`, so no `ScanStatus.error` either) for the rest of the process.
+      The best candidate for the report.
+    - **A restart could reopen a camera the app had just released**, since
+      `_start` never consulted whether the camera was still wanted: a lifecycle
+      `_stop` landing between the restart's `_stop` and `_start` was simply undone.
+    One `_wantRunning` flag fixes both. `start()` sets it and **arms the watchdog
+    itself** — the ordering *is* the fix, since a watchdog created by a successful
+    start cannot recover a failed one; `stop()` clears it and cancels. `_start()`
+    early-returns when it is false. The decision moved into a new pure,
+    host-tested `cameraNeedsRestart` beside `cameraFrameStalled` (which is
+    unchanged and called from inside it), covering "wanted but no controller" as
+    well as the stall, per `card_quad.dart`'s reasoning: a mistake here does not
+    crash, it silently removes the only way back from a dead camera.
+    `_startInFlight` is required rather than defensive — opening a camera takes far
+    longer than one `cameraWatchdogInterval`, so without it every start would be
+    aborted by a restart of itself on the next tick.
+    **A third, silent failure is now visible**: `_onFrame`'s conversion `catch` and
+    the two `return null` paths dropped frames with no counter, which presents as
+    `cam: streaming f=<rising> Δ=<small>` with `frameSequence` frozen and nothing
+    ever recognised — and the watchdog cannot help, because frames genuinely are
+    arriving. `CameraHealth.droppedFrames` and an `x=<n>` field on the `cam:` line
+    (omitted at zero, like `r=`).
+    **And the one that cannot be fixed gets a button.** flutter/flutter#27688 —
+    CameraX blacking out the *preview surface* while analysis frames keep flowing —
+    is undetectable from Dart: every signal reads healthy and the screen is black.
+    New `CameraService.restart()`, surfaced by making the **readiness line
+    tappable** rather than adding a fifth app-bar action (with diagnostics on there
+    are already four, which overflows a 360pt bar). It is the right place on its
+    own merits: the line claiming the camera is available is exactly what the user
+    is staring at when it is not. No "restarting…" SnackBar — the banner flipping
+    back to `Camera: opening…` with its spinner is the feedback, in the place they
+    are already looking. `GETTING_STARTED.md`'s "close the app fully" now names it.
+    **`Camera: available` only once frames actually flow.** Readiness was
+    `controller.value.isInitialized`, and `_start` publishes the controller the
+    instant `initialize()` returns — before metering, before `startImageStream`,
+    deliberately, since the picture is worth showing that early. So the banner
+    announced an available camera over a preview that had not streamed anything.
+    New `ValueListenable<bool> streaming` on the interface, set on the **first
+    frame after a start** and cleared at the top of `_stop` (so a watchdog restart
+    correctly reads as opening); `_StatusBanner` subscribes to that one notifier
+    and drops the nested `ListenableBuilder` on the controller. This is the signal
+    `describeCameraHealth` has always used, so the plain-language line and the
+    `cam:` line now flip at the same moment instead of contradicting each other.
+    **The review panel and the app-bar icons, both halves.** `extendBodyBehindAppBar`
+    with a transparent `AppBar` means the body owns the full screen, and
+    `_MatchedPanel`'s height is content-driven — set picker, three chip rows,
+    quantity, two buttons — so it grew up behind the icons until bug/save/keyboard
+    sat on the card name and the set field. New `_ScanBottomPanel` extracts the
+    `Align(bottomCenter)` → rounded surface → `SafeArea(top: false)` shape the four
+    panels each repeated, and reserves `MediaQuery.padding.top` — which under
+    `extendBodyBehindAppBar` *already includes* `kToolbarHeight`, the same fact
+    `_TopOverlays` documents after step 19 found it being added twice. Nothing
+    overflows under the cap; the panels already scroll or use `Flexible`.
+    Separately, every app-bar action is now gated on the `scanning` predicate
+    `_TopOverlays` already computed, lifted to one local so the two cannot drift.
+    That **overrules step 19's deliberate decision** to leave the save-frame button
+    up during `matched`/`candidates`: `matcher.lastSample` survives a dismiss, so
+    the frame behind a wrong answer is still one tap away, and not overlapping the
+    form is worth more than saving that tap.
+    **Cancelling a share no longer reports success.** All three call sites chose
+    their SnackBar text the moment the file was written, then opened the sheet and
+    **discarded the `ShareResult`** — so swiping the sheet away still said
+    "Exported — choose where to save it." about a file in the app-documents
+    directory, which Android will not let the user browse to. New
+    `lib/data/export/file_share.dart` is a `FileShare` seam with our own
+    `ShareOutcome` enum, so `share_plus` stays out of the widget layer — same
+    pattern and same reason as `CsvFileSource`: the sheet is the one part that
+    cannot run in a widget test, and the logic on either side of it is exactly what
+    was wrong. `unknown` reads as success on purpose (the file was written and the
+    sheet was offered; claiming a cancellation that may not have happened is the
+    worse error), and the written file is **not** deleted — exporting again reuses
+    it, and deleting is the one irreversible option. The dead
+    `statisticsExportEmptyMessage` went with it. This is the first coverage the
+    export messaging has ever had.
+    **Not fixed, and not fixable**: being returned to the app after sharing to
+    Telegram. `file_selector_android 0.5.2+9` does not implement `getSaveLocation`,
+    so the base class's `UnimplementedError` stands and an SAF save dialog — which
+    *would* hand control straight back — is unavailable on Android. Once the target
+    app takes the intent it runs in its own task and Android returns to *its* back
+    stack. Nothing in Dart or the manifest changes that.
+    **`Printing.displayLabel` is now "SET-CODE (Rarity) Set Name"** (was
+    "SET-CODE · Set Name · Rarity"). Set names run long enough to be ellipsised in
+    a picker row, and a list of reprints showing a truncated name and *no rarity*
+    cannot be picked from — which is the entire job of that picker. Set code and
+    rarity together are the `printings` UNIQUE key, so the two fields that identify
+    the row lead it and the human-readable gloss is what gets lost to the edge.
+    Safe by construction: `filterPrintings` searches this string through
+    `matchesSearchTerms`, which is order-independent, so no query changes meaning.
+    `setLabel` is untouched (the detail screen gives rarity its own row).
+    **Verified to fail before being kept**: the panel-cap case with the padding
+    removed, and the camera-keepAlive guard reverted to `@riverpod`. The cap test
+    needed **Mirror Force on a 393x640 viewport** to mean anything — Dark Magician
+    has no printings, so `_SetPicker` self-hides and the short panel on a tall
+    screen never collided; it passed with the fix removed until both were changed.
+    **Still open**, unchanged: `maxHammingDistance` at 72,
+    `CardDetectionTuning.innerQuadMinAreaRatio` at 0.78, the passcode ROI filter
+    off, `artAgreementFrames` at 2, every `FrameQualityTuning` threshold still
+    uncalibrated on device, and whether `kPriceTtl` at 24 h is right. New and
+    accepted: while browsing the collection after a scan the camera stays bound and
+    the OS privacy indicator stays lit — the trade the "open for the whole
+    foreground" choice makes, held to an idle preview by `frameProcessingEnabled`.
+
 ## Standing rules
 
 - No ORM. Raw SQL in DAOs only. No SQL outside `lib/data/db/`.

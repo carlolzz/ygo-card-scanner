@@ -639,6 +639,11 @@ class ScanStatusBannerTokens {
   /// The busy spinner beside the hint.
   static const double spinnerSize = 16;
   static const double spinnerStrokeWidth = 2;
+
+  /// The restart glyph trailing the readiness line. Sized to that line rather
+  /// than to a tap target: the whole row is the hit area, so the icon only has
+  /// to say the row is tappable.
+  static const double restartIconSize = 13;
 }
 
 /// How the on-screen guide box relates to the region the detector searches.

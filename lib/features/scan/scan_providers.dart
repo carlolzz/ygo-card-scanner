@@ -1,4 +1,7 @@
-import 'package:flutter/painting.dart' show Size;
+// `widgets`, not the narrower `painting` this used to take `Size` from:
+// [ScanCameraActive] now owns an `AppLifecycleListener`.
+import 'package:flutter/widgets.dart'
+    show AppLifecycleListener, AppLifecycleState, Size;
 import 'package:riverpod_annotation/riverpod_annotation.dart';
 
 import '../../core/theme/tokens.dart';
@@ -23,12 +26,31 @@ class PasscodeReading {
   final String? passcode;
 }
 
-@riverpod
+/// The one camera, for the life of the process.
+///
+/// **`keepAlive`, and that is the whole fix for "the camera reloads every time I
+/// go back to Log Cards".** This used to be autoDispose, and the chain behind it
+/// meant leaving the screen was a full teardown: `ScanScreen` unmounts →
+/// [ScanController] disposes → `artReadings` disposes → [scanCamera] disposes →
+/// its `onDispose(camera.stop)` fires → this provider loses its last listener →
+/// `service.dispose()` sets `_disposed` **permanently**. Re-entry then built a
+/// brand-new service and paid `initialize()` plus eight metering round-trips and
+/// a `startImageStream` all over again — a visible second or two of black every
+/// time, for a round trip to Settings.
+///
+/// Now the camera opens on the first Log Cards entry of an app run and stays
+/// open until the app is backgrounded ([ScanCameraActive] owns that signal).
+/// The cost is a bound camera — and a lit privacy indicator — while browsing the
+/// collection afterwards; [CameraService.frameProcessingEnabled] is what keeps
+/// that to an idle preview rather than a running recognition pipeline.
+///
+/// `dispose`, not `stop`, on teardown: this now fires only on
+/// `ref.invalidate` (i.e. [ScanController.retry]) or when the container itself
+/// goes, so the frame stream can be closed for good. Releasing the camera on a
+/// mere background is [scanCamera]'s job, via `stop`.
+@Riverpod(keepAlive: true)
 CameraService cameraService(Ref ref) {
   final service = CameraScanService();
-  // `dispose`, not `stop`: this fires only when nothing scans any more (the
-  // scan screen is gone), so the frame stream can be closed for good. Releasing
-  // the camera on a mere background is [scanCamera]'s job, via `stop`.
   ref.onDispose(service.dispose);
   return service;
 }
@@ -40,13 +62,48 @@ PasscodeOcr passcodeOcr(Ref ref) {
   return ocr;
 }
 
-/// Whether the camera should be running. Flipped off by the scan screen when
-/// the app is backgrounded so the camera is released, and back on when it
-/// returns — [scanCamera] watches this and tears the camera down/up.
-@riverpod
+/// Whether the camera should be running: true while the app is in the
+/// foreground, false once it is genuinely backgrounded. [scanCamera] watches
+/// this and tears the camera down/up.
+///
+/// **It owns the lifecycle listener itself, and that is load-bearing.** This
+/// signal used to come from a [WidgetsBindingObserver] on `_ScanScreenState`,
+/// which only exists while the scan screen is mounted. That was fine while the
+/// camera died with the screen; now that it outlives the screen, there would be
+/// nothing left to release it on background — the camera would stay bound while
+/// the app sat in the recents list. The provider that *means* "the camera should
+/// be running" owning the signal that decides it is the smallest correct home,
+/// and it keeps `App` stateless.
+///
+/// `keepAlive` for the same reason as [cameraService]: an autoDispose notifier
+/// would be torn down between scan sessions, taking the listener with it and
+/// resetting the state — and it is read with `ref.read` from a callback, which
+/// holds no subscription of its own.
+///
+/// `inactive` deliberately keeps the camera: on first launch the OS
+/// camera-permission dialog briefly makes the app inactive, and releasing there
+/// (then restarting on resume) is exactly the churn that used to leave the
+/// preview dead until the screen was re-entered.
+@Riverpod(keepAlive: true)
 class ScanCameraActive extends _$ScanCameraActive {
   @override
-  bool build() => true;
+  bool build() {
+    final listener = AppLifecycleListener(onStateChange: _onLifecycleState);
+    ref.onDispose(listener.dispose);
+    return true;
+  }
+
+  void _onLifecycleState(AppLifecycleState lifecycle) {
+    switch (lifecycle) {
+      case AppLifecycleState.resumed:
+      case AppLifecycleState.inactive:
+        set(active: true);
+      case AppLifecycleState.hidden:
+      case AppLifecycleState.paused:
+      case AppLifecycleState.detached:
+        set(active: false);
+    }
+  }
 
   void set({required bool active}) => state = active;
 }
@@ -156,7 +213,13 @@ class PasscodeOcrRequested extends _$PasscodeOcrRequested {
 /// stopping the camera themselves, so one stream disposing can never release
 /// the camera out from under the other. It rebuilds — and so starts or stops
 /// the camera — only when [scanCameraActive] flips.
-@riverpod
+///
+/// `keepAlive` alongside [cameraService], and both halves are needed: a
+/// keepAlive service reached through an autoDispose gate would still be stopped
+/// the moment the scan screen's readers went away, and re-entry would still pay
+/// `initialize()`. Nothing reads this before the first Log Cards entry, so the
+/// camera is not opened at launch — only kept once opened.
+@Riverpod(keepAlive: true)
 Future<CameraService> scanCamera(Ref ref) async {
   final camera = ref.watch(cameraServiceProvider);
   ref.onDispose(camera.stop);

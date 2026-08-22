@@ -35,8 +35,10 @@ void main() {
     );
     addTearDown(container.dispose);
 
-    final subscription =
-        container.listen(hashIndexProvider, (previous, next) {});
+    final subscription = container.listen(
+      hashIndexProvider,
+      (previous, next) {},
+    );
     await container.read(hashIndexProvider.future);
     subscription.close();
     // Let a turn pass — an autoDispose provider is collected once nothing
@@ -60,8 +62,10 @@ void main() {
 
     // Constructing it is free — `IsolateCardDetector` spawns its worker lazily,
     // on the first detection — so simply reading the provider does no work.
-    final subscription =
-        container.listen(cardDetectorProvider, (previous, next) {});
+    final subscription = container.listen(
+      cardDetectorProvider,
+      (previous, next) {},
+    );
     final detector = container.read(cardDetectorProvider);
     subscription.close();
     await Future<void>.delayed(Duration.zero);
@@ -74,6 +78,39 @@ void main() {
           'The worker isolate is deliberately long-lived (see '
           'IsolateCardDetector); that only holds if the provider owning it is '
           'too, or every scan-screen entry pays an Isolate.spawn and handshake.',
+    );
+  });
+
+  // The camera is the most expensive of the three, and the last to be made to
+  // survive: `CameraController.initialize()` plus eight metering round-trips and
+  // a `startImageStream`, paid on every single entry to Log Cards because the
+  // whole chain below the screen was autoDispose. Leaving the screen ran
+  // `cameraService`'s `onDispose(service.dispose)`, which sets `_disposed`
+  // **permanently** — so a re-entry could not even reuse the instance, it had to
+  // build a new one.
+  test('the camera survives leaving and re-entering the scan screen', () async {
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+
+    // Constructing `CameraScanService` does no platform work — all hardware
+    // access is in `start()` — so reading the provider is inert on the host.
+    final subscription = container.listen(
+      cameraServiceProvider,
+      (previous, next) {},
+    );
+    final service = container.read(cameraServiceProvider);
+    subscription.close();
+    await Future<void>.delayed(Duration.zero);
+
+    expect(container.exists(cameraServiceProvider), isTrue);
+    expect(
+      container.read(cameraServiceProvider),
+      same(service),
+      reason:
+          'cameraServiceProvider must be keepAlive. As autoDispose, leaving Log '
+          'Cards disposed the service for good and every return paid '
+          'initialize() again — the reported "the camera has to reload every '
+          'time I come back" delay.',
     );
   });
 

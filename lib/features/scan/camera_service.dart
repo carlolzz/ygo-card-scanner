@@ -24,6 +24,51 @@ bool cameraFrameStalled({
   required bool initialized,
 }) => initialized && sinceLastFrame > ScanTuning.cameraFrameTimeout;
 
+/// The watchdog's whole decision: should the camera be torn down and reopened?
+///
+/// Pure and separate from [cameraFrameStalled] — which it wraps rather than
+/// replaces — for the reason `card_quad.dart` gives about its own thresholds: a
+/// mistake here does not crash, it silently removes the only path back from a
+/// dead camera. The `_startWatchdog` timer around it must stay trivial enough
+/// that reading it is proof.
+///
+/// Two situations restart, and the first is the one that used to be missed:
+///
+/// * **[wantRunning] but no controller.** A `_start` that throws (camera busy,
+///   permission revoked mid-session, a CameraX bind failure) has its error
+///   swallowed by the serialising queue, so nothing retries it and nothing
+///   surfaces an error state either. Before this case existed the watchdog was
+///   also *armed* by the tail of a successful `_start`, so a failed one left no
+///   watchdog at all: the camera was dead, black and silent for the rest of the
+///   process. Frame timing says nothing here — there is no stream to time — so
+///   the absence of a controller is the whole signal.
+/// * **A controller that has stopped delivering frames**, i.e.
+///   [cameraFrameStalled]. [sinceLastFrame] is null before streaming begins,
+///   which is not a stall: the camera is still opening.
+///
+/// [startInFlight] suppresses both, and is not optional: opening a camera takes
+/// well over one [ScanTuning.cameraWatchdogInterval], so without it every start
+/// would be interrupted by a restart of itself on the very next tick.
+///
+/// Callers still gate the result on the doubling restart backoff, so a camera
+/// that is genuinely gone is not reopened every [ScanTuning.cameraWatchdogInterval]
+/// forever.
+bool cameraNeedsRestart({
+  required bool wantRunning,
+  required bool startInFlight,
+  required bool hasController,
+  required Duration? sinceLastFrame,
+  required bool initialized,
+}) {
+  if (!wantRunning || startInFlight) return false;
+  if (!hasController) return true;
+  if (sinceLastFrame == null) return false;
+  return cameraFrameStalled(
+    sinceLastFrame: sinceLastFrame,
+    initialized: initialized,
+  );
+}
+
 /// A snapshot of what the camera is actually doing, for the scan screen's
 /// diagnostics readout.
 ///
@@ -38,6 +83,7 @@ class CameraHealth {
     required this.framesSeen,
     required this.sinceLastFrame,
     required this.restarts,
+    this.droppedFrames = 0,
   });
 
   /// The controller exists and has finished `initialize()`.
@@ -56,6 +102,15 @@ class CameraHealth {
 
   /// How many times the watchdog has restarted a stalled camera.
   final int restarts;
+
+  /// Frames the plugin delivered that could not be converted, and were dropped.
+  ///
+  /// Its own field because this failure is otherwise *invisible*: the camera is
+  /// healthy by every other measure — `streaming`, `framesSeen` rising, the gap
+  /// small — while nothing is ever recognised, because the frame never reaches
+  /// either cache. The watchdog cannot help (frames genuinely are arriving), so
+  /// the readout is the only place it can show up.
+  final int droppedFrames;
 }
 
 /// One dense line describing [health], for the scan screen's diagnostics box.
@@ -64,9 +119,10 @@ class CameraHealth {
 /// point of this line is that it can be trusted when a user reports what the
 /// overlay said.
 ///
-/// Reads as `cam: streaming  f=124  Δ=180ms  r=1` — state, frames delivered,
-/// gap since the last one, watchdog restarts. `r=` is omitted while zero (the
-/// normal case) so a non-zero value stands out.
+/// Reads as `cam: streaming  f=124  Δ=180ms  r=1  x=3` — state, frames
+/// delivered, gap since the last one, watchdog restarts, frames that failed to
+/// convert. `r=` and `x=` are omitted while zero (the normal case) so a non-zero
+/// value stands out.
 String describeCameraHealth(CameraHealth health) {
   final since = health.sinceLastFrame;
   final state = switch (health) {
@@ -85,6 +141,7 @@ String describeCameraHealth(CameraHealth health) {
     'f=${health.framesSeen}',
     if (since != null) 'Δ=${since.inMilliseconds}ms',
     if (health.restarts > 0) 'r=${health.restarts}',
+    if (health.droppedFrames > 0) 'x=${health.droppedFrames}',
   ].join('  ');
 }
 
@@ -127,6 +184,22 @@ abstract class CameraService {
   /// preview became available.
   ValueListenable<CameraController?> get preview;
 
+  /// Whether frames are actually arriving: false until the first one lands after
+  /// a [start], and false again from the moment [stop] runs (so a watchdog
+  /// restart correctly reads as "opening" while it happens).
+  ///
+  /// **Not the same as [preview] being non-null**, and the difference is the
+  /// point. [start] publishes the controller as soon as `initialize()` returns —
+  /// before metering, before `startImageStream` — because the picture is useful
+  /// that early. Readiness reported from *that* told the user the camera was
+  /// available while nothing had streamed yet. This is the honest signal, and
+  /// the one `describeCameraHealth`'s `cam:` line has always used.
+  ///
+  /// A [ValueListenable] for the same load-bearing reason as [preview]: the
+  /// service instance is handed out once and never republished, so a widget
+  /// sampling a getter would latch whatever was true when it first built.
+  ValueListenable<bool> get streaming;
+
   /// The most recent frame reduced to luma, for artwork recognition, or null
   /// before the first frame. Only maintained while [artCaptureEnabled] is on.
   ArtFrame? get latestArtFrame;
@@ -154,6 +227,19 @@ abstract class CameraService {
   /// [ScanTuning.ocrFrameInterval] when off.
   set artCaptureEnabled(bool enabled);
 
+  /// Whether an arriving frame should be converted at all.
+  ///
+  /// The camera now outlives the scan screen — it opens once and stays open for
+  /// the whole foreground — so there are long stretches with a live stream and
+  /// nobody reading it. Each conversion is a full-frame copy (~1 MB/s at
+  /// [ScanTuning.artFrameInterval]), and doing it for a cache nothing polls is
+  /// pure waste. Owned by `ScanController`, which is the thing whose lifetime
+  /// actually means "a screen is scanning".
+  ///
+  /// Frame *arrival* bookkeeping still runs while this is off, so the watchdog
+  /// keeps measuring the camera rather than our own gating.
+  set frameProcessingEnabled(bool enabled);
+
   /// Applies an exposure compensation of [ev] stops, clamped to what the device
   /// supports. Zero restores the metered exposure.
   ///
@@ -177,6 +263,16 @@ abstract class CameraService {
   /// than once, including before [start].
   Future<void> stop();
 
+  /// Releases and immediately reopens the camera.
+  ///
+  /// The user-facing counterpart to the watchdog, and it exists because one
+  /// failure mode is undetectable from Dart: `camera_android_camerax` can black
+  /// out the *preview surface* while the analysis stream keeps delivering
+  /// (flutter/flutter#27688). Every signal the app has says healthy — frames
+  /// arriving, recognition working — and the screen is black. Until now the only
+  /// remedy documented anywhere was "close the app fully and reopen".
+  Future<void> restart();
+
   /// Permanently tears the service down: releases the camera *and* closes the
   /// frame stream. Called once, when the owning provider disposes. A stopped
   /// service can be restarted; a disposed one cannot.
@@ -198,10 +294,30 @@ class CameraScanService implements CameraService {
   InputImage? _latestInputImage;
   int _frameSequence = 0;
   bool _artCaptureEnabled = true;
+  bool _frameProcessingEnabled = false;
+
+  /// Whether the camera is *meant* to be running: set by [start], cleared by
+  /// [stop]. Two things depend on it, and both used to be broken without it.
+  ///
+  /// [_start] consults it, so a restart enqueued by the watchdog can no longer
+  /// undo a [stop] that landed between the restart's `_stop` and its `_start` —
+  /// which reopened the camera while the app was backgrounded.
+  ///
+  /// And the watchdog consults it (via [cameraNeedsRestart]) to tell "no
+  /// controller because we were asked to release it" from "no controller because
+  /// opening it failed", which is what makes recovering from the latter possible
+  /// at all.
+  bool _wantRunning = false;
+
+  /// True for the duration of a [_start]. The watchdog stands down while it is
+  /// set — opening a camera takes far longer than one watchdog interval, so a
+  /// start would otherwise be aborted by a restart of itself.
+  bool _startInFlight = false;
 
   /// Frame *arrival* bookkeeping, which is what the watchdog judges — distinct
   /// from [_lastEmit], the throttle's own clock.
   int _framesSeen = 0;
+  int _droppedFrames = 0;
   DateTime? _lastFrameAt;
   DateTime? _streamingSince;
 
@@ -231,11 +347,17 @@ class CameraScanService implements CameraService {
   final ValueNotifier<CameraController?> _preview =
       ValueNotifier<CameraController?>(null);
 
+  /// Never disposed, for exactly the reason [_preview] is not.
+  final ValueNotifier<bool> _streaming = ValueNotifier<bool>(false);
+
   @override
   Stream<InputImage> get frames => _frames.stream;
 
   @override
   ValueListenable<CameraController?> get preview => _preview;
+
+  @override
+  ValueListenable<bool> get streaming => _streaming;
 
   @override
   ArtFrame? get latestArtFrame => _latestArtFrame;
@@ -250,6 +372,9 @@ class CameraScanService implements CameraService {
   set artCaptureEnabled(bool enabled) => _artCaptureEnabled = enabled;
 
   @override
+  set frameProcessingEnabled(bool enabled) => _frameProcessingEnabled = enabled;
+
+  @override
   CameraHealth get health {
     final controller = _controller;
     final reference = _lastFrameAt ?? _streamingSince;
@@ -257,14 +382,42 @@ class CameraScanService implements CameraService {
       initialized: controller?.value.isInitialized ?? false,
       streaming: _streamingSince != null,
       framesSeen: _framesSeen,
-      sinceLastFrame:
-          reference == null ? null : DateTime.now().difference(reference),
+      sinceLastFrame: reference == null
+          ? null
+          : DateTime.now().difference(reference),
       restarts: _restarts,
+      droppedFrames: _droppedFrames,
     );
   }
 
   @override
-  Future<void> start() => _enqueue(_start);
+  Future<void> start() {
+    // Set *before* enqueuing, not inside [_start]: the flag says what the app
+    // wants, and it has to be true by the time the watchdog below first ticks —
+    // which can be long before a queued `_start` gets its turn.
+    _wantRunning = true;
+    // Armed here rather than at the tail of a successful [_start], which is the
+    // fix for the worst version of this bug: a `_start` that threw left no
+    // watchdog behind, so nothing ever retried and the camera stayed black for
+    // the rest of the process. Restarting it is now the watchdog's job in both
+    // senses — stalled *and* never-opened.
+    _startWatchdog();
+    return _enqueue(_start);
+  }
+
+  @override
+  Future<void> restart() {
+    _wantRunning = true;
+    // A user-initiated restart is not a backoff attempt: it is the answer to a
+    // symptom the watchdog cannot see, so it must never be delayed or skipped by
+    // the automatic path's rate limiting, and it must leave that limiting reset
+    // for whatever comes next.
+    _restartBackoff = ScanTuning.cameraWatchdogInterval;
+    _lastRestartAt = null;
+    _startWatchdog();
+    _enqueue(_stop);
+    return _enqueue(_start);
+  }
 
   /// The device's camera list, resolved once per process.
   ///
@@ -279,7 +432,22 @@ class CameraScanService implements CameraService {
   static List<CameraDescription>? _cachedCameras;
 
   Future<void> _start() async {
-    if (_disposed || _controller != null) return;
+    // `!_wantRunning` is the guard that stops a watchdog restart from undoing a
+    // [stop] that landed between the restart's `_stop` and its `_start` — which
+    // reopened the camera while the app was backgrounded.
+    if (_disposed || !_wantRunning || _controller != null) return;
+    _startInFlight = true;
+    try {
+      await _openCamera();
+    } finally {
+      // In a `finally` so a throw (denied permission, camera busy, a CameraX
+      // bind failure) still hands the watchdog back its job. That is the whole
+      // recovery path: the error itself is swallowed by the queue.
+      _startInFlight = false;
+    }
+  }
+
+  Future<void> _openCamera() async {
     // No race: [_enqueue] serialises every start against every other start.
     final cameras = _cachedCameras ??= await availableCameras();
     if (cameras.isEmpty) {
@@ -328,7 +496,9 @@ class CameraScanService implements CameraService {
     await _meter(controller);
     _streamingSince = DateTime.now();
     _lastFrameAt = null;
-    _startWatchdog();
+    // `streaming` deliberately stays false until a frame actually *arrives* —
+    // see [CameraService.streaming]. `startImageStream` returning proves only
+    // that CameraX accepted the binding.
   }
 
   /// Points focus and exposure at the centre of the frame, where the guide box
@@ -399,6 +569,15 @@ class CameraScanService implements CameraService {
     _lastFrameAt = now;
     // A delivered frame proves the camera is alive, so spend any restart backoff.
     _restartBackoff = ScanTuning.cameraWatchdogInterval;
+    // …and it is the only thing that does, which is why readiness is published
+    // from here and not from `startImageStream` returning.
+    if (!_streaming.value) _streaming.value = true;
+
+    // Nothing is scanning: the camera stays open across screens now, and a
+    // conversion for a cache nobody polls is a full-frame copy thrown away. The
+    // arrival bookkeeping above still runs, so the watchdog keeps measuring the
+    // camera rather than this gate.
+    if (!_frameProcessingEnabled) return;
 
     // Time-throttle: recognition is far slower than the camera's frame rate,
     // and the human flipping cards is the real bottleneck (~1 card/sec).
@@ -417,7 +596,10 @@ class CameraScanService implements CameraService {
     if (now.difference(_lastEmit) < interval) return;
 
     final rotation = _rotationDegrees(image);
-    if (rotation == null) return;
+    if (rotation == null) {
+      _droppedFrames++;
+      return;
+    }
 
     // Conversion is the one thing here that can throw on an unexpected buffer
     // layout (`lumaFromYPlane` indexes by `bytesPerRow`), and a throw inside a
@@ -442,10 +624,16 @@ class CameraScanService implements CameraService {
     } catch (_) {
       // A malformed frame is not fatal and not actionable: drop it *without*
       // spending the throttle window, so the next frame is tried immediately
-      // rather than a whole interval later.
+      // rather than a whole interval later. Counted, though — a frame layout
+      // this never accepts is otherwise indistinguishable from a healthy camera
+      // that simply never sees a card.
+      _droppedFrames++;
       return;
     }
-    if (art == null && input == null) return;
+    if (art == null && input == null) {
+      _droppedFrames++;
+      return;
+    }
 
     // Only a frame we actually delivered consumes the throttle window.
     _lastEmit = now;
@@ -463,24 +651,33 @@ class CameraScanService implements CameraService {
   // Watchdog.
   // ---------------------------------------------------------------------------
 
-  /// Watches for the image stream dying and restarts the camera when it does.
+  /// Watches for the camera dying and reopens it when it does.
   ///
-  /// Purely a mitigation for `camera_android_camerax`, whose analyzer stops
+  /// Partly a mitigation for `camera_android_camerax`, whose analyzer stops
   /// delivering frames at random (flutter/flutter#152763) and whose preview can
   /// black out under `startImageStream` (flutter/flutter#27688) — both of which
   /// reach the user as "the camera is bugged" or a permanent
   /// "no camera frame yet". Neither is fixable from Dart; noticing is.
   ///
+  /// And partly this app's own recovery path: **armed by [start], not by the end
+  /// of a successful [_start]**. That ordering is the whole point. A `_start`
+  /// that throws has its error swallowed by [_enqueue]'s chain, so it surfaces
+  /// nowhere — and while the watchdog was armed at the tail of `_start`, a
+  /// throw meant no watchdog was ever created, nothing retried, and the camera
+  /// stayed black and silent for the rest of the process with every on-screen
+  /// signal green.
+  ///
   /// The restart goes through [_enqueue], so it can never interleave with a real
-  /// [start]/[stop] (the lifecycle observer's, say).
+  /// [start]/[stop] (the lifecycle listener's, say).
   void _startWatchdog() {
     _watchdog?.cancel();
     _watchdog = Timer.periodic(ScanTuning.cameraWatchdogInterval, (_) {
       final snapshot = health;
-      final since = snapshot.sinceLastFrame;
-      if (since == null) return;
-      if (!cameraFrameStalled(
-        sinceLastFrame: since,
+      if (!cameraNeedsRestart(
+        wantRunning: _wantRunning,
+        startInFlight: _startInFlight,
+        hasController: _controller != null,
+        sinceLastFrame: snapshot.sinceLastFrame,
         initialized: snapshot.initialized,
       )) {
         return;
@@ -518,10 +715,18 @@ class CameraScanService implements CameraService {
     if (image.planes.isEmpty) return null;
     final plane = image.planes.first;
     final luma = Platform.isAndroid
-        ? lumaFromYPlane(plane.bytes, image.width, image.height,
-            plane.bytesPerRow)
-        : lumaFromBgra(plane.bytes, image.width, image.height,
-            plane.bytesPerRow);
+        ? lumaFromYPlane(
+            plane.bytes,
+            image.width,
+            image.height,
+            plane.bytesPerRow,
+          )
+        : lumaFromBgra(
+            plane.bytes,
+            image.width,
+            image.height,
+            plane.bytesPerRow,
+          );
     return ArtFrame(
       luma: luma,
       width: image.width,
@@ -531,12 +736,19 @@ class CameraScanService implements CameraService {
   }
 
   @override
-  Future<void> stop() => _enqueue(_stop);
+  Future<void> stop() {
+    // Cleared here rather than inside [_stop], which is also the first half of
+    // every restart: this is the one call that means "the app no longer wants a
+    // camera", and it is what [_start] and the watchdog both consult.
+    _wantRunning = false;
+    _stopWatchdog();
+    return _enqueue(_stop);
+  }
 
   Future<void> _stop() async {
-    _stopWatchdog();
     _streamingSince = null;
     _lastFrameAt = null;
+    _streaming.value = false;
     final controller = _controller;
     _controller = null;
     // Retract the preview *before* disposing, so nothing can paint a disposed
@@ -558,10 +770,19 @@ class CameraScanService implements CameraService {
   }
 
   @override
-  Future<void> dispose() => _enqueue(_dispose);
+  Future<void> dispose() {
+    // Both flags immediately, not just inside the queued [_dispose]: the queue
+    // may be several awaited platform round-trips deep, and nothing should be
+    // restarted on the way there.
+    _wantRunning = false;
+    _stopWatchdog();
+    return _enqueue(_dispose);
+  }
 
   Future<void> _dispose() async {
     _disposed = true;
+    _wantRunning = false;
+    _stopWatchdog();
     await _stop();
     if (!_frames.isClosed) await _frames.close();
   }

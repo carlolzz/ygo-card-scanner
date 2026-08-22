@@ -26,16 +26,30 @@ abstract class Printing with _$Printing {
     rarity: map['rarity'] as String?,
   );
 
-  /// "SET-CODE · Set Name · Rarity", omitting whatever this row doesn't carry.
+  /// "SET-CODE (Rarity) Set Name", omitting whatever this row doesn't carry.
   /// The single place a printing is formatted for display, shared by the scan
   /// review gate's set picker and the collection edit sheet. Empty when the row
   /// carries none of the three (callers substitute their own "no set" label).
   ///
-  /// Includes the rarity because [filterPrintings] searches this string — a
-  /// user narrowing the picker types "raiders super". Where rarity is shown as
-  /// a field of its own, use [setLabel] instead.
+  /// **Rarity sits second, not last, and that is the whole reason for this
+  /// ordering.** Set names run long ("Legendary Collection 4: Joey's World Mega
+  /// Pack"), so a rarity trailing them was the first thing an ellipsis ate — and
+  /// a list of reprints where every row shows a truncated set name and no rarity
+  /// is a list you cannot pick from, which is exactly what the picker is for.
+  /// Set code and rarity together are the `printings` UNIQUE key, so the two
+  /// fields that actually identify the row now lead it; the set name is the
+  /// human-readable gloss and is the right thing to lose to the edge.
+  ///
+  /// Parenthesised rather than a third `·`-separated field because it is now
+  /// interrupting the code→name pair rather than following it.
+  ///
+  /// Includes the rarity at all because [filterPrintings] searches this string —
+  /// a user narrowing the picker types "raiders super", and the shared
+  /// [matchesSearchTerms] rule is order-independent, so this reordering does not
+  /// change what any query matches. Where rarity is shown as a field of its own,
+  /// use [setLabel] instead.
   String get displayLabel =>
-      [setCode, setName, rarity].whereType<String>().join(' · ');
+      [?setCode, if (rarity != null) '($rarity)', ?setName].join(' ');
 
   /// "SET-CODE · Set Name" — [displayLabel] without the rarity, for screens
   /// that give rarity a row of its own rather than trailing it onto the set.

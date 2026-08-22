@@ -6,7 +6,10 @@ import 'package:ygo_scanner/core/search_terms.dart';
 /// these pin the rule itself, now that the collection filter sheet's set box
 /// shares it and a change here would silently alter both.
 void main() {
-  const label = 'MRD-EN094 · Metal Raiders · Super Rare';
+  // Shaped like a real `Printing.displayLabel`. The rule is order-independent,
+  // so it is unaffected by that label's field order — which is exactly why
+  // reordering it was safe.
+  const label = 'MRD-EN094 (Super Rare) Metal Raiders';
 
   test('a blank query matches everything', () {
     expect(matchesSearchTerms(label, ''), isTrue);
@@ -32,8 +35,10 @@ void main() {
   });
 
   test('terms match mid-word, so a partial name still finds its set', () {
-    expect(matchesSearchTerms('Legend of Blue Eyes White Dragon', 'blue ey'),
-        isTrue);
+    expect(
+      matchesSearchTerms('Legend of Blue Eyes White Dragon', 'blue ey'),
+      isTrue,
+    );
   });
 
   test('nothing matches when a term is absent', () {

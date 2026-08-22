@@ -73,8 +73,36 @@ class ScanController extends _$ScanController {
         loading: () {},
       );
     });
+    // This controller's lifetime *is* "a screen is scanning" — it is autoDispose
+    // and the screen watches it — so it owns whether arriving frames are
+    // converted at all. The camera itself now outlives the screen (see
+    // [cameraService]), and a full-frame copy every
+    // [ScanTuning.artFrameInterval] into a cache nobody polls is pure waste.
+    //
+    // A direct field write on the service rather than a watched provider, for
+    // exactly the reason [_setArtCapture] documents: watching would rebuild
+    // `cameraServiceProvider` and restart the camera.
+    //
+    // The instance is **captured here**, not read again in the callback:
+    // Riverpod asserts on any `Ref` use from inside a life-cycle, `onDispose`
+    // included — the same rule that forces `_ScanScreenState` to clear
+    // [ScanPaused] on entry rather than exit. Capturing is also harmless when
+    // [retry] has replaced the service in the meantime, since flipping a flag on
+    // a service nobody holds any more does nothing.
+    final camera = ref.read(cameraServiceProvider);
+    camera.frameProcessingEnabled = true;
+    ref.onDispose(() => camera.frameProcessingEnabled = false);
     return _initialState();
   }
+
+  /// Releases and reopens the camera at the user's request.
+  ///
+  /// Distinct from [retry], which rebuilds the whole pipeline from an error
+  /// state: this is for the camera that is *not* reporting an error — the
+  /// CameraX preview surface blacking out while frames keep arriving
+  /// (flutter/flutter#27688), which no signal the app has can detect. Nothing
+  /// about the scan state changes; the picture is the only thing that was wrong.
+  Future<void> restartCamera() => ref.read(cameraServiceProvider).restart();
 
   /// Pauses while the error panel is up, which is correct — and backing out of
   /// that panel without tapping Retry is covered by the reset the scan screen
@@ -190,7 +218,8 @@ class ScanController extends _$ScanController {
       // Distinguish "nothing there" from "a card is right here and I can't name
       // it". Both leave the machine in `detecting`; only the second is worth
       // saying something about, and it used to render "Point at a card".
-      final sawCard = reading.status == ArtFrameStatus.detected ||
+      final sawCard =
+          reading.status == ArtFrameStatus.detected ||
           reading.status == ArtFrameStatus.lowQuality;
       final unmatched = sawCard ? s.unmatchedStreak + 1 : 0;
       state = s.copyWith(
@@ -234,7 +263,8 @@ class ScanController extends _$ScanController {
     }
 
     // Disagreement with the run in progress: discard it and start fresh.
-    if (s.artAgreementBuffer.isNotEmpty && s.artAgreementBuffer.last != passcode) {
+    if (s.artAgreementBuffer.isNotEmpty &&
+        s.artAgreementBuffer.last != passcode) {
       state = s.copyWith(
         status: ScanStatus.reading,
         artAgreementBuffer: const [],
@@ -724,7 +754,9 @@ class ScanController extends _$ScanController {
         state.matchedIndexPasscode ??
         state.matchedCard?.passcode ??
         state.unknownPasscode ??
-        (state.candidates.isEmpty ? null : state.candidates.first.indexPasscode);
+        (state.candidates.isEmpty
+            ? null
+            : state.candidates.first.indexPasscode);
     _setPaused(paused: false);
     state = state.copyWith(
       status: ScanStatus.detecting,
@@ -764,5 +796,12 @@ class ScanController extends _$ScanController {
     ref.invalidate(hashIndexProvider);
     ref.invalidate(passcodeReadingsProvider);
     ref.invalidate(artReadingsProvider);
+    // Re-arm frame processing on the *replacement* service. Invalidating above
+    // built a fresh [CameraScanService], and its `frameProcessingEnabled`
+    // starts false — while this controller, which is what normally turns it on,
+    // is not itself rebuilt by a retry. Without this line a retry brought the
+    // camera back and left recognition permanently inert, which is the shape of
+    // bug this whole flag has to be careful about.
+    ref.read(cameraServiceProvider).frameProcessingEnabled = true;
   }
 }

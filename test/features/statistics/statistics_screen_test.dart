@@ -1,10 +1,15 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
+import 'package:plugin_platform_interface/plugin_platform_interface.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:ygo_scanner/core/constants.dart';
 import 'package:ygo_scanner/data/db/dao/collection_dao.dart';
 import 'package:ygo_scanner/data/db/database.dart';
+import 'package:ygo_scanner/data/export/file_share.dart';
 import 'package:ygo_scanner/data/import/csv_file_source.dart';
 import 'package:ygo_scanner/data/seed/fake_collection_seed.dart';
 import 'package:ygo_scanner/features/statistics/statistics_providers.dart';
@@ -30,6 +35,37 @@ class _FakeCsvSource implements CsvFileSource {
     if (contents == null) return null;
     return PickedCsv(name: 'collection.csv', contents: contents!);
   }
+}
+
+/// Stands in for the OS share sheet — the export's equivalent of
+/// [_FakeCsvSource], and the reason that seam exists at all: the message shown
+/// afterwards used to be chosen before the sheet even opened, so there was no
+/// way to reach the cancelled branch from a test, and no way to notice it was
+/// missing.
+class _FakeFileShare implements FileShare {
+  _FakeFileShare(this.outcome);
+
+  final ShareOutcome outcome;
+  var shareCount = 0;
+  List<String> lastPaths = const [];
+
+  @override
+  Future<ShareOutcome> shareFiles(List<String> paths, {String? subject}) async {
+    shareCount++;
+    lastPaths = paths;
+    return outcome;
+  }
+}
+
+/// Redirects `getApplicationDocumentsDirectory()` to a real temp dir so the
+/// exporter can write its file in the test environment.
+class _FakePathProvider extends PathProviderPlatform
+    with MockPlatformInterfaceMixin {
+  _FakePathProvider(this.docsPath);
+  final String docsPath;
+
+  @override
+  Future<String?> getApplicationDocumentsPath() async => docsPath;
 }
 
 const _csvHeader =
@@ -60,12 +96,17 @@ void main() {
     addTearDown(tester.view.resetDevicePixelRatio);
   }
 
-  Future<void> openStatistics(WidgetTester tester, {CsvFileSource? source}) async {
+  Future<void> openStatistics(
+    WidgetTester tester, {
+    CsvFileSource? source,
+    FileShare? share,
+  }) async {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
           appDatabaseProvider.overrideWith((ref) async => testDb),
           if (source != null) csvFileSourceProvider.overrideWithValue(source),
+          if (share != null) fileShareProvider.overrideWithValue(share),
         ],
         child: const MaterialApp(home: StatisticsScreen()),
       ),
@@ -84,9 +125,15 @@ void main() {
       // Exact counts are covered by the DAO aggregate tests; here we assert the
       // screen structure. (Seed: 9 copies across 5 distinct passcodes.)
       expect(find.text(AppStrings.statisticsTotalCopiesLabel), findsOneWidget);
-      expect(find.text(AppStrings.statisticsDistinctCardsLabel), findsOneWidget);
+      expect(
+        find.text(AppStrings.statisticsDistinctCardsLabel),
+        findsOneWidget,
+      );
 
-      expect(find.text(AppStrings.statisticsByConditionSection), findsOneWidget);
+      expect(
+        find.text(AppStrings.statisticsByConditionSection),
+        findsOneWidget,
+      );
       expect(find.text(AppStrings.statisticsByLanguageSection), findsOneWidget);
       expect(find.text(AppStrings.statisticsByTypeSection), findsOneWidget);
       // The seed is all-English, so the language breakdown has one row.
@@ -111,6 +158,88 @@ void main() {
     await tester.tap(find.text(AppStrings.statisticsImportButton));
     await pumpUntilSettled(tester);
   }
+
+  // The reported bug: the SnackBar text was chosen the moment the file was
+  // written, then the sheet was opened and its result discarded — so swiping
+  // the sheet away still reported "Exported — choose where to save it." about a
+  // file the user had just declined to save, sitting in a directory Android
+  // does not let them browse to.
+  group('CSV export', () {
+    late Directory tempDir;
+
+    setUp(() async {
+      tempDir = await Directory.systemTemp.createTemp('ygo_export_screen_test');
+      PathProviderPlatform.instance = _FakePathProvider(tempDir.path);
+    });
+
+    tearDown(() async {
+      if (await tempDir.exists()) await tempDir.delete(recursive: true);
+    });
+
+    Future<void> tapExport(WidgetTester tester) async {
+      await tester.ensureVisible(find.text(AppStrings.statisticsExportButton));
+      await pumpUntilSettled(tester);
+      await tester.tap(find.text(AppStrings.statisticsExportButton));
+      await pumpUntilSettled(tester);
+    }
+
+    testWidgets('a completed share reports success', (tester) async {
+      useTallViewport(tester);
+
+      await tester.runAsync(() async {
+        final share = _FakeFileShare(ShareOutcome.shared);
+        await openStatistics(tester, share: share);
+        await tapExport(tester);
+
+        expect(share.shareCount, 1);
+        expect(share.lastPaths.single, endsWith('.csv'));
+        expect(
+          find.text(AppStrings.statisticsExportDoneMessage),
+          findsOneWidget,
+        );
+      });
+    });
+
+    testWidgets('backing out of the share sheet says so instead', (
+      tester,
+    ) async {
+      useTallViewport(tester);
+
+      await tester.runAsync(() async {
+        await openStatistics(
+          tester,
+          share: _FakeFileShare(ShareOutcome.cancelled),
+        );
+        await tapExport(tester);
+
+        expect(
+          find.text(AppStrings.statisticsExportCancelledMessage),
+          findsOneWidget,
+        );
+        expect(find.text(AppStrings.statisticsExportDoneMessage), findsNothing);
+      });
+    });
+
+    // Some platforms genuinely cannot report which target was chosen. Claiming
+    // a cancellation that may not have happened is the worse of the two errors:
+    // the file was written and the sheet was offered.
+    testWidgets('an unreportable share is treated as success', (tester) async {
+      useTallViewport(tester);
+
+      await tester.runAsync(() async {
+        await openStatistics(
+          tester,
+          share: _FakeFileShare(ShareOutcome.unknown),
+        );
+        await tapExport(tester);
+
+        expect(
+          find.text(AppStrings.statisticsExportDoneMessage),
+          findsOneWidget,
+        );
+      });
+    });
+  });
 
   group('CSV import', () {
     testWidgets('a new card is added after confirming', (tester) async {
@@ -169,7 +298,10 @@ void main() {
 
         // Something matched, so the question is asked — and "keep" is the
         // preselected default.
-        expect(find.text(AppStrings.statisticsImportKeepOption), findsOneWidget);
+        expect(
+          find.text(AppStrings.statisticsImportKeepOption),
+          findsOneWidget,
+        );
         await tester.tap(find.text(AppStrings.statisticsImportConfirmButton));
         await pumpUntilSettled(tester);
 

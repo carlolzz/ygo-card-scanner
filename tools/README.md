@@ -69,6 +69,56 @@ changes. Format:
 }
 ```
 
+## `build_localized_names.py`
+
+Builds `assets/card_names_it.json`, the card-name index the manual search
+matches against when the search-language dropdown is set to Italian. The app's
+sync fetches `cardinfo.php` with **no** `language` parameter, so `cards.name` is
+English and always will be; this is where every other language comes from.
+
+Why a bundled asset rather than a second request during sync: the Italian dump
+is ~18 MB over the wire (on top of the English sync's ~21 MB) but only ~435 KB
+once reduced to `id → name`. Downloading 18 MB on every sync — and every
+re-sync — to keep 435 KB of data that changes about as often as the card
+database itself is a poor trade, and it would break offline-first the moment it
+failed.
+
+The passcode key is `str(entry["id"])` with **no zero padding**, because that is
+exactly what `YgoProdeckClient._parseEntry` writes into `cards.passcode`. A
+padded key joins to nothing. Unlike the hash builder, `card_images` is not
+walked: an alt art is the same card with the same name.
+
+The file's `version` must agree with `kLocalizedNamesVersion` in
+`lib/data/assets/localized_names.dart` — the app compares that constant against
+its `meta` stamp to decide whether to re-import, and `parseLocalizedNames`
+throws if the two disagree. Bump both together.
+
+### Run
+
+```bash
+pip install -r tools/requirements.txt
+
+python tools/build_localized_names.py                 # Italian (default)
+python tools/build_localized_names.py --language fr   # needs a pubspec entry
+```
+
+Adding a language means three things: run this for it, register the asset under
+`flutter: assets:` in `pubspec.yaml`, and add its two-letter code to
+`kSearchLanguages` in `lib/models/card_language.dart`. YGOPRODeck publishes
+translations for `it`, `fr`, `de` and `pt`.
+
+### Output shape
+
+```json
+{
+  "version": 1,
+  "language": "IT",
+  "generated_at": "2026-08-24T13:18:59Z",
+  "count": 11599,
+  "names": { "<passcode>": "<localized name>", ... }
+}
+```
+
 ## YGOPRODeck API policy — read before changing this tool
 
 Per <https://ygoprodeck.com/api-guide/>:

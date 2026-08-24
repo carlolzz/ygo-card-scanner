@@ -18,6 +18,12 @@ Future<void> showCollectionFilterSheet(BuildContext context, WidgetRef ref) {
   return showModalBottomSheet<void>(
     context: context,
     isScrollControlled: true,
+    // Without this, `ModalBottomSheetRoute` wraps the sheet in
+    // `MediaQuery.removePadding(removeTop: true)` and the `SafeArea` below is a
+    // no-op on top. With `isScrollControlled` the sheet then grows to the very
+    // top of the screen and the title sits beside the clock and the status
+    // icons. Everything else in the app clears them via an `AppBar`.
+    useSafeArea: true,
     backgroundColor: AppPalette.of(context).surface,
     shape: const RoundedRectangleBorder(
       borderRadius: BorderRadius.vertical(top: Radius.circular(AppRadius.lg)),
@@ -241,9 +247,8 @@ class _CollectionFilterSheetState
           values: options.levels,
           selected: _draft.level,
           labelOf: (v) => '$v',
-          onSelected: (value) => _update(
-            _draft.copyWith(level: value, clearLevel: value == null),
-          ),
+          onSelected: (value) =>
+              _update(_draft.copyWith(level: value, clearLevel: value == null)),
         ),
       ),
     if (options.frameTypes.isNotEmpty)

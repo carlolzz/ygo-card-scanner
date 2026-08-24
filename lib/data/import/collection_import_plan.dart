@@ -30,6 +30,8 @@ class ResolvedImportRow {
     required this.quantity,
     this.notes,
     this.setUnresolved = false,
+    this.createdAt,
+    this.updatedAt,
   });
 
   final String passcode;
@@ -48,6 +50,11 @@ class ResolvedImportRow {
   /// without one. Reported to the user rather than silently dropped, because a
   /// set is exactly the sort of detail someone imports a CSV to preserve.
   final bool setUnresolved;
+
+  /// The dates the file carried, in epoch milliseconds, or null when it carried
+  /// none. Both fall back to the time of the import — see [planCollectionImport].
+  final int? createdAt;
+  final int? updatedAt;
 
   /// The `collection_entries` UNIQUE key. Dart records compare structurally, so
   /// this works directly as a map key — including the null `printingId` case,
@@ -124,7 +131,9 @@ CollectionImportPlan planCollectionImport({
         entry.condition.toDb(),
         entry.edition.toDb(),
         entry.language,
-      ): _Pending.existing(entry),
+      ): _Pending.existing(
+        entry,
+      ),
   };
 
   var newEntries = 0;
@@ -145,8 +154,12 @@ CollectionImportPlan planCollectionImport({
           language: row.language,
           quantity: row.quantity,
           notes: row.notes,
-          createdAt: now,
-          updatedAt: now,
+          // The file's own dates when it has them, so a collection exported and
+          // re-imported keeps the order it was logged in and the "Date added"
+          // sort still means something. [now] is the fallback, which is what
+          // every imported row used to get unconditionally.
+          createdAt: row.createdAt ?? now,
+          updatedAt: row.updatedAt ?? row.createdAt ?? now,
         ),
       );
       newEntries++;

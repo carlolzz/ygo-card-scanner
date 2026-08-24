@@ -223,6 +223,9 @@ class _CollectionDetailScreenState
     final result = await showModalBottomSheet<_EditResult>(
       context: context,
       isScrollControlled: true,
+      // See `showCollectionFilterSheet` — without this the sheet's own
+      // `SafeArea` is stripped and a tall sheet runs under the status bar.
+      useSafeArea: true,
       backgroundColor: AppPalette.of(context).surface,
       builder: (_) => _EditEntrySheet(entryWithCard: widget.entryWithCard),
     );
@@ -231,7 +234,9 @@ class _CollectionDetailScreenState
     // The edit can move the entry to a different printing, i.e. a different
     // rarity — the one non-delete path that changes the filter row's options.
     ref.invalidate(collectionFilterOptionsProvider);
-    ref.invalidate(entriesForPasscodeProvider(widget.entryWithCard.entry.passcode));
+    ref.invalidate(
+      entriesForPasscodeProvider(widget.entryWithCard.entry.passcode),
+    );
     final messenger = ScaffoldMessenger.of(context);
     Navigator.of(context).pop();
     messenger.showSnackBar(
@@ -293,7 +298,6 @@ class _LanguageBreakdown extends ConsumerWidget {
   }
 }
 
-
 /// The outcome of the edit sheet, popped back to the detail screen: whether the
 /// edit merged this entry into a pre-existing matching one (vs. a plain update),
 /// so the right confirmation message is shown.
@@ -344,9 +348,9 @@ class _EditEntrySheetState extends ConsumerState<_EditEntrySheet> {
       language: _language,
     );
     if (!mounted) return;
-    Navigator.of(context).pop(
-      _EditResult(merged: survivorId != widget.entryWithCard.entry.id),
-    );
+    Navigator.of(
+      context,
+    ).pop(_EditResult(merged: survivorId != widget.entryWithCard.entry.id));
   }
 
   @override
@@ -439,8 +443,9 @@ class _EditEntrySheetState extends ConsumerState<_EditEntrySheet> {
                 children: [
                   Expanded(
                     child: OutlinedButton(
-                      onPressed:
-                          _saving ? null : () => Navigator.of(context).pop(),
+                      onPressed: _saving
+                          ? null
+                          : () => Navigator.of(context).pop(),
                       child: const Text(AppStrings.collectionEditCancelButton),
                     ),
                   ),

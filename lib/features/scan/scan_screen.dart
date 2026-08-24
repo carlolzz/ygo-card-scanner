@@ -1540,6 +1540,7 @@ class _MatchedPanel extends ConsumerWidget {
             _SetPicker(passcode: card.passcode, printingId: state.printingId),
             Wrap(
               spacing: AppSpacing.xs,
+              runSpacing: AppSpacing.xs,
               children: [
                 for (final condition in CardCondition.values)
                   LabeledChoiceChip(
@@ -1554,6 +1555,7 @@ class _MatchedPanel extends ConsumerWidget {
             const SizedBox(height: AppSpacing.sm),
             Wrap(
               spacing: AppSpacing.xs,
+              runSpacing: AppSpacing.xs,
               children: [
                 for (final edition in CardEdition.values)
                   LabeledChoiceChip(
@@ -1567,6 +1569,7 @@ class _MatchedPanel extends ConsumerWidget {
             const SizedBox(height: AppSpacing.sm),
             Wrap(
               spacing: AppSpacing.xs,
+              runSpacing: AppSpacing.xs,
               children: [
                 for (final language in kCardLanguages)
                   LabeledChoiceChip(

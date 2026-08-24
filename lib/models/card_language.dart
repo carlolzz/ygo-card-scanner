@@ -19,6 +19,23 @@ const List<String> kCardLanguages = [
 /// Matches the `collection_entries.language` column default.
 const String kDefaultCardLanguage = 'EN';
 
+/// The languages a card can be *searched* in — a different question from
+/// [kCardLanguages], which is what language a card in the collection is printed
+/// in.
+///
+/// Searching needs card names in that language, and the sync only ever fetches
+/// English. Every entry past [kDefaultSearchLanguage] therefore has to ship its
+/// own `assets/card_names_<lang>.json` (built by
+/// `tools/build_localized_names.py`, registered in `pubspec.yaml`), so adding a
+/// code here without adding its asset makes the search throw. YGOPRODeck
+/// publishes translations for `it`, `fr`, `de` and `pt`; only Italian is
+/// shipped.
+const List<String> kSearchLanguages = [kDefaultSearchLanguage, 'IT'];
+
+/// The language searched unless the user picks otherwise: the one already in
+/// `cards.name`, which needs no asset and no import.
+const String kDefaultSearchLanguage = 'EN';
+
 /// Human-readable names for the language codes in [kCardLanguages]. Only the
 /// UI reads these — the persisted value stays the two-letter code, so an
 /// unlisted language remains storable (and [languageLabel] echoes it back).

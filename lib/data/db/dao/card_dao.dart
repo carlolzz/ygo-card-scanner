@@ -1,5 +1,6 @@
 import 'package:sqflite/sqflite.dart';
 
+import '../../../models/card_search_hit.dart';
 import '../../../models/ygo_card.dart';
 import 'sql_chunks.dart';
 
@@ -80,6 +81,45 @@ class CardDao {
       [query, query, limit],
     );
     return rows.map(YgoCard.fromMap).toList();
+  }
+
+  /// [searchByName] against `card_names` instead of `cards.name`, for searching
+  /// in a language the sync never fetches.
+  ///
+  /// The ranking is deliberately identical — prefix matches above
+  /// substring-only ones — but computed on the *localized* name, which is the
+  /// only string the user typed against. Ordering on `c.name` here would rank
+  /// Italian results by their English names, which reads as no order at all.
+  ///
+  /// An inner join, so a card the shipped asset has no translation for is
+  /// absent rather than listed under its English name: the file covers ~11.6k
+  /// of ~14.6k cards, and silently mixing the two languages in one result list
+  /// would make it impossible to tell which is which.
+  Future<List<CardSearchHit>> searchByLocalizedName(
+    String query, {
+    required String language,
+    int limit = 20,
+  }) async {
+    final rows = await _db.rawQuery(
+      '''
+      SELECT c.*, n.name AS localized_name
+      FROM cards c
+      JOIN card_names n
+        ON n.passcode = c.passcode AND n.language = ?
+      WHERE n.name LIKE '%' || ? || '%'
+      ORDER BY
+        CASE WHEN n.name LIKE ? || '%' THEN 0 ELSE 1 END,
+        n.name
+      LIMIT ?
+      ''',
+      [language, query, query, limit],
+    );
+    return [
+      for (final row in rows)
+        // `YgoCard.fromMap` reads the columns it knows by name and ignores the
+        // extra one, so the joined row maps without a projection.
+        CardSearchHit(YgoCard.fromMap(row), row['localized_name'] as String?),
+    ];
   }
 
   Future<int> count() async {

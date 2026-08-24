@@ -4,6 +4,7 @@ import '../../models/app_settings.dart';
 import '../../models/app_theme_mode.dart';
 import '../../models/card_condition.dart';
 import '../../models/card_edition.dart';
+import '../../models/card_language.dart';
 import '../../models/collection_sort_by.dart';
 import '../../models/collection_view_mode.dart';
 import '../db/dao/meta_dao.dart';
@@ -24,6 +25,7 @@ const _confirmBeforeDeleteKey = 'settings.confirm_before_delete';
 const _collectionViewModeKey = 'settings.collection_view_mode';
 const _collectionSortByKey = 'settings.collection_sort_by';
 const _collectionSortDescendingKey = 'settings.collection_sort_descending';
+const _searchLanguageKey = 'settings.search_language';
 
 /// Reads and writes [AppSettings] as key/value pairs in the existing `meta`
 /// table. No schema change: `meta` has carried arbitrary keys since v1, and a
@@ -82,6 +84,11 @@ class SettingsRepository {
         await _metaDao.get(_collectionSortDescendingKey),
         defaults.collectionSortDescending,
       ),
+      searchLanguage: _parseChoice(
+        await _metaDao.get(_searchLanguageKey),
+        kSearchLanguages,
+        defaults.searchLanguage,
+      ),
     );
   }
 
@@ -112,6 +119,7 @@ class SettingsRepository {
       _collectionSortDescendingKey,
       settings.collectionSortDescending.toString(),
     );
+    await _metaDao.set(_searchLanguageKey, settings.searchLanguage);
   }
 
   /// Every `fromDb` throws on an unrecognized value. A stored value can be
@@ -127,6 +135,17 @@ class SettingsRepository {
       return fallback;
     }
   }
+
+  /// A free-text value that must be one of a known set — the string equivalent
+  /// of [_parse]'s guard, for a preference whose vocabulary is a plain const
+  /// list rather than an enum. A code outside [allowed] means the build that
+  /// wrote it shipped an asset this one does not, so falling back is the only
+  /// safe reading.
+  static String _parseChoice(
+    String? stored,
+    List<String> allowed,
+    String fallback,
+  ) => stored != null && allowed.contains(stored) ? stored : fallback;
 
   /// Booleans are stored as `bool.toString()` (`'true'`/`'false'`). Anything
   /// else — a missing key or a hand-edited value — falls back to [fallback].

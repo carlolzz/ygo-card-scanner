@@ -3,6 +3,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:ygo_scanner/core/constants.dart';
+import 'package:ygo_scanner/data/assets/localized_names.dart';
+import 'package:ygo_scanner/data/db/dao/card_name_dao.dart';
 import 'package:ygo_scanner/data/db/dao/collection_dao.dart';
 import 'package:ygo_scanner/data/db/dao/meta_dao.dart';
 import 'package:ygo_scanner/data/db/dao/printing_dao.dart';
@@ -15,6 +17,7 @@ import 'package:ygo_scanner/models/app_settings.dart';
 import 'package:ygo_scanner/models/card_condition.dart';
 import 'package:ygo_scanner/models/card_edition.dart';
 import 'package:ygo_scanner/models/card_language.dart';
+import 'package:ygo_scanner/shared/widgets/search_language_dropdown.dart';
 
 import '../../data/db/test_db.dart';
 import '../../support/widget_test_harness.dart';
@@ -59,31 +62,33 @@ void main() {
     await pumpUntilSettled(tester);
   }
 
-  testWidgets('selecting a card with multiple printings shows the printing step', (
-    tester,
-  ) async {
-    await tester.runAsync(() async {
-      await openAddCard(tester);
-      await search(tester, 'Mirror Force');
-      await tapSearchResult(tester, 'Mirror Force');
+  testWidgets(
+    'selecting a card with multiple printings shows the printing step',
+    (tester) async {
+      await tester.runAsync(() async {
+        await openAddCard(tester);
+        await search(tester, 'Mirror Force');
+        await tapSearchResult(tester, 'Mirror Force');
 
-      expect(find.text('MRD-EN094'), findsOneWidget);
-      expect(find.text('DASA-EN059'), findsOneWidget);
-    });
-  });
+        expect(find.text('MRD-EN094'), findsOneWidget);
+        expect(find.text('DASA-EN059'), findsOneWidget);
+      });
+    },
+  );
 
-  testWidgets('selecting a card with zero printings skips straight to condition', (
-    tester,
-  ) async {
-    await tester.runAsync(() async {
-      await openAddCard(tester);
-      await search(tester, 'Pot of Greed');
-      await tapSearchResult(tester, 'Pot of Greed');
+  testWidgets(
+    'selecting a card with zero printings skips straight to condition',
+    (tester) async {
+      await tester.runAsync(() async {
+        await openAddCard(tester);
+        await search(tester, 'Pot of Greed');
+        await tapSearchResult(tester, 'Pot of Greed');
 
-      expect(find.text(AppStrings.addCardSaveButton), findsOneWidget);
-      expect(find.text(AppStrings.addCardNoPrintingLabel), findsOneWidget);
-    });
-  });
+        expect(find.text(AppStrings.addCardSaveButton), findsOneWidget);
+        expect(find.text(AppStrings.addCardNoPrintingLabel), findsOneWidget);
+      });
+    },
+  );
 
   testWidgets('selecting a card with one printing skips the step with that '
       'printing already picked', (tester) async {
@@ -149,9 +154,9 @@ void main() {
 
       expect(find.text(AppStrings.addCardSavedMessage), findsOneWidget);
 
-      final dasaPrinting = (await PrintingDao(
-        testDb,
-      ).getForPasscode('44095762')).firstWhere((p) => p.setCode == 'DASA-EN059');
+      final dasaPrinting = (await PrintingDao(testDb).getForPasscode(
+        '44095762',
+      )).firstWhere((p) => p.setCode == 'DASA-EN059');
       final entries = await CollectionDao(
         testDb,
       ).getEntriesForPasscode('44095762');
@@ -166,28 +171,29 @@ void main() {
     });
   });
 
-  testWidgets('the explicit skip button saves with printing_id null even when printings exist', (
-    tester,
-  ) async {
-    await tester.runAsync(() async {
-      await openAddCard(tester);
-      await search(tester, 'Mirror Force');
-      await tapSearchResult(tester, 'Mirror Force');
+  testWidgets(
+    'the explicit skip button saves with printing_id null even when printings exist',
+    (tester) async {
+      await tester.runAsync(() async {
+        await openAddCard(tester);
+        await search(tester, 'Mirror Force');
+        await tapSearchResult(tester, 'Mirror Force');
 
-      await tester.tap(find.text(AppStrings.addCardPrintingSkip));
-      await pumpUntilSettled(tester);
+        await tester.tap(find.text(AppStrings.addCardPrintingSkip));
+        await pumpUntilSettled(tester);
 
-      expect(find.text(AppStrings.addCardNoPrintingLabel), findsOneWidget);
+        expect(find.text(AppStrings.addCardNoPrintingLabel), findsOneWidget);
 
-      await tester.tap(find.text(AppStrings.addCardSaveButton));
-      await pumpUntilSettled(tester);
+        await tester.tap(find.text(AppStrings.addCardSaveButton));
+        await pumpUntilSettled(tester);
 
-      final entries = await CollectionDao(
-        testDb,
-      ).getEntriesForPasscode('44095762');
-      expect(entries.where((e) => e.printingId == null), hasLength(1));
-    });
-  });
+        final entries = await CollectionDao(
+          testDb,
+        ).getEntriesForPasscode('44095762');
+        expect(entries.where((e) => e.printingId == null), hasLength(1));
+      });
+    },
+  );
 
   testWidgets('picking a language writes it on the saved entry', (
     tester,
@@ -339,6 +345,83 @@ void main() {
               )
               .selected,
           isTrue,
+        );
+      });
+    });
+  });
+
+  group('search language', () {
+    /// Italian names for the two fixture cards, standing in for the bundled
+    /// `assets/card_names_it.json` — the asset itself is covered by
+    /// `localized_names_asset_test.dart`, and loading 11.6k rows here would be
+    /// pure test latency.
+    Future<void> seedItalianNames() => CardNameDao(testDb).insertAll(const [
+      CardName(passcode: '46986414', language: 'IT', name: 'Mago Nero'),
+      CardName(passcode: '44095762', language: 'IT', name: 'Forza Speculare'),
+    ]);
+
+    /// Marks the names as already imported, so `ensureLocalizedNames` skips the
+    /// `rootBundle` read a widget test has no bundle for.
+    Future<void> markImported() =>
+        MetaDao(testDb).set('localized_names_it', '$kLocalizedNamesVersion');
+
+    Future<void> chooseLanguage(WidgetTester tester, String code) async {
+      await tester.tap(find.byType(SearchLanguageDropdown));
+      await pumpUntilSettled(tester);
+      // The dropdown's menu duplicates the button's own label, so scope the
+      // tap to the overlay rather than the first match.
+      await tester.tap(find.text(languageLabel(code)).last);
+      await pumpUntilSettled(tester);
+    }
+
+    testWidgets('English is the default and searches English names', (
+      tester,
+    ) async {
+      await tester.runAsync(() async {
+        await seedItalianNames();
+        await markImported();
+        await openAddCard(tester);
+
+        expect(
+          find.widgetWithText(SearchLanguageDropdown, languageLabel('EN')),
+          findsOneWidget,
+        );
+        await search(tester, 'Mago');
+        expect(find.byType(ListTile), findsNothing);
+      });
+    });
+
+    testWidgets('Italian matches the Italian name and shows it under the '
+        'English one', (tester) async {
+      await tester.runAsync(() async {
+        await seedItalianNames();
+        await markImported();
+        await openAddCard(tester);
+
+        await chooseLanguage(tester, 'IT');
+        await search(tester, 'Mago');
+
+        // The card is still named, logged and pictured in English; the Italian
+        // name is there so the row visibly contains what was typed.
+        final tile = find.widgetWithText(ListTile, 'Dark Magician');
+        expect(tile, findsOneWidget);
+        expect(
+          find.descendant(of: tile, matching: find.text('Mago Nero')),
+          findsOneWidget,
+        );
+      });
+    });
+
+    testWidgets('the choice is persisted', (tester) async {
+      await tester.runAsync(() async {
+        await seedItalianNames();
+        await markImported();
+        await openAddCard(tester);
+        await chooseLanguage(tester, 'IT');
+
+        expect(
+          (await SettingsRepository(MetaDao(testDb)).load()).searchLanguage,
+          'IT',
         );
       });
     });

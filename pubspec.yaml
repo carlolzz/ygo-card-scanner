@@ -5,7 +5,7 @@
 name: ygo_scanner
 description: "Catalogue a physical Yu-Gi-Oh card collection by camera."
 publish_to: 'none'
-version: 0.8.0+9
+version: 0.9.0+10
 
 environment:
   sdk: ^3.12.2
@@ -50,6 +50,10 @@ flutter:
   uses-material-design: true
   assets:
     - assets/card_hashes.json
+    # Localized card names for manual search. Generated, committed, regenerate
+    # with `py -3 tools/build_localized_names.py`. English is not shipped here:
+    # it is already `cards.name`, populated by the sync.
+    - assets/card_names_it.json
 
 # Launcher icon generation. Regenerate with `dart run flutter_launcher_icons`
 # after editing the source PNGs. Both must be square (this tool resizes to a

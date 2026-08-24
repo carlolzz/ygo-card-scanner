@@ -19,6 +19,8 @@ void main() {
     String language = 'EN',
     int quantity = 1,
     bool setUnresolved = false,
+    int? createdAt,
+    int? updatedAt,
   }) => ResolvedImportRow(
     passcode: passcode,
     printingId: printingId,
@@ -27,6 +29,8 @@ void main() {
     language: language,
     quantity: quantity,
     setUnresolved: setUnresolved,
+    createdAt: createdAt,
+    updatedAt: updatedAt,
   );
 
   CollectionEntry entry({
@@ -92,7 +96,11 @@ void main() {
       );
 
       expect(result.inserts, isEmpty);
-      expect(result.quantities, isEmpty, reason: 'the existing row is untouched');
+      expect(
+        result.quantities,
+        isEmpty,
+        reason: 'the existing row is untouched',
+      );
       expect(result.isEmpty, isTrue);
       expect(result.matchedEntries, 1);
       expect(result.copiesAdded, 0);
@@ -244,7 +252,10 @@ void main() {
   test('untouched existing entries are never rewritten', () {
     final result = plan(
       [row(passcode: '89631139')],
-      [entry(id: 7), entry(id: 8, passcode: '89631139', condition: CardCondition.poor)],
+      [
+        entry(id: 7),
+        entry(id: 8, passcode: '89631139', condition: CardCondition.poor),
+      ],
       ImportMergeStrategy.sumQuantities,
     );
 
@@ -273,5 +284,51 @@ void main() {
     expect(keep.newEntries, sum.newEntries);
     expect(keep.matchedEntries, sum.matchedEntries);
     expect(keep.setsUnresolved, sum.setsUnresolved);
+  });
+
+  // Without this, every imported entry carried the single instant of the
+  // import, so "Date added" had nothing to order by and flipping its direction
+  // changed nothing.
+  group('dates', () {
+    test("a row's own dates are kept", () {
+      final result = plan(
+        [row(createdAt: 111, updatedAt: 222)],
+        const [],
+        ImportMergeStrategy.keepExisting,
+      );
+
+      expect(result.inserts.single.createdAt, 111);
+      expect(result.inserts.single.updatedAt, 222);
+    });
+
+    test('a row with no dates falls back to the import time', () {
+      final result = plan([row()], const [], ImportMergeStrategy.keepExisting);
+
+      expect(result.inserts.single.createdAt, now);
+      expect(result.inserts.single.updatedAt, now);
+    });
+
+    test('created_at alone stands in for a missing updated_at', () {
+      // A hand-written or spreadsheet-trimmed file may carry only the one that
+      // means something; the row was last touched when it was created.
+      final result = plan(
+        [row(createdAt: 111)],
+        const [],
+        ImportMergeStrategy.keepExisting,
+      );
+
+      expect(result.inserts.single.updatedAt, 111);
+    });
+
+    test("an existing entry's created_at is never rewritten", () {
+      // `keepExisting` means the row is left alone, and `sumQuantities` changes
+      // only the count: when the card was first logged is not something a
+      // second file gets to reinterpret.
+      for (final strategy in ImportMergeStrategy.values) {
+        final result = plan([row(createdAt: 111)], [entry(id: 7)], strategy);
+
+        expect(result.inserts, isEmpty);
+      }
+    });
   });
 }

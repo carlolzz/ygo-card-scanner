@@ -28,6 +28,7 @@ class AppSettings {
     this.collectionViewMode = CollectionViewMode.standard,
     this.collectionSortBy = CollectionSortBy.name,
     this.collectionSortDescending = false,
+    this.searchLanguage = kDefaultSearchLanguage,
   });
 
   /// Pre-selected grade for a newly logged card, in both the scan review gate
@@ -91,6 +92,15 @@ class AppSettings {
   final CollectionSortBy collectionSortBy;
   final bool collectionSortDescending;
 
+  /// Which language the manual card search matches names in — one of
+  /// [kSearchLanguages], and **not** the same thing as [language], which is the
+  /// language a card in the collection is printed in.
+  ///
+  /// Persisted because an Italian speaker wants it every session, and with no
+  /// Settings row for the same reason [collectionViewMode] has none: the
+  /// dropdown sits next to the search box, where the effect is visible.
+  final String searchLanguage;
+
   AppSettings copyWith({
     CardCondition? defaultCondition,
     CardEdition? defaultEdition,
@@ -103,6 +113,7 @@ class AppSettings {
     CollectionViewMode? collectionViewMode,
     CollectionSortBy? collectionSortBy,
     bool? collectionSortDescending,
+    String? searchLanguage,
   }) {
     return AppSettings(
       defaultCondition: defaultCondition ?? this.defaultCondition,
@@ -117,6 +128,7 @@ class AppSettings {
       collectionSortBy: collectionSortBy ?? this.collectionSortBy,
       collectionSortDescending:
           collectionSortDescending ?? this.collectionSortDescending,
+      searchLanguage: searchLanguage ?? this.searchLanguage,
     );
   }
 }

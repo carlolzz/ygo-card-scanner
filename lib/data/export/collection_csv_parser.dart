@@ -20,6 +20,8 @@ class CsvCollectionRow {
     required this.language,
     required this.quantity,
     required this.notes,
+    this.createdAt,
+    this.updatedAt,
   });
 
   /// 1-based line in the source file, so a rejected row can be pointed at.
@@ -35,6 +37,23 @@ class CsvCollectionRow {
   final String language;
   final int quantity;
   final String? notes;
+
+  /// When the row was first logged, in epoch milliseconds, or null when the
+  /// file did not say.
+  ///
+  /// [collectionToCsv] has always written `created_at`/`updated_at` and this
+  /// reader used to drop them, so every imported entry was stamped with the
+  /// single instant of the import. That collapses the "Date added" sort
+  /// entirely: its primary key ties across every imported row, leaving the
+  /// always-ascending `c.name` tie-break to decide the order — so flipping the
+  /// sort direction visibly changed nothing.
+  ///
+  /// **An unreadable timestamp is null, never a row error.** A date is metadata
+  /// about a card, not what the card *is*, and rejecting a row because a
+  /// spreadsheet reformatted its date is exactly the all-or-nothing failure
+  /// [CsvParseResult] exists to avoid.
+  final int? createdAt;
+  final int? updatedAt;
 }
 
 /// A row that could not be turned into a [CsvCollectionRow].
@@ -126,8 +145,10 @@ CsvParseResult parseCollectionCsv(String source) {
       }
       final quantity = int.tryParse(field('quantity') ?? '1');
       if (quantity == null || quantity <= 0) {
-        throw FormatException('quantity "${field('quantity')}" is not a '
-            'positive whole number');
+        throw FormatException(
+          'quantity "${field('quantity')}" is not a '
+          'positive whole number',
+        );
       }
       rows.add(
         CsvCollectionRow(
@@ -145,6 +166,8 @@ CsvParseResult parseCollectionCsv(String source) {
           language: field('language') ?? 'EN',
           quantity: quantity,
           notes: field('notes'),
+          createdAt: _epochMillis(field('created_at')),
+          updatedAt: _epochMillis(field('updated_at')),
         ),
       );
     } catch (error) {
@@ -152,6 +175,21 @@ CsvParseResult parseCollectionCsv(String source) {
     }
   }
   return CsvParseResult(rows: rows, errors: errors);
+}
+
+/// One timestamp column, from the UTC ISO-8601 [csvIsoUtc] writes.
+///
+/// Also accepts a bare epoch-milliseconds integer, since a spreadsheet round
+/// trip is quite capable of turning a date column into a number. Anything else
+/// — including a spreadsheet's own `24/08/2026 14:03` rendering, which
+/// `DateTime.parse` cannot read — yields null and the importer falls back to
+/// the time of the import, which is what happened to every row before this.
+int? _epochMillis(String? value) {
+  if (value == null) return null;
+  final parsed = DateTime.tryParse(value);
+  if (parsed != null) return parsed.millisecondsSinceEpoch;
+  final millis = int.tryParse(value);
+  return millis != null && millis > 0 ? millis : null;
 }
 
 String _describe(Object error) => switch (error) {

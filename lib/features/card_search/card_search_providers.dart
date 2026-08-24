@@ -2,7 +2,8 @@ import 'package:riverpod_annotation/riverpod_annotation.dart';
 
 import '../../data/repositories/card_repository.dart';
 import '../../data/seed/fake_collection_seed.dart';
-import '../../models/ygo_card.dart';
+import '../../models/card_search_hit.dart';
+import '../settings/settings_providers.dart';
 
 part 'card_search_providers.g.dart';
 
@@ -34,10 +35,14 @@ class CardSearchQueryController extends _$CardSearchQueryController {
 /// the fixtures are in place when this screen is the first one opened. See
 /// `addCardSearchResults`, which carries the same guard for the same reason.
 @riverpod
-Future<List<YgoCard>> cardSearchResults(Ref ref) async {
+Future<List<CardSearchHit>> cardSearchResults(Ref ref) async {
   await ref.watch(debugSeedCollectionProvider.future);
   final query = ref.watch(cardSearchQueryControllerProvider);
   if (query.isEmpty) return const [];
+  // `watch`, not `read`: the language is a search input, so changing it must
+  // re-run the query — unlike the *default* condition/edition/language, which
+  // are read once so a mid-flight change can't disturb a card being logged.
+  final language = ref.watch(searchLanguageProvider);
   final repository = await ref.watch(cardRepositoryProvider.future);
-  return repository.searchByName(query, limit: kCardSearchLimit);
+  return repository.search(query, language: language, limit: kCardSearchLimit);
 }

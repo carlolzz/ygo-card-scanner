@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:ygo_scanner/data/db/dao/card_dao.dart';
+import 'package:ygo_scanner/data/db/dao/card_name_dao.dart';
 import 'package:ygo_scanner/models/ygo_card.dart';
 
 import 'test_db.dart';
@@ -18,7 +19,10 @@ void main() {
     await db.close();
   });
 
-  const blueEyes = YgoCard(passcode: '89631139', name: 'Blue-Eyes White Dragon');
+  const blueEyes = YgoCard(
+    passcode: '89631139',
+    name: 'Blue-Eyes White Dragon',
+  );
   const redEyes = YgoCard(passcode: '74677422', name: 'Red-Eyes Black Dragon');
   const toonBlueEyes = YgoCard(
     passcode: '53183600',
@@ -48,9 +52,10 @@ void main() {
         redEyes.passcode,
       ]);
 
-      expect(results.map((c) => c.passcode), unorderedEquals(
-        [blueEyes.passcode, redEyes.passcode],
-      ));
+      expect(
+        results.map((c) => c.passcode),
+        unorderedEquals([blueEyes.passcode, redEyes.passcode]),
+      );
     });
 
     test('returns empty for an empty list', () async {
@@ -93,25 +98,101 @@ void main() {
     expect(await dao.count(), 2);
   });
 
-  test('searchByName ranks prefix matches above substring-only matches', () async {
-    await dao.insertAll([toonBlueEyes, redEyes, blueEyes]);
+  test(
+    'searchByName ranks prefix matches above substring-only matches',
+    () async {
+      await dao.insertAll([toonBlueEyes, redEyes, blueEyes]);
 
-    final results = await dao.searchByName('Blue-Eyes');
+      final results = await dao.searchByName('Blue-Eyes');
 
-    expect(results.map((c) => c.name), [
-      'Blue-Eyes White Dragon',
-      'Toon Blue-Eyes White Dragon',
-    ]);
+      expect(results.map((c) => c.name), [
+        'Blue-Eyes White Dragon',
+        'Toon Blue-Eyes White Dragon',
+      ]);
+    },
+  );
+
+  group('searchByLocalizedName', () {
+    Future<void> seedItalian() async {
+      await dao.insertAll([toonBlueEyes, redEyes, blueEyes]);
+      await CardNameDao(db).insertAll(const [
+        CardName(
+          passcode: '89631139',
+          language: 'IT',
+          name: 'Drago Bianco Occhi Blu',
+        ),
+        CardName(
+          passcode: '53183600',
+          language: 'IT',
+          name: 'Drago Bianco Occhi Blu Cartoon',
+        ),
+        CardName(
+          passcode: '74677422',
+          language: 'IT',
+          name: 'Drago Nero Occhi Rossi',
+        ),
+      ]);
+    }
+
+    test('ranks prefix matches above substring-only ones, on the '
+        'localized name', () async {
+      await seedItalian();
+
+      final results = await dao.searchByLocalizedName(
+        'Drago Bianco',
+        language: 'IT',
+      );
+
+      // Both match; only the exact-prefix one may lead. Ordering on `c.name`
+      // would put "Toon Blue-Eyes..." after "Blue-Eyes..." by accident of the
+      // English alphabet rather than by what was typed.
+      expect(results.map((h) => h.card.passcode), ['89631139', '53183600']);
+    });
+
+    test('carries the matched name, and the English card beside it', () async {
+      await seedItalian();
+
+      final results = await dao.searchByLocalizedName(
+        'Occhi Rossi',
+        language: 'IT',
+      );
+
+      expect(results.single.card.name, 'Red-Eyes Black Dragon');
+      expect(results.single.localizedName, 'Drago Nero Occhi Rossi');
+    });
+
+    test('a name row with no cards row never surfaces', () async {
+      // The asset is built from YGOPRODeck's Italian dump and the `cards` table
+      // from its English one; the two do not cover exactly the same passcodes,
+      // and a card with no local row has no type, art or price to show.
+      await CardNameDao(db).insertAll(const [
+        CardName(passcode: '00000000', language: 'IT', name: 'Fantasma'),
+      ]);
+
+      expect(
+        await dao.searchByLocalizedName('Fantasma', language: 'IT'),
+        isEmpty,
+      );
+    });
+
+    test('a different language does not match', () async {
+      await seedItalian();
+
+      expect(await dao.searchByLocalizedName('Drago', language: 'FR'), isEmpty);
+    });
   });
 
-  test('updateLocalImagePath sets the column, reflected by getByPasscode', () async {
-    await dao.insertAll([blueEyes]);
+  test(
+    'updateLocalImagePath sets the column, reflected by getByPasscode',
+    () async {
+      await dao.insertAll([blueEyes]);
 
-    await dao.updateLocalImagePath(blueEyes.passcode, '/tmp/89631139.jpg');
+      await dao.updateLocalImagePath(blueEyes.passcode, '/tmp/89631139.jpg');
 
-    final result = await dao.getByPasscode(blueEyes.passcode);
-    expect(result?.localImagePath, '/tmp/89631139.jpg');
-  });
+      final result = await dao.getByPasscode(blueEyes.passcode);
+      expect(result?.localImagePath, '/tmp/89631139.jpg');
+    },
+  );
 
   test('updateLocalImagePath is a no-op for an unknown passcode', () async {
     await expectLater(

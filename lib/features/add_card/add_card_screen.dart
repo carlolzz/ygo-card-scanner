@@ -7,7 +7,9 @@ import '../../models/card_condition.dart';
 import '../../models/card_edition.dart';
 import '../../models/card_language.dart';
 import '../../models/printing.dart';
+import '../../shared/widgets/card_search_subtitle.dart';
 import '../../shared/widgets/labeled_choice_chip.dart';
+import '../../shared/widgets/search_language_dropdown.dart';
 import 'add_card_providers.dart';
 
 /// Manual add-card flow: search by name -> pick a printing (skipped when
@@ -30,7 +32,8 @@ class AddCardScreen extends ConsumerWidget {
             : IconButton(
                 tooltip: AppStrings.addCardBackTooltip,
                 icon: const Icon(Icons.arrow_back),
-                onPressed: () => selection.step == AddCardStep.condition &&
+                onPressed: () =>
+                    selection.step == AddCardStep.condition &&
                         selection.printings.isNotEmpty
                     ? controller.backToPrinting()
                     : controller.backToSearch(),
@@ -59,26 +62,34 @@ class _SearchStep extends ConsumerWidget {
       children: [
         Padding(
           padding: const EdgeInsets.all(AppSpacing.md),
-          child: TextField(
-            autofocus: true,
-            style: TextStyle(color: palette.onSurface),
-            decoration: InputDecoration(
-              hintText: AppStrings.addCardSearchHint,
-              hintStyle: TextStyle(color: palette.onSurfaceMuted),
-              prefixIcon: Icon(
-                Icons.search,
-                color: palette.onSurfaceMuted,
+          child: Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  autofocus: true,
+                  style: TextStyle(color: palette.onSurface),
+                  decoration: InputDecoration(
+                    hintText: AppStrings.addCardSearchHint,
+                    hintStyle: TextStyle(color: palette.onSurfaceMuted),
+                    prefixIcon: Icon(
+                      Icons.search,
+                      color: palette.onSurfaceMuted,
+                    ),
+                    filled: true,
+                    fillColor: palette.surfaceRaised,
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(AppRadius.md),
+                      borderSide: BorderSide.none,
+                    ),
+                  ),
+                  onChanged: (query) => ref
+                      .read(addCardQueryControllerProvider.notifier)
+                      .setQuery(query),
+                ),
               ),
-              filled: true,
-              fillColor: palette.surfaceRaised,
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(AppRadius.md),
-                borderSide: BorderSide.none,
-              ),
-            ),
-            onChanged: (query) => ref
-                .read(addCardQueryControllerProvider.notifier)
-                .setQuery(query),
+              const SizedBox(width: AppSpacing.sm),
+              const SearchLanguageDropdown(),
+            ],
           ),
         ),
         Expanded(
@@ -96,21 +107,14 @@ class _SearchStep extends ConsumerWidget {
               return ListView.builder(
                 itemCount: results.length,
                 itemBuilder: (context, index) {
-                  final card = results[index];
+                  final hit = results[index];
                   return ListTile(
                     title: Text(
-                      card.name,
+                      hit.card.name,
                       style: TextStyle(color: palette.onSurface),
                     ),
-                    subtitle: card.type == null
-                        ? null
-                        : Text(
-                            card.type!,
-                            style: TextStyle(
-                              color: palette.onSurfaceMuted,
-                            ),
-                          ),
-                    onTap: () => controller.selectCard(card),
+                    subtitle: CardSearchSubtitle(hit),
+                    onTap: () => controller.selectCard(hit.card),
                   );
                 },
               );
@@ -152,8 +156,7 @@ class _PrintingStepState extends ConsumerState<_PrintingStep> {
     super.didUpdateWidget(oldWidget);
     // A different card means a different set list — don't carry the last card's
     // query over and show an empty list.
-    if (widget.selection.card?.passcode !=
-        oldWidget.selection.card?.passcode) {
+    if (widget.selection.card?.passcode != oldWidget.selection.card?.passcode) {
       _searchController.clear();
       _query = '';
     }
@@ -299,6 +302,7 @@ class _ConditionStep extends ConsumerWidget {
           const SizedBox(height: AppSpacing.lg),
           Wrap(
             spacing: AppSpacing.xs,
+            runSpacing: AppSpacing.xs,
             children: [
               for (final condition in CardCondition.values)
                 LabeledChoiceChip(
@@ -313,6 +317,7 @@ class _ConditionStep extends ConsumerWidget {
           const SizedBox(height: AppSpacing.md),
           Wrap(
             spacing: AppSpacing.xs,
+            runSpacing: AppSpacing.xs,
             children: [
               for (final edition in CardEdition.values)
                 LabeledChoiceChip(
@@ -331,6 +336,7 @@ class _ConditionStep extends ConsumerWidget {
           const SizedBox(height: AppSpacing.xs),
           Wrap(
             spacing: AppSpacing.xs,
+            runSpacing: AppSpacing.xs,
             children: [
               for (final language in kCardLanguages)
                 LabeledChoiceChip(
@@ -372,7 +378,9 @@ class _ConditionStep extends ConsumerWidget {
                 await controller.save();
                 if (context.mounted) {
                   ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text(AppStrings.addCardSavedMessage)),
+                    const SnackBar(
+                      content: Text(AppStrings.addCardSavedMessage),
+                    ),
                   );
                 }
               },

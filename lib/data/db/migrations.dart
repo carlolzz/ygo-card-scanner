@@ -133,6 +133,40 @@ const Map<int, List<String>> kMigrations = {
     )
     ''',
   ],
+  5: [
+    // Card names in a language other than English, so manual search can be run
+    // against them. The sync fetches `cardinfo.php` with no `language`
+    // parameter, so `cards.name` is English and always will be; these rows come
+    // from a bundled asset (`assets/card_names_it.json`, built by
+    // `tools/build_localized_names.py`) rather than from the network.
+    //
+    // **Deliberately NO foreign key to `cards`.** Every other child table here
+    // cascades from `cards` on purpose, because `CardDao.insertAll` uses
+    // `ConflictAlgorithm.replace` and a re-sync therefore deletes and
+    // re-inserts every card row. That is right for `printings` and the two
+    // price caches — they come from the same response and are re-fetched with
+    // it. It would be wrong here: these names are shipped in the APK, not
+    // fetched, so a cascade would mean re-reading and re-inserting ~11.6k rows
+    // after every sync to end up exactly where we started. A name row whose
+    // passcode has no `cards` row is harmless: the search joins, so it simply
+    // never surfaces.
+    //
+    // `language` is this app's two-letter code (`IT`), the same vocabulary as
+    // `collection_entries.language` and `kCardLanguages` — not YGOPRODeck's
+    // (`it`), which only the build tool ever sees.
+    '''
+    CREATE TABLE card_names (
+      passcode      TEXT NOT NULL,
+      language      TEXT NOT NULL,
+      name          TEXT NOT NULL,
+      PRIMARY KEY (passcode, language)
+    )
+    ''',
+    // The search predicate is `name LIKE '%q%'`, which no index can serve — but
+    // the prefix half of the ranking (`name LIKE 'q%'`) and the ORDER BY can
+    // use this, and it keeps a 11.6k-row scan cheap.
+    'CREATE INDEX idx_card_names_name ON card_names(name)',
+  ],
 };
 
 int get kSchemaVersion => kMigrations.keys.reduce((a, b) => a > b ? a : b);

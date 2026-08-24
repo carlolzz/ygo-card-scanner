@@ -6,6 +6,7 @@ import '../../models/app_settings.dart';
 import '../../models/app_theme_mode.dart';
 import '../../models/card_condition.dart';
 import '../../models/card_edition.dart';
+import '../../models/card_language.dart';
 import '../../models/collection_sort_by.dart';
 import '../../models/collection_view_mode.dart';
 import '../collection/collection_providers.dart';
@@ -67,6 +68,13 @@ class SettingsController extends _$SettingsController {
   Future<void> setCollectionSortDescending(bool value) =>
       _update((s) => s.copyWith(collectionSortDescending: value));
 
+  /// Which language the manual card search matches names in. Set from the
+  /// dropdown beside the search box, not the Settings screen — same reasoning
+  /// as [setCollectionViewMode]. Both search providers `watch` it, so the
+  /// results re-run on the change.
+  Future<void> setSearchLanguage(String language) =>
+      _update((s) => s.copyWith(searchLanguage: language));
+
   /// Serializes [_update]. Without it two changes made before the first write
   /// lands both read the *same* `state.value`, so the second saves a snapshot
   /// taken before the first and silently reverts it — which is exactly what
@@ -93,6 +101,18 @@ class SettingsController extends _$SettingsController {
     return result;
   }
 }
+
+/// Which language the manual card search matches names in.
+///
+/// Derived from the persisted [AppSettings.searchLanguage] the same way
+/// `scanDiagnosticsEnabled` is derived from its switch, so the two search
+/// screens share one value and neither has to unwrap the `AsyncValue`. Defaults
+/// to [kDefaultSearchLanguage] while settings are still resolving — English
+/// needs no asset, so that fallback can never fail.
+@riverpod
+String searchLanguage(Ref ref) =>
+    ref.watch(settingsControllerProvider).value?.searchLanguage ??
+    kDefaultSearchLanguage;
 
 /// When the card database was last synced, for the Settings screen's
 /// "Last synced" line. Invalidated by [ResyncController] on success.

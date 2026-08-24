@@ -6,6 +6,8 @@ import '../../core/constants.dart';
 import '../../core/routes.dart';
 import '../../core/theme/tokens.dart';
 import '../../shared/widgets/card_art_thumbnail.dart';
+import '../../shared/widgets/card_search_subtitle.dart';
+import '../../shared/widgets/search_language_dropdown.dart';
 import 'card_search_providers.dart';
 
 /// Search the whole card database and open a card to read it.
@@ -31,23 +33,34 @@ class CardSearchScreen extends ConsumerWidget {
         children: [
           Padding(
             padding: const EdgeInsets.all(AppSpacing.md),
-            child: TextField(
-              autofocus: true,
-              style: TextStyle(color: palette.onSurface),
-              decoration: InputDecoration(
-                hintText: AppStrings.cardSearchHint,
-                hintStyle: TextStyle(color: palette.onSurfaceMuted),
-                prefixIcon: Icon(Icons.search, color: palette.onSurfaceMuted),
-                filled: true,
-                fillColor: palette.surfaceRaised,
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(AppRadius.md),
-                  borderSide: BorderSide.none,
+            child: Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    autofocus: true,
+                    style: TextStyle(color: palette.onSurface),
+                    decoration: InputDecoration(
+                      hintText: AppStrings.cardSearchHint,
+                      hintStyle: TextStyle(color: palette.onSurfaceMuted),
+                      prefixIcon: Icon(
+                        Icons.search,
+                        color: palette.onSurfaceMuted,
+                      ),
+                      filled: true,
+                      fillColor: palette.surfaceRaised,
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(AppRadius.md),
+                        borderSide: BorderSide.none,
+                      ),
+                    ),
+                    onChanged: (value) => ref
+                        .read(cardSearchQueryControllerProvider.notifier)
+                        .setQuery(value),
+                  ),
                 ),
-              ),
-              onChanged: (value) => ref
-                  .read(cardSearchQueryControllerProvider.notifier)
-                  .setQuery(value),
+                const SizedBox(width: AppSpacing.sm),
+                const SearchLanguageDropdown(),
+              ],
             ),
           ),
           Expanded(
@@ -65,7 +78,8 @@ class CardSearchScreen extends ConsumerWidget {
                 return ListView.builder(
                   itemCount: results.length,
                   itemBuilder: (context, index) {
-                    final card = results[index];
+                    final hit = results[index];
+                    final card = hit.card;
                     return ListTile(
                       // The art thumbnail, not the plain one: a card the user
                       // does not own has never been through `addOrIncrement`,
@@ -80,12 +94,7 @@ class CardSearchScreen extends ConsumerWidget {
                         card.name,
                         style: TextStyle(color: palette.onSurface),
                       ),
-                      subtitle: card.type == null
-                          ? null
-                          : Text(
-                              card.type!,
-                              style: TextStyle(color: palette.onSurfaceMuted),
-                            ),
+                      subtitle: CardSearchSubtitle(hit),
                       onTap: () =>
                           context.push(AppRoutes.cardDetail, extra: card),
                     );

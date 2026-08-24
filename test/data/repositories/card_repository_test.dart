@@ -7,7 +7,9 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:ygo_scanner/data/api/card_image_downloader.dart';
 import 'package:ygo_scanner/data/api/ygoprodeck_client.dart';
+import 'package:ygo_scanner/data/assets/localized_names.dart';
 import 'package:ygo_scanner/data/db/dao/card_dao.dart';
+import 'package:ygo_scanner/data/db/dao/card_name_dao.dart';
 import 'package:ygo_scanner/data/db/dao/meta_dao.dart';
 import 'package:ygo_scanner/data/db/dao/printing_dao.dart';
 import 'package:ygo_scanner/data/repositories/card_repository.dart';
@@ -104,61 +106,67 @@ void main() {
     );
   });
 
-  test('ensureImageDownloaded downloads and persists the path on success', () async {
-    final downloader = _FakeDownloader(result: '/tmp/89631139.jpg');
-    final repository = repositoryWith(downloader);
-
-    await repository.ensureImageDownloaded(cardWithImage.passcode);
-
-    expect(downloader.callCount, 1);
-    expect(
-      (await cardDao.getByPasscode(cardWithImage.passcode))?.localImagePath,
-      '/tmp/89631139.jpg',
-    );
-  });
-
   test(
-    'ensureImageDownloaded no-ops when a local path is already set and the '
-    'file still exists',
+    'ensureImageDownloaded downloads and persists the path on success',
     () async {
-      final dir = await Directory.systemTemp.createTemp('card_repo_test');
-      final file = File('${dir.path}/89631139.jpg');
-      await file.writeAsBytes([0xFF, 0xD8, 0xFF, 0xD9]);
-      addTearDown(() => dir.delete(recursive: true));
-
-      await cardDao.updateLocalImagePath(cardWithImage.passcode, file.path);
-      final downloader = _FakeDownloader(result: '/tmp/should-not-be-used.jpg');
+      final downloader = _FakeDownloader(result: '/tmp/89631139.jpg');
       final repository = repositoryWith(downloader);
 
       await repository.ensureImageDownloaded(cardWithImage.passcode);
 
-      expect(downloader.callCount, 0);
+      expect(downloader.callCount, 1);
       expect(
         (await cardDao.getByPasscode(cardWithImage.passcode))?.localImagePath,
-        file.path,
+        '/tmp/89631139.jpg',
       );
     },
   );
 
-  test('ensureImageDownloaded swallows exceptions from a failing downloader', () async {
-    final downloader = _FakeDownloader(error: StateError('network down'));
+  test('ensureImageDownloaded no-ops when a local path is already set and the '
+      'file still exists', () async {
+    final dir = await Directory.systemTemp.createTemp('card_repo_test');
+    final file = File('${dir.path}/89631139.jpg');
+    await file.writeAsBytes([0xFF, 0xD8, 0xFF, 0xD9]);
+    addTearDown(() => dir.delete(recursive: true));
+
+    await cardDao.updateLocalImagePath(cardWithImage.passcode, file.path);
+    final downloader = _FakeDownloader(result: '/tmp/should-not-be-used.jpg');
     final repository = repositoryWith(downloader);
 
-    await expectLater(
-      repository.ensureImageDownloaded(cardWithImage.passcode),
-      completes,
-    );
+    await repository.ensureImageDownloaded(cardWithImage.passcode);
+
+    expect(downloader.callCount, 0);
     expect(
       (await cardDao.getByPasscode(cardWithImage.passcode))?.localImagePath,
-      isNull,
+      file.path,
     );
   });
 
+  test(
+    'ensureImageDownloaded swallows exceptions from a failing downloader',
+    () async {
+      final downloader = _FakeDownloader(error: StateError('network down'));
+      final repository = repositoryWith(downloader);
+
+      await expectLater(
+        repository.ensureImageDownloaded(cardWithImage.passcode),
+        completes,
+      );
+      expect(
+        (await cardDao.getByPasscode(cardWithImage.passcode))?.localImagePath,
+        isNull,
+      );
+    },
+  );
+
   group('needsSync', () {
-    test('true when no sync has ever run (fresh db, even with seed cards)', () async {
-      final repository = repositoryWith(_FakeDownloader());
-      expect(await repository.needsSync(), isTrue);
-    });
+    test(
+      'true when no sync has ever run (fresh db, even with seed cards)',
+      () async {
+        final repository = repositoryWith(_FakeDownloader());
+        expect(await repository.needsSync(), isTrue);
+      },
+    );
 
     test('false once last_sync is stamped and cards exist', () async {
       await MetaDao(db).set('last_sync', '123456');
@@ -264,6 +272,87 @@ void main() {
       expect(await MetaDao(freshDb).get('last_sync'), isNotNull);
 
       await freshDb.close();
+    });
+  });
+
+  group('localized names', () {
+    var loads = 0;
+
+    LocalizedNames italian(List<CardName> names) => LocalizedNames(
+      version: kLocalizedNamesVersion,
+      language: 'IT',
+      names: names,
+    );
+
+    CardRepository repositoryLoading(List<CardName> names) => CardRepository(
+      cardDao: cardDao,
+      printingDao: PrintingDao(db),
+      metaDao: MetaDao(db),
+      database: db,
+      imageDownloader: _FakeDownloader(result: '/tmp/unused.jpg'),
+      localizedNamesLoader: (language) async {
+        loads++;
+        return italian(names);
+      },
+    );
+
+    setUp(() => loads = 0);
+
+    test('an English search never touches the asset', () async {
+      final repository = repositoryLoading(const []);
+
+      final results = await repository.search('Blue-Eyes');
+
+      expect(results.single.card.passcode, cardWithImage.passcode);
+      // The whole reason English is the default: it needs no asset, no import
+      // and no `card_names` row, so an English-only user pays nothing for this
+      // feature existing.
+      expect(loads, 0);
+      expect(results.single.localizedName, isNull);
+    });
+
+    test('a non-English search imports the asset once, then reuses it', () async {
+      final repository = repositoryLoading(const [
+        CardName(
+          passcode: '89631139',
+          language: 'IT',
+          name: 'Drago Bianco Occhi Blu',
+        ),
+      ]);
+
+      final first = await repository.search('Drago', language: 'IT');
+      expect(first.single.card.name, 'Blue-Eyes White Dragon');
+      expect(first.single.localizedName, 'Drago Bianco Occhi Blu');
+      expect(loads, 1);
+
+      // The steady state is one `meta` read: the version check runs against the
+      // build constant precisely so a search does not decode 435 KB of JSON on
+      // every keystroke.
+      await repository.search('Occhi', language: 'IT');
+      expect(loads, 1);
+    });
+
+    test('a rebuilt asset is re-imported, correcting existing rows', () async {
+      await repositoryLoading(const [
+        CardName(passcode: '89631139', language: 'IT', name: 'Nome sbagliato'),
+      ]).search('Nome', language: 'IT');
+
+      // Same version, so nothing re-imports; the stamp is what gates it.
+      final unchanged = await repositoryLoading(const [
+        CardName(passcode: '89631139', language: 'IT', name: 'Nome corretto'),
+      ]).search('Nome', language: 'IT');
+      expect(unchanged.single.localizedName, 'Nome sbagliato');
+
+      // Clearing the stamp is what a version bump amounts to.
+      await db.delete(
+        'meta',
+        where: 'key = ?',
+        whereArgs: ['localized_names_it'],
+      );
+      final corrected = await repositoryLoading(const [
+        CardName(passcode: '89631139', language: 'IT', name: 'Nome corretto'),
+      ]).search('Nome', language: 'IT');
+      expect(corrected.single.localizedName, 'Nome corretto');
     });
   });
 }

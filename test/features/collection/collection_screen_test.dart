@@ -452,8 +452,10 @@ void main() {
 
       await applyFilterChip(tester, 'LP');
 
-      expect(find.text('${AppStrings.collectionFiltersButton} (1)'),
-          findsOneWidget);
+      expect(
+        find.text('${AppStrings.collectionFiltersButton} (1)'),
+        findsOneWidget,
+      );
     });
   });
 
@@ -593,7 +595,9 @@ void main() {
 
     // The Android half, and the only part a close-icon tap cannot cover: the
     // system back button has to cancel the mode rather than leave the screen.
-    testWidgets('the back button exits the mode, not the route', (tester) async {
+    testWidgets('the back button exits the mode, not the route', (
+      tester,
+    ) async {
       useTallViewport(tester);
       await tester.runAsync(() async {
         await openCollection(tester);
@@ -667,6 +671,38 @@ void main() {
           findsOneWidget,
         );
       });
+    });
+  });
+
+  // `showModalBottomSheet` strips the top inset unless it is told not to
+  // (`MediaQuery.removePadding(removeTop: true)`), which makes the sheet's own
+  // `SafeArea` a no-op — and with `isScrollControlled` and this much content
+  // the sheet reaches the top of the screen, putting the title beside the
+  // clock and the status icons.
+  testWidgets('the filter sheet title clears the status bar', (tester) async {
+    // A phone-shaped viewport with a real top inset. Without the padding the
+    // assertion is vacuous, which is the trap the scan geometry test
+    // documents: `FakeViewPadding` is what makes this test able to fail.
+    tester.view.physicalSize = const Size(393, 851);
+    tester.view.devicePixelRatio = 1.0;
+    tester.view.padding = const FakeViewPadding(top: 39);
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPadding);
+
+    await tester.runAsync(() async {
+      await openCollection(tester);
+      await tester.tap(find.text(AppStrings.collectionFiltersButton));
+      await pumpUntilSettled(tester);
+
+      final title = tester.getRect(
+        find.text(AppStrings.collectionFiltersTitle),
+      );
+      expect(
+        title.top,
+        greaterThan(39),
+        reason: 'the title must sit below the status bar, not under it',
+      );
     });
   });
 }

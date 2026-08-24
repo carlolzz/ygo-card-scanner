@@ -43,9 +43,65 @@ void main() {
       expect(row.lineNumber, 2);
     });
 
+    group('timestamps', () {
+      CsvCollectionRow parseWith(String created, String updated) =>
+          parseCollectionCsv(
+            _csv([
+              _header,
+              '46986414,Dark Magician,,,,NEAR_MINT,UNLIMITED,EN,1,,'
+                  '$created,$updated',
+            ]),
+          ).rows.single;
+
+      test('are read as epoch milliseconds', () {
+        final row = parseWith(
+          '2026-01-01T00:00:00.000Z',
+          '2026-01-02T00:00:00.000Z',
+        );
+
+        expect(row.createdAt, DateTime.utc(2026).millisecondsSinceEpoch);
+        expect(row.updatedAt, DateTime.utc(2026, 1, 2).millisecondsSinceEpoch);
+      });
+
+      test('a bare epoch integer is accepted too', () {
+        // A spreadsheet is quite capable of turning a date column into a
+        // number on the way through.
+        expect(parseWith('1700000000000', '').createdAt, 1700000000000);
+      });
+
+      test('an unreadable date is null, and does NOT reject the row', () {
+        // A date is metadata about a card, not what the card is. The importer
+        // falls back to the time of the import, which is what every row used
+        // to get unconditionally.
+        final result = parseCollectionCsv(
+          _csv([
+            _header,
+            '46986414,Dark Magician,,,,NEAR_MINT,UNLIMITED,EN,1,,'
+                '24/08/2026 14:03,not a date',
+          ]),
+        );
+
+        expect(result.errors, isEmpty);
+        expect(result.rows.single.createdAt, isNull);
+        expect(result.rows.single.updatedAt, isNull);
+      });
+
+      test('a file without the columns parses, with null dates', () {
+        final result = parseCollectionCsv(
+          _csv(['passcode,condition,quantity', '46986414,NEAR_MINT,1']),
+        );
+
+        expect(result.errors, isEmpty);
+        expect(result.rows.single.createdAt, isNull);
+      });
+    });
+
     test('empty fields become nulls, not empty strings', () {
       final result = parseCollectionCsv(
-        _csv([_header, '46986414,Dark Magician,,,,NEAR_MINT,UNLIMITED,EN,1,,,']),
+        _csv([
+          _header,
+          '46986414,Dark Magician,,,,NEAR_MINT,UNLIMITED,EN,1,,,',
+        ]),
       );
 
       final row = result.rows.single;
@@ -79,7 +135,11 @@ void main() {
           '$_header${ending}46986414,Dark Magician,,,,NEAR_MINT,UNLIMITED,EN,'
           '3,,,$ending',
         );
-        expect(result.rows.single.quantity, 3, reason: 'ending ${ending.length}');
+        expect(
+          result.rows.single.quantity,
+          3,
+          reason: 'ending ${ending.length}',
+        );
       }
     });
 
@@ -205,32 +265,35 @@ void main() {
       printing: printing,
     );
 
-    test('survives commas, quotes, newlines and a leading formula character', () {
-      final source = collectionToCsv([
-        row(
-          passcode: '46986414',
-          name: '=Dark, "Magician"',
-          notes: 'line one\nline two',
-          printing: const Printing(
-            id: 3,
+    test(
+      'survives commas, quotes, newlines and a leading formula character',
+      () {
+        final source = collectionToCsv([
+          row(
             passcode: '46986414',
-            setCode: 'LOB-005',
-            setName: 'Legend of Blue Eyes',
-            rarity: 'Ultra Rare',
+            name: '=Dark, "Magician"',
+            notes: 'line one\nline two',
+            printing: const Printing(
+              id: 3,
+              passcode: '46986414',
+              setCode: 'LOB-005',
+              setName: 'Legend of Blue Eyes',
+              rarity: 'Ultra Rare',
+            ),
           ),
-        ),
-      ]);
+        ]);
 
-      final parsed = parseCollectionCsv(source).rows.single;
-      expect(parsed.name, '=Dark, "Magician"');
-      expect(parsed.notes, 'line one\nline two');
-      expect(parsed.setCode, 'LOB-005');
-      expect(parsed.rarity, 'Ultra Rare');
-      expect(parsed.condition, CardCondition.lightPlayed);
-      expect(parsed.edition, CardEdition.first);
-      expect(parsed.language, 'DE');
-      expect(parsed.quantity, 7);
-    });
+        final parsed = parseCollectionCsv(source).rows.single;
+        expect(parsed.name, '=Dark, "Magician"');
+        expect(parsed.notes, 'line one\nline two');
+        expect(parsed.setCode, 'LOB-005');
+        expect(parsed.rarity, 'Ultra Rare');
+        expect(parsed.condition, CardCondition.lightPlayed);
+        expect(parsed.edition, CardEdition.first);
+        expect(parsed.language, 'DE');
+        expect(parsed.quantity, 7);
+      },
+    );
 
     test('an entry with no printing round-trips to nulls', () {
       final source = collectionToCsv([
@@ -242,6 +305,33 @@ void main() {
       expect(parsed.setName, isNull);
       expect(parsed.rarity, isNull);
       expect(parsed.notes, isNull);
+    });
+
+    // The reason the parser reads these columns at all: without it, every
+    // imported entry was stamped with the instant of the import, so "Date
+    // added" had nothing to order by and flipping its direction changed
+    // nothing on screen.
+    test('the dates survive, so the order the cards were logged in does', () {
+      final first = DateTime.utc(2024, 3, 1, 9, 30);
+      final second = DateTime.utc(2026, 8, 24, 14);
+      final source = collectionToCsv([
+        CollectionEntryWithCard(
+          entry: CollectionEntry(
+            passcode: '46986414',
+            condition: CardCondition.nearMint,
+            edition: CardEdition.unlimited,
+            language: 'EN',
+            quantity: 1,
+            createdAt: first.millisecondsSinceEpoch,
+            updatedAt: second.millisecondsSinceEpoch,
+          ),
+          card: const YgoCard(passcode: '46986414', name: 'Dark Magician'),
+        ),
+      ]);
+
+      final parsed = parseCollectionCsv(source).rows.single;
+      expect(parsed.createdAt, first.millisecondsSinceEpoch);
+      expect(parsed.updatedAt, second.millisecondsSinceEpoch);
     });
 
     test('an empty collection exports a header the parser accepts', () {

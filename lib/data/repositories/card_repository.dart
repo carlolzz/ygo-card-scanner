@@ -5,11 +5,15 @@ import 'dart:math';
 import 'package:riverpod_annotation/riverpod_annotation.dart';
 import 'package:sqflite/sqflite.dart';
 
+import '../../models/card_language.dart';
+import '../../models/card_search_hit.dart';
 import '../../models/printing.dart';
 import '../../models/ygo_card.dart';
 import '../api/card_image_downloader.dart';
 import '../api/ygoprodeck_client.dart';
+import '../assets/localized_names.dart';
 import '../db/dao/card_dao.dart';
+import '../db/dao/card_name_dao.dart';
 import '../db/dao/meta_dao.dart';
 import '../db/dao/printing_dao.dart';
 import '../db/database.dart';
@@ -32,6 +36,10 @@ class SyncProgress {
 /// enough to keep the number of batched statements low.
 const _syncWriteChunkSize = 1000;
 
+/// Rows per batch when importing the bundled localized names. One transaction
+/// either way; this only bounds how large a single batch grows.
+const _nameWriteChunkSize = 2000;
+
 class CardRepository {
   CardRepository({
     required this._cardDao,
@@ -40,8 +48,10 @@ class CardRepository {
     required this._database,
     YgoProdeckClient? client,
     CardImageDownloader? imageDownloader,
+    Future<LocalizedNames> Function(String language)? localizedNamesLoader,
   }) : _client = client ?? YgoProdeckClient(),
-       _imageDownloader = imageDownloader ?? CardImageDownloader();
+       _imageDownloader = imageDownloader ?? CardImageDownloader(),
+       _loadLocalizedNames = localizedNamesLoader ?? loadLocalizedNamesAsset;
 
   final CardDao _cardDao;
   final PrintingDao _printingDao;
@@ -49,6 +59,10 @@ class CardRepository {
   final Database _database;
   final YgoProdeckClient _client;
   final CardImageDownloader _imageDownloader;
+
+  /// Injectable so DAO-level tests can exercise [ensureLocalizedNames] without
+  /// a `rootBundle` — the same seam shape as [CardImageDownloader] above.
+  final Future<LocalizedNames> Function(String language) _loadLocalizedNames;
 
   Future<YgoCard?> getByPasscode(String passcode) =>
       _cardDao.getByPasscode(passcode);
@@ -58,6 +72,64 @@ class CardRepository {
 
   Future<List<YgoCard>> searchByName(String query, {int limit = 20}) =>
       _cardDao.searchByName(query, limit: limit);
+
+  /// The single entry point both search screens use.
+  ///
+  /// English searches `cards.name` as it always has; anything else searches the
+  /// bundled `card_names` rows, having first made sure they are loaded. The
+  /// language decides which, so neither screen has to know that one of the two
+  /// needs an asset behind it.
+  Future<List<CardSearchHit>> search(
+    String query, {
+    String language = kDefaultSearchLanguage,
+    int limit = 20,
+  }) async {
+    if (language == kDefaultSearchLanguage) {
+      final cards = await _cardDao.searchByName(query, limit: limit);
+      return [for (final card in cards) CardSearchHit(card)];
+    }
+    await ensureLocalizedNames(language);
+    return _cardDao.searchByLocalizedName(
+      query,
+      language: language,
+      limit: limit,
+    );
+  }
+
+  /// Imports `assets/card_names_<lang>.json` into `card_names`, once.
+  ///
+  /// Guarded by a `meta` stamp holding the asset's own version, so this costs
+  /// one key read on every later call and re-imports only when the asset is
+  /// rebuilt. **Not** guarded by a row count: a corrected translation changes
+  /// no row count at all.
+  ///
+  /// Deliberately not called from [sync]. These names come from the APK, not
+  /// the network, and `card_names` has no cascade from `cards` precisely so a
+  /// re-sync leaves them alone (see migration v5).
+  Future<void> ensureLocalizedNames(String language) async {
+    final key = _localizedNamesKey(language);
+    // The version check comes first, against the *build* constant, so the
+    // steady state is one `meta` read — not an asset load and a JSON decode on
+    // every keystroke. `parseLocalizedNames` is what keeps the constant and the
+    // file honest with each other.
+    if (await _metaDao.get(key) == '$kLocalizedNamesVersion') return;
+    final loaded = await _loadLocalizedNames(language);
+    await _database.transaction((txn) async {
+      final dao = CardNameDao(txn);
+      for (var i = 0; i < loaded.names.length; i += _nameWriteChunkSize) {
+        await dao.insertAll(
+          loaded.names.sublist(
+            i,
+            min(i + _nameWriteChunkSize, loaded.names.length),
+          ),
+        );
+      }
+      await MetaDao(txn).set(key, loaded.version.toString());
+    });
+  }
+
+  String _localizedNamesKey(String language) =>
+      'localized_names_${language.toLowerCase()}';
 
   Future<List<Printing>> getPrintingsForPasscode(String passcode) =>
       _printingDao.getForPasscode(passcode);

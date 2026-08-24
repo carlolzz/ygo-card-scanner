@@ -6,6 +6,7 @@ import '../../data/seed/fake_collection_seed.dart';
 import '../../models/app_settings.dart';
 import '../../models/card_condition.dart';
 import '../../models/card_edition.dart';
+import '../../models/card_search_hit.dart';
 import '../../models/collection_entry.dart';
 import '../../models/printing.dart';
 import '../../models/ygo_card.dart';
@@ -47,12 +48,15 @@ class AddCardQueryController extends _$AddCardQueryController {
 }
 
 @riverpod
-Future<List<YgoCard>> addCardSearchResults(Ref ref) async {
+Future<List<CardSearchHit>> addCardSearchResults(Ref ref) async {
   await ref.watch(debugSeedCollectionProvider.future);
   final query = ref.watch(addCardQueryControllerProvider);
   if (query.isEmpty) return [];
+  // `watch`: the language is part of the query, unlike the defaults this
+  // wizard's selection controller reads once at build.
+  final language = ref.watch(searchLanguageProvider);
   final repository = await ref.watch(cardRepositoryProvider.future);
-  return repository.searchByName(query);
+  return repository.search(query, language: language);
 }
 
 @riverpod
@@ -99,9 +103,7 @@ class AddCardSelectionController extends _$AddCardSelectionController {
     );
 
     final repository = await ref.read(cardRepositoryProvider.future);
-    final printings = await repository.getPrintingsForPasscode(
-      card.passcode,
-    );
+    final printings = await repository.getPrintingsForPasscode(card.passcode);
     // The user may have navigated back to search and picked a different
     // card while this fetch was in flight — drop a stale response.
     if (state.card?.passcode != card.passcode) return;

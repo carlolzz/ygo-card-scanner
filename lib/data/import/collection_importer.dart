@@ -109,9 +109,7 @@ class CollectionImporter {
         unknownCards++;
         continue;
       }
-      resolved.add(
-        resolveImportRow(row, printings[row.passcode] ?? const []),
-      );
+      resolved.add(resolveImportRow(row, printings[row.passcode] ?? const []));
     }
 
     return CollectionImportPreview(
@@ -154,9 +152,9 @@ class CollectionImporter {
     ImportMergeStrategy strategy, {
     int? now,
   }) async {
-    final existing = await CollectionDao(_db).getEntriesForPasscodes(
-      {for (final row in rows) row.passcode}.toList(),
-    );
+    final existing = await CollectionDao(
+      _db,
+    ).getEntriesForPasscodes({for (final row in rows) row.passcode}.toList());
     return planCollectionImport(
       rows: rows,
       existing: existing,
@@ -198,6 +196,8 @@ ResolvedImportRow resolveImportRow(
     quantity: row.quantity,
     notes: row.notes,
     setUnresolved: hasSet && match == null,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
   );
 }
 

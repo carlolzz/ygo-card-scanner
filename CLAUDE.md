@@ -44,10 +44,12 @@ lib/
     money.dart
     result.dart
   data/
+    assets/localized_names.dart     # the bundled card-name asset, parsed
     db/
       database.dart
       migrations.dart
       dao/card_dao.dart
+      dao/card_name_dao.dart
       dao/printing_dao.dart
       dao/collection_dao.dart
       dao/card_price_dao.dart
@@ -76,6 +78,7 @@ lib/
     card_edition.dart
     card_language.dart
     card_prices.dart
+    card_search_hit.dart
     collection_sort_by.dart
     app_settings.dart
     app_theme_mode.dart
@@ -92,6 +95,8 @@ lib/
   shared/widgets/
     card_thumbnail.dart
     card_details_view.dart
+    card_search_subtitle.dart
+    search_language_dropdown.dart
 test/
   data/db/
   data/repositories/
@@ -101,10 +106,11 @@ test/
   shared/widgets/
 tools/
   build_hash_index.py
+  build_localized_names.py
 assets/
 ```
 
-## Database schema (version 4)
+## Database schema (version 5)
 
 ```sql
 CREATE TABLE cards (
@@ -162,6 +168,14 @@ CREATE TABLE printing_prices (      -- v4
   updated_at    INTEGER NOT NULL
 );
 
+CREATE TABLE card_names (          -- v5
+  passcode      TEXT NOT NULL,     -- NO foreign key, deliberately
+  language      TEXT NOT NULL,     -- this app's code ('IT'), not the API's
+  name          TEXT NOT NULL,
+  PRIMARY KEY (passcode, language)
+);
+CREATE INDEX idx_card_names_name ON card_names(name);
+
 CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
 ```
 
@@ -188,7 +202,17 @@ Notes:
   v2 added `cards.local_image_path` (see `lib/data/db/dao/meta_dao.dart` for
   the DAO — a plain get/set(key, value), REPLACE semantics); v3 added the
   `card_prices` cache; v4 dropped and recreated it without eBay/Amazon/
-  CoolStuffInc and added `printing_prices`.
+  CoolStuffInc and added `printing_prices`; v5 added `card_names`.
+- **`card_names` has NO foreign key to `cards`, and that is the point.** Every
+  other child table here cascades from `cards` because `CardDao.insertAll` uses
+  `ConflictAlgorithm.replace` and a re-sync re-inserts every card row — right
+  for `printings` and the two price caches, which arrive in that same response.
+  These names do not: they are imported from a bundled asset
+  (`assets/card_names_it.json`, built by `tools/build_localized_names.py`), so a
+  cascade would mean re-reading and re-inserting ~11.6k rows after every sync to
+  end up exactly where we started. A name row whose passcode has no `cards` row
+  is harmless — the search joins, so it never surfaces. The import is stamped in
+  `meta` under `localized_names_<lang>` with the asset's version.
 - **Both price tables are caches, and a re-sync deliberately empties them.**
   `CardDao.insertAll` uses `ConflictAlgorithm.replace`, i.e. `INSERT OR
   REPLACE`, which *deletes and re-inserts* each `cards` row — so every child row
@@ -2600,6 +2624,114 @@ order):
     `CardDetectionTuning.innerQuadMinAreaRatio` at 0.78, the passcode ROI filter
     off, `artAgreementFrames` at 2, every `FrameQualityTuning` threshold still
     uncalibrated on device, and whether `kPriceTtl` at 24 h is right.
+
+30. Thirteenth on-device feedback pass — filter-sheet inset, import dates,
+    Italian search, chip flicker ← done (verified: `flutter analyze` clean, full
+    `flutter test` green at **773 tests**, `pytest tools/` green). **One DB
+    migration (v4 → v5), no new dependency.** Nothing here touches the
+    descriptor, `assets/card_hashes.json`, the detection algorithm or any
+    scan/matching/quality threshold.
+    **The filter sheet ran under the status bar**, and it was one missing
+    parameter. `showModalBottomSheet` without `useSafeArea` wraps the sheet in
+    `MediaQuery.removePadding(removeTop: true)` — so the `SafeArea` the sheet
+    already had was a **no-op on top**, and with `isScrollControlled: true` and
+    fourteen filters' worth of content the sheet reached the very top of the
+    screen with its title 24pt below it, beside the clock. Everything else in
+    the app clears the inset via an `AppBar`, which consumes it. `useSafeArea:
+    true` on the filter sheet and on `_EditEntrySheet`, which had the identical
+    omission. The regression test needs
+    `tester.view.padding = const FakeViewPadding(top: 39)` to mean anything —
+    without a real inset the assertion is vacuous, the trap step 21 documents —
+    and was **verified to fail** with the parameter removed.
+    **Every CSV-imported card was logged at the same instant.**
+    `collectionToCsv` has always written `created_at`/`updated_at`, and
+    `parseCollectionCsv` never read them: `CsvCollectionRow` had no timestamp
+    fields at all, so `planCollectionImport` stamped every insert with the one
+    import time. `getAll` orders by `ORDER BY ce.created_at <dir>, c.name ASC`,
+    so with the primary key tied across the whole collection the
+    **always-ascending** `c.name` tie-break decided the entire list — which is
+    exactly the report: sorting by "Date added" did nothing in either direction,
+    except for cards added after the import. The parser now reads both columns
+    (`_epochMillis`: ISO-8601 first, a bare epoch integer second, since a
+    spreadsheet will happily turn a date column into a number), `ResolvedImportRow`
+    carries them, and inserts use `row.createdAt ?? now` /
+    `row.updatedAt ?? row.createdAt ?? now`.
+    **An unreadable date is null, never a row error** — a date is metadata about
+    a card, not what the card *is*, and rejecting a card because a spreadsheet
+    reformatted its date is the all-or-nothing failure the parser's whole
+    error-per-row design exists to avoid. A matched entry's `created_at` is
+    still never rewritten under either strategy. Four tests were **verified to
+    fail** against the old `createdAt: now`.
+    **Known limitation, stated rather than engineered around**: rows imported
+    *before* this keep their shared timestamp, and re-importing the same file
+    will not repair them, because `keepExisting` by contract does not write to a
+    matched row.
+    **Manual search can run against Italian names**, chosen from a dropdown
+    beside the search box on both search screens. Nothing else changes: names,
+    artwork and every downstream screen stay English, and a non-English hit
+    carries its matched name as a muted italic second line, so a search for
+    "Drago Bianco" returns rows that visibly contain what was typed
+    (`CardSearchSubtitle`, shared by both screens because the *rule* is the
+    interesting part).
+    **The data is a committed generated asset**, the `assets/card_hashes.json`
+    precedent exactly. Measured before choosing: `cardinfo.php?language=it` is
+    **18 MB** over the wire for 11,599 cards — on top of the English sync's
+    21 MB — but only **435 KB** reduced to id → name. Fetching it per sync would
+    nearly double every sync, and every re-sync, for data that changes about as
+    often as the hash index does. So `tools/build_localized_names.py` makes
+    **one** request on the host and writes `assets/card_names_it.json`
+    (`version`/`language`/`generated_at`/`count`/`names`, sorted keys for stable
+    diffs). **The passcode key is `str(entry["id"])`, unpadded** — precisely what
+    `YgoProdeckClient._parseEntry` stores in `cards.passcode`
+    (`json['id'].toString()`); a padded key would join to nothing, and a pytest
+    pins it. `card_images` is deliberately *not* walked, unlike the hash
+    builder: an alt art is the same card with the same name, so indexing it
+    would make the search return the card twice.
+    **Runtime**: migration v5 adds `card_names` (see the schema section for why
+    it has no foreign key — the one child table here that must *survive* a
+    re-sync). `CardNameDao` owns the import; the search itself is
+    `CardDao.searchByLocalizedName`, an **inner join** keeping the existing
+    prefix-over-substring ranking but computed on the *localized* name — ordering
+    on `c.name` would rank Italian results by the English alphabet, which reads
+    as no order at all. The join is inner so a card the asset has no translation
+    for is absent rather than listed under its English name, which would make it
+    impossible to tell the two apart in one list.
+    `CardRepository.search(query, language:)` is the single entry point both
+    screens use, returning one `CardSearchHit` type (`models/card_search_hit.dart`,
+    not the DAO file — it crosses into two widget trees).
+    **The version check runs against a build constant, not the file.**
+    `ensureLocalizedNames` compares `meta`'s `localized_names_it` stamp to
+    `kLocalizedNamesVersion` *before* loading anything, so the steady state is
+    one `meta` read rather than a 435 KB decode per keystroke;
+    `parseLocalizedNames` throws if the asset's own version disagrees, which is
+    what keeps the constant honest — the `HashIndex` ROI-header guard in
+    miniature. Decoding runs in a `compute` isolate: small next to the hash
+    index, but this loads while a search screen is live and someone is typing.
+    An **English search never touches any of it** — no asset, no import, no
+    `card_names` row — which is the first thing its test pins.
+    `AppSettings.searchLanguage` (default `EN`, `settings.search_language`,
+    guarded by a new `_parseChoice` against `kSearchLanguages`) has **no Settings
+    row**, the documented precedent from `collectionViewMode` and the collection
+    sort: the control lives where the effect is visible. Both search providers
+    `watch` it — right here, unlike the read-once defaults in `ScanController`
+    and `AddCardSelectionController`, because the language *is* a search input.
+    `kSearchLanguages` is deliberately a different list from `kCardLanguages`:
+    one is what a name can be matched in (needs a shipped asset), the other is
+    what language a card in the collection is printed in (free-form TEXT).
+    An asset test ties the committed file to the build, because as with the hash
+    index nothing else opens it and the failure mode is a silent green.
+    **The chip flicker was Material's checkmark.** `ChoiceChip` defaults to
+    `showCheckmark: true`, so selecting a chip *widens* it, and in a `Wrap` that
+    reflows the whole run — the chips after it shift right and can jump a line,
+    under the finger that just tapped. `showCheckmark: false` on
+    `LabeledChoiceChip` fixes every chip row in the app at once (condition,
+    edition, language, the filter sheet) and changes no size, so it needed no
+    layout work: selection stays unmistakable from `selectedColor` plus the dark
+    `ConditionChipColors.onSelected` ink. Equal-width chips were considered and
+    dropped — "Asian-English" would set the width for all nine. The four `Wrap`s
+    that were missing `runSpacing` got it. Both chip tests were **verified to
+    fail** with the line removed, and the second asserts the *other* chips have
+    not moved, which is the symptom that was actually reported.
 
 ## Standing rules
 

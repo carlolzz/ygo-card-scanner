@@ -82,15 +82,17 @@ void main() {
       expect(preview.rows.single.printingId, isNotNull);
     });
 
-    test('no set columns at all means no printing, and is not an error',
-        () async {
-      final preview = await importer.preview(
-        csv(['46986414,Dark Magician,,,,POOR,UNLIMITED,EN,1,,,']),
-      );
-      expect(preview.rows.single.printingId, isNull);
-      expect(preview.rows.single.setUnresolved, isFalse);
-      expect(preview.plan.setsUnresolved, 0);
-    });
+    test(
+      'no set columns at all means no printing, and is not an error',
+      () async {
+        final preview = await importer.preview(
+          csv(['46986414,Dark Magician,,,,POOR,UNLIMITED,EN,1,,,']),
+        );
+        expect(preview.rows.single.printingId, isNull);
+        expect(preview.rows.single.setUnresolved, isFalse);
+        expect(preview.plan.setsUnresolved, 0);
+      },
+    );
 
     // Losing the set is bad; losing the card is worse. The count is reported so
     // the user is told rather than quietly given a setless entry.
@@ -284,17 +286,93 @@ void main() {
       }
     });
 
-    test('the same round trip under sumQuantities doubles every count',
-        () async {
-      final before = await dao.getAll(filter: const CollectionFilter());
-      final preview = await importer.preview(collectionToCsv(before));
-      await importer.apply(preview, ImportMergeStrategy.sumQuantities);
+    test(
+      'the same round trip under sumQuantities doubles every count',
+      () async {
+        final before = await dao.getAll(filter: const CollectionFilter());
+        final preview = await importer.preview(collectionToCsv(before));
+        await importer.apply(preview, ImportMergeStrategy.sumQuantities);
 
-      final after = await dao.getAll(filter: const CollectionFilter());
-      expect(after.length, before.length, reason: 'no new rows, only bigger');
-      for (var i = 0; i < after.length; i++) {
-        expect(after[i].entry.quantity, before[i].entry.quantity * 2);
-      }
+        final after = await dao.getAll(filter: const CollectionFilter());
+        expect(after.length, before.length, reason: 'no new rows, only bigger');
+        for (var i = 0; i < after.length; i++) {
+          expect(after[i].entry.quantity, before[i].entry.quantity * 2);
+        }
+      },
+    );
+  });
+
+  group('dates reach the database', () {
+    Future<int> createdAtOf(String passcode, CardCondition condition) async {
+      final entries = await dao.getEntriesForPasscode(passcode);
+      return entries.firstWhere((e) => e.condition == condition).createdAt;
+    }
+
+    test("an imported row keeps the file's created_at", () async {
+      // The whole point: before this, every imported row landed on one shared
+      // timestamp, so sorting the collection by "Date added" put them all in a
+      // dead heat and the direction toggle did nothing.
+      final logged = DateTime.utc(2024, 3, 1, 9, 30);
+      final preview = await importer.preview(
+        csv([
+          '46986414,Dark Magician,,,,POOR,UNLIMITED,EN,1,,'
+              '${logged.toIso8601String()},${logged.toIso8601String()}',
+        ]),
+      );
+
+      await importer.apply(preview, ImportMergeStrategy.keepExisting);
+
+      expect(
+        await createdAtOf('46986414', CardCondition.poor),
+        logged.millisecondsSinceEpoch,
+      );
+    });
+
+    test('a row with no date falls back to the time of the import', () async {
+      final at = DateTime.utc(2026, 8, 24, 14);
+      final preview = await importer.preview(
+        csv(['46986414,Dark Magician,,,,GOOD,UNLIMITED,EN,1,,,']),
+      );
+
+      await importer.apply(preview, ImportMergeStrategy.keepExisting, now: at);
+
+      expect(
+        await createdAtOf('46986414', CardCondition.good),
+        at.millisecondsSinceEpoch,
+      );
+    });
+
+    test('a full round trip preserves every entry\'s date', () async {
+      final before = await dao.getAll(filter: const CollectionFilter());
+      final source = collectionToCsv(before);
+      // A fresh database, so the rows are genuinely re-created rather than
+      // matched against themselves.
+      final freshDb = await openInMemoryTestDb();
+      addTearDown(freshDb.close);
+      await seedFakeCollectionIfEmpty(freshDb);
+      await CollectionDao(freshDb).deleteMany(
+        (await CollectionDao(freshDb).getAll(
+          filter: const CollectionFilter(),
+        )).map((e) => e.entry.id!).toList(),
+      );
+
+      final freshImporter = CollectionImporter(freshDb);
+      final preview = await freshImporter.preview(source);
+      await freshImporter.apply(preview, ImportMergeStrategy.keepExisting);
+
+      final after = await CollectionDao(
+        freshDb,
+      ).getAll(filter: const CollectionFilter());
+      expect(after, hasLength(before.length));
+      expect(
+        after.map((e) => e.entry.createdAt).toList()..sort(),
+        before.map((e) => e.entry.createdAt).toList()..sort(),
+      );
+      // The fixture stagger is what makes this test able to fail at all.
+      expect(
+        before.map((e) => e.entry.createdAt).toSet(),
+        hasLength(greaterThan(1)),
+      );
     });
   });
 

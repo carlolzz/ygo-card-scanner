@@ -23,6 +23,11 @@ class AppStrings {
       'Search the card database to read a card and check its price.';
   static const String cardSearchEmptyMessage = 'No cards match that name.';
 
+  /// Labels the language dropdown beside both search fields. It picks the
+  /// language a *name is matched in*, not the language a card is printed in
+  /// (that one is `collectionLanguageLabel`, chosen per logged card).
+  static const String searchLanguageLabel = 'Search language';
+
   // The two tabs both card screens carry.
   static const String cardTabDetails = 'Details';
   static const String cardTabPrices = 'Prices';

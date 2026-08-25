@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../core/constants.dart';
+import '../../core/routes.dart';
 import '../../core/theme/tokens.dart';
 import '../../data/repositories/card_repository.dart';
 import '../../models/app_settings.dart';
@@ -9,6 +11,7 @@ import '../../models/app_theme_mode.dart';
 import '../../models/card_condition.dart';
 import '../../models/card_edition.dart';
 import '../../models/card_language.dart';
+import '../../models/fast_log_field.dart';
 import '../../shared/widgets/labeled_choice_chip.dart';
 import '../sync/initial_sync_providers.dart';
 import 'settings_providers.dart';
@@ -109,6 +112,44 @@ class _SettingsBody extends ConsumerWidget {
           },
         ),
         const Divider(height: AppSpacing.xl),
+        // Directly below the defaults it qualifies: that section sets *what
+        // value is used*, this one sets *how often you are asked to override
+        // it*.
+        const _SectionHeader(title: AppStrings.settingsFastLogSection),
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          activeThumbColor: palette.accent,
+          title: Text(
+            AppStrings.settingsFastLogLabel,
+            style: TextStyle(color: palette.onSurface),
+          ),
+          subtitle: Text(
+            AppStrings.settingsFastLogDescription,
+            style: TextStyle(color: palette.onSurfaceMuted),
+          ),
+          // Bound to the stored intent, *not* to `fastLogActive`: with every
+          // field ticked, binding to the derived rule would make the switch
+          // visibly bounce back off when turned on. Nothing is suppressed in
+          // that state anyway, and the summary below says why.
+          value: settings.fastLogEnabled,
+          onChanged: controller.setFastLogEnabled,
+        ),
+        ListTile(
+          contentPadding: EdgeInsets.zero,
+          title: Text(
+            AppStrings.settingsFastLogConfigureLabel,
+            style: TextStyle(color: palette.onSurface),
+          ),
+          subtitle: Text(
+            _fastLogSummary(settings),
+            style: TextStyle(color: palette.onSurfaceMuted),
+          ),
+          trailing: Icon(Icons.chevron_right, color: palette.onSurfaceMuted),
+          // Tappable even while the switch is off, so the user can configure
+          // before enabling. The screen itself says the choices are inert.
+          onTap: () => context.push(AppRoutes.fastLog),
+        ),
+        const Divider(height: AppSpacing.xl),
         const _SectionHeader(title: AppStrings.settingsAppearanceSection),
         const _FieldLabel(label: AppStrings.settingsThemeLabel),
         Wrap(
@@ -190,6 +231,25 @@ class _SettingsBody extends ConsumerWidget {
       ],
     );
   }
+}
+
+/// The Configure row's subtitle: what Fast log is currently doing.
+///
+/// Top-level rather than inline, matching `_ResyncSection._lastSyncedLabel` —
+/// formatting stays out of `build()`. It only chooses words; the rule it
+/// branches on is `AppSettings.fastLogActive`, which lives on the model so the
+/// two logging flows read the same one.
+String _fastLogSummary(AppSettings settings) {
+  if (!settings.fastLogEnabled) return AppStrings.settingsFastLogSummaryOff;
+  if (!settings.fastLogActive) {
+    return AppStrings.settingsFastLogSummaryAsksEverything;
+  }
+  final asked = FastLogField.values
+      .where(settings.fastLogFields.contains)
+      .map((field) => field.label);
+  return asked.isEmpty
+      ? AppStrings.settingsFastLogSummaryAsksNothing
+      : '${AppStrings.settingsFastLogSummaryPrefix}${asked.join(', ')}';
 }
 
 class _SectionHeader extends StatelessWidget {

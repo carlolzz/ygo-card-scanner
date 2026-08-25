@@ -8,6 +8,7 @@ import '../features/collection/collection_detail_screen.dart';
 import '../features/collection/collection_screen.dart';
 import '../features/home/home_screen.dart';
 import '../features/scan/scan_screen.dart';
+import '../features/settings/fast_log_screen.dart';
 import '../features/settings/settings_screen.dart';
 import '../features/statistics/collection_value_screen.dart';
 import '../features/statistics/statistics_screen.dart';
@@ -62,6 +63,10 @@ GoRouter buildAppRouter() {
       GoRoute(
         path: AppRoutes.settings,
         builder: (context, state) => const SettingsScreen(),
+      ),
+      GoRoute(
+        path: AppRoutes.fastLog,
+        builder: (context, state) => const FastLogScreen(),
       ),
     ],
   );

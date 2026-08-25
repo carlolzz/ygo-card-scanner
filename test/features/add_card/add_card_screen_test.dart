@@ -17,6 +17,8 @@ import 'package:ygo_scanner/models/app_settings.dart';
 import 'package:ygo_scanner/models/card_condition.dart';
 import 'package:ygo_scanner/models/card_edition.dart';
 import 'package:ygo_scanner/models/card_language.dart';
+import 'package:ygo_scanner/models/fast_log_field.dart';
+import 'package:ygo_scanner/shared/widgets/card_art_thumbnail.dart';
 import 'package:ygo_scanner/shared/widgets/search_language_dropdown.dart';
 
 import '../../data/db/test_db.dart';
@@ -49,6 +51,28 @@ void main() {
     await pumpUntilSettled(tester);
   }
 
+  /// Like [openAddCard], but resolves settings before the screen builds — the
+  /// wizard reads them synchronously (`ref.read`, once, at controller build),
+  /// which `App`'s gate guarantees in production. Any test whose subject is a
+  /// setting must seed the `meta` rows *before* calling this: flipping one
+  /// afterwards, the way the scan screen's help/diagnostics tests do, cannot
+  /// reach a controller that has already read its snapshot.
+  Future<void> openWithSettings(WidgetTester tester) async {
+    final container = ProviderContainer(
+      overrides: [appDatabaseProvider.overrideWith((ref) async => testDb)],
+    );
+    addTearDown(container.dispose);
+    await container.read(settingsControllerProvider.future);
+
+    await tester.pumpWidget(
+      UncontrolledProviderScope(
+        container: container,
+        child: const MaterialApp(home: AddCardScreen()),
+      ),
+    );
+    await pumpUntilSettled(tester);
+  }
+
   Future<void> search(WidgetTester tester, String query) async {
     await tester.enterText(find.byType(TextField), query);
     await pumpUntilSettled(tester);
@@ -75,6 +99,26 @@ void main() {
       });
     },
   );
+
+  // The wizard was the only logging surface with no picture, so the name in a
+  // search list was the only confirmation the right card had been picked.
+  testWidgets('both steps after search show the card artwork', (tester) async {
+    await tester.runAsync(() async {
+      await openAddCard(tester);
+      await search(tester, 'Mirror Force');
+      await tapSearchResult(tester, 'Mirror Force');
+
+      // The printing step.
+      expect(find.byType(CardArtThumbnail), findsOneWidget);
+
+      await tester.tap(find.text(AppStrings.addCardPrintingSkip));
+      await pumpUntilSettled(tester);
+
+      // The condition step.
+      expect(find.byType(CardArtThumbnail), findsOneWidget);
+      expect(find.text('Mirror Force'), findsOneWidget);
+    });
+  });
 
   testWidgets(
     'selecting a card with zero printings skips straight to condition',
@@ -243,25 +287,6 @@ void main() {
       );
     });
 
-    /// Like [openAddCard], but resolves settings before the screen builds —
-    /// the wizard reads them synchronously, which `App`'s gate guarantees in
-    /// production.
-    Future<void> openWithSettings(WidgetTester tester) async {
-      final container = ProviderContainer(
-        overrides: [appDatabaseProvider.overrideWith((ref) async => testDb)],
-      );
-      addTearDown(container.dispose);
-      await container.read(settingsControllerProvider.future);
-
-      await tester.pumpWidget(
-        UncontrolledProviderScope(
-          container: container,
-          child: const MaterialApp(home: AddCardScreen()),
-        ),
-      );
-      await pumpUntilSettled(tester);
-    }
-
     testWidgets('the wizard opens on the configured defaults', (tester) async {
       await tester.runAsync(() async {
         await openWithSettings(tester);
@@ -423,6 +448,156 @@ void main() {
           (await SettingsRepository(MetaDao(testDb)).load()).searchLanguage,
           'IT',
         );
+      });
+    });
+  });
+
+  group('fast log', () {
+    // Condition stays asked; edition and language do not. Their defaults are
+    // set to non-default values so a silently written row is distinguishable
+    // from one that merely happened to land on the built-in defaults.
+    setUp(() async {
+      await SettingsRepository(MetaDao(testDb)).save(
+        const AppSettings(
+          defaultEdition: CardEdition.first,
+          language: 'DE',
+          fastLogEnabled: true,
+          fastLogFields: {FastLogField.condition},
+        ),
+      );
+    });
+
+    Future<List<Map<String, Object?>>> entriesFor(String passcode) async {
+      final entries = await CollectionDao(
+        testDb,
+      ).getEntriesForPasscode(passcode);
+      return [
+        for (final entry in entries)
+          {
+            'printingId': entry.printingId,
+            'edition': entry.edition,
+            'language': entry.language,
+            'condition': entry.condition,
+          },
+      ];
+    }
+
+    testWidgets('the printing step is skipped even with several printings', (
+      tester,
+    ) async {
+      await tester.runAsync(() async {
+        await openWithSettings(tester);
+        await search(tester, 'Mirror Force');
+        await tapSearchResult(tester, 'Mirror Force');
+
+        expect(find.text(AppStrings.addCardSaveButton), findsOneWidget);
+        expect(find.text(AppStrings.addCardPrintingSkip), findsNothing);
+      });
+    });
+
+    testWidgets('only the ticked detail keeps a control', (tester) async {
+      await tester.runAsync(() async {
+        await openWithSettings(tester);
+        await search(tester, 'Mirror Force');
+        await tapSearchResult(tester, 'Mirror Force');
+
+        expect(
+          find.widgetWithText(ChoiceChip, CardCondition.nearMint.shortCode),
+          findsOneWidget,
+        );
+        expect(
+          find.widgetWithText(ChoiceChip, CardEdition.first.label),
+          findsNothing,
+        );
+        expect(
+          find.widgetWithText(ChoiceChip, languageLabel('DE')),
+          findsNothing,
+        );
+        // Quantity is never suppressed: it defaults to 1 and costs no
+        // interaction to leave alone.
+        expect(find.text(AppStrings.collectionQuantityLabel), findsOneWidget);
+      });
+    });
+
+    testWidgets('the panel says what it is about to write silently', (
+      tester,
+    ) async {
+      await tester.runAsync(() async {
+        await openWithSettings(tester);
+        await search(tester, 'Mirror Force');
+        await tapSearchResult(tester, 'Mirror Force');
+
+        expect(
+          find.textContaining(AppStrings.fastLogSilentPrefix),
+          findsOneWidget,
+        );
+        expect(find.textContaining(CardEdition.first.label), findsOneWidget);
+      });
+    });
+
+    testWidgets('saving writes the defaults for the details it never asked', (
+      tester,
+    ) async {
+      await tester.runAsync(() async {
+        await openWithSettings(tester);
+        await search(tester, 'Mirror Force');
+        await tapSearchResult(tester, 'Mirror Force');
+        await tester.tap(find.text(AppStrings.addCardSaveButton));
+        await pumpUntilSettled(tester);
+
+        // `contains` compares maps by identity, so match deeply instead. The
+        // seed's two Mirror Force entries both carry a printing, so the row
+        // written here is the only one without.
+        final saved = await entriesFor('44095762');
+        expect(
+          saved,
+          anyElement(
+            equals({
+              // Several printings, so `preferredPrinting` declines and Fast
+              // log offers no picker: logged without a set, by design.
+              'printingId': null,
+              'edition': CardEdition.first,
+              'language': 'DE',
+              'condition': CardCondition.nearMint,
+            }),
+          ),
+        );
+      });
+    });
+
+    // Fast log suppresses the picker, not `preferredPrinting`.
+    testWidgets('a card with one known printing still gets it', (tester) async {
+      await tester.runAsync(() async {
+        final lob = (await PrintingDao(
+          testDb,
+        ).getForPasscode('89631139')).single;
+
+        await openWithSettings(tester);
+        await search(tester, 'Blue-Eyes');
+        await tapSearchResult(tester, 'Blue-Eyes White Dragon');
+        await tester.tap(find.text(AppStrings.addCardSaveButton));
+        await pumpUntilSettled(tester);
+
+        final saved = await entriesFor('89631139');
+        expect(saved.map((entry) => entry['printingId']), contains(lob.id));
+      });
+    });
+
+    testWidgets('back from the condition step returns to search', (
+      tester,
+    ) async {
+      await tester.runAsync(() async {
+        await openWithSettings(tester);
+        await search(tester, 'Mirror Force');
+        await tapSearchResult(tester, 'Mirror Force');
+
+        await tester.tap(find.byTooltip(AppStrings.addCardBackTooltip));
+        await pumpUntilSettled(tester);
+
+        // The printing step is unreachable under Fast log, so the back button
+        // must not route into it: its Skip button would null out the set.
+        expect(find.text(AppStrings.addCardPrintingSkip), findsNothing);
+        expect(find.byType(SearchLanguageDropdown), findsOneWidget);
       });
     });
   });

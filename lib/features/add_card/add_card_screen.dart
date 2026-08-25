@@ -6,8 +6,12 @@ import '../../core/theme/tokens.dart';
 import '../../models/card_condition.dart';
 import '../../models/card_edition.dart';
 import '../../models/card_language.dart';
+import '../../models/fast_log_field.dart';
 import '../../models/printing.dart';
+import '../../models/ygo_card.dart';
+import '../../shared/widgets/card_art_thumbnail.dart';
 import '../../shared/widgets/card_search_subtitle.dart';
+import '../../shared/widgets/fast_log_summary.dart';
 import '../../shared/widgets/labeled_choice_chip.dart';
 import '../../shared/widgets/search_language_dropdown.dart';
 import 'add_card_providers.dart';
@@ -32,9 +36,13 @@ class AddCardScreen extends ConsumerWidget {
             : IconButton(
                 tooltip: AppStrings.addCardBackTooltip,
                 icon: const Icon(Icons.arrow_back),
+                // Under Fast log the printing step is never offered, so this
+                // must not route into it: its Skip button would null out a set
+                // that was auto-picked, and the step is unreachable by design.
                 onPressed: () =>
                     selection.step == AddCardStep.condition &&
-                        selection.printings.isNotEmpty
+                        selection.printings.isNotEmpty &&
+                        !controller.fastLogActive
                     ? controller.backToPrinting()
                     : controller.backToSearch(),
               ),
@@ -183,14 +191,7 @@ class _PrintingStepState extends ConsumerState<_PrintingStep> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                card.name,
-                style: TextStyle(
-                  color: palette.onSurface,
-                  fontWeight: FontWeight.bold,
-                  fontSize: 18,
-                ),
-              ),
+              _CardIdentity(card: card),
               const SizedBox(height: AppSpacing.sm),
               // Type the set instead of scrolling: a reprinted card can carry a
               // dozen printings, and the user knows which one is in their hand.
@@ -278,76 +279,95 @@ class _ConditionStep extends ConsumerWidget {
     final card = selection.card!;
     final printing = selection.printing;
     final palette = AppPalette.of(context);
+    final asked = controller.askedFields;
 
     return SingleChildScrollView(
       padding: const EdgeInsets.all(AppSpacing.lg),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            card.name,
-            style: TextStyle(
-              color: palette.onSurface,
-              fontWeight: FontWeight.bold,
-              fontSize: 18,
-            ),
-          ),
-          const SizedBox(height: AppSpacing.xs),
-          Text(
-            printing == null
+          _CardIdentity(
+            card: card,
+            // Unconditional, and under Fast log it is the only thing naming the
+            // set that was auto-picked. It is information, not a control.
+            setLine: printing == null
                 ? AppStrings.addCardNoPrintingLabel
                 : (printing.setCode ?? printing.setName ?? ''),
-            style: TextStyle(color: palette.onSurfaceMuted),
           ),
           const SizedBox(height: AppSpacing.lg),
-          Wrap(
-            spacing: AppSpacing.xs,
-            runSpacing: AppSpacing.xs,
-            children: [
-              for (final condition in CardCondition.values)
-                LabeledChoiceChip(
-                  label: condition.shortCode,
-                  selected: selection.condition == condition,
-                  selectedColor:
-                      ConditionChipColors.byShortCode[condition.shortCode]!,
-                  onSelected: () => controller.setCondition(condition),
-                ),
-            ],
-          ),
-          const SizedBox(height: AppSpacing.md),
-          Wrap(
-            spacing: AppSpacing.xs,
-            runSpacing: AppSpacing.xs,
-            children: [
-              for (final edition in CardEdition.values)
-                LabeledChoiceChip(
-                  label: edition.label,
-                  selected: selection.edition == edition,
-                  selectedColor: palette.accent,
-                  onSelected: () => controller.setEdition(edition),
-                ),
-            ],
-          ),
-          const SizedBox(height: AppSpacing.md),
-          Text(
-            AppStrings.collectionLanguageLabel,
-            style: TextStyle(color: palette.onSurfaceMuted),
-          ),
-          const SizedBox(height: AppSpacing.xs),
-          Wrap(
-            spacing: AppSpacing.xs,
-            runSpacing: AppSpacing.xs,
-            children: [
-              for (final language in kCardLanguages)
-                LabeledChoiceChip(
-                  label: languageLabel(language),
-                  selected: selection.language == language,
-                  selectedColor: palette.accent,
-                  onSelected: () => controller.setLanguage(language),
-                ),
-            ],
-          ),
-          const SizedBox(height: AppSpacing.lg),
+          // Each block below owns its *trailing* gap rather than a leading one,
+          // so a block hidden by Fast log takes its spacing with it. The
+          // off-state is pixel-identical to before because `lg == md + sm`:
+          // three trailing `md`s plus the quantity row's own leading `sm` is
+          // the `md, md, lg` this used to read.
+          if (asked.contains(FastLogField.condition)) ...[
+            Wrap(
+              spacing: AppSpacing.xs,
+              runSpacing: AppSpacing.xs,
+              children: [
+                for (final condition in CardCondition.values)
+                  LabeledChoiceChip(
+                    label: condition.shortCode,
+                    selected: selection.condition == condition,
+                    selectedColor:
+                        ConditionChipColors.byShortCode[condition.shortCode]!,
+                    onSelected: () => controller.setCondition(condition),
+                  ),
+              ],
+            ),
+            const SizedBox(height: AppSpacing.md),
+          ],
+          if (asked.contains(FastLogField.edition)) ...[
+            Wrap(
+              spacing: AppSpacing.xs,
+              runSpacing: AppSpacing.xs,
+              children: [
+                for (final edition in CardEdition.values)
+                  LabeledChoiceChip(
+                    label: edition.label,
+                    selected: selection.edition == edition,
+                    selectedColor: palette.accent,
+                    onSelected: () => controller.setEdition(edition),
+                  ),
+              ],
+            ),
+            const SizedBox(height: AppSpacing.md),
+          ],
+          // The label and its spacer hide with the chips. Unlike the scan
+          // panel, this step labels its language row, so it is easy to leave
+          // orphaned above nothing.
+          if (asked.contains(FastLogField.language)) ...[
+            Text(
+              AppStrings.collectionLanguageLabel,
+              style: TextStyle(color: palette.onSurfaceMuted),
+            ),
+            const SizedBox(height: AppSpacing.xs),
+            Wrap(
+              spacing: AppSpacing.xs,
+              runSpacing: AppSpacing.xs,
+              children: [
+                for (final language in kCardLanguages)
+                  LabeledChoiceChip(
+                    label: languageLabel(language),
+                    selected: selection.language == language,
+                    selectedColor: palette.accent,
+                    onSelected: () => controller.setLanguage(language),
+                  ),
+              ],
+            ),
+            const SizedBox(height: AppSpacing.md),
+          ],
+          // What Save is about to write for the fields with no control.
+          if (asked.length < FastLogField.values.length) ...[
+            FastLogSummary(
+              askedFields: asked,
+              condition: selection.condition,
+              edition: selection.edition,
+              language: selection.language,
+            ),
+            const SizedBox(height: AppSpacing.md),
+          ],
+          const SizedBox(height: AppSpacing.sm),
           Row(
             children: [
               Text(
@@ -389,6 +409,69 @@ class _ConditionStep extends ConsumerWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+/// Which card is being logged: artwork, name, type, and on the condition step
+/// the set it will be logged against.
+///
+/// Shared by the printing and condition steps, and shaped after the scan review
+/// gate's identity row, because the name alone was the only thing confirming
+/// the right card had been picked out of a search list. The wizard was the only
+/// logging surface with no picture.
+///
+/// [CardArtThumbnail], not `CardThumbnail`: the card is not owned yet, so
+/// `cards.local_image_path` is NULL and the plain thumbnail would render
+/// nothing at all. This one fetches on a miss.
+class _CardIdentity extends StatelessWidget {
+  const _CardIdentity({required this.card, this.setLine});
+
+  final YgoCard card;
+
+  /// The set line under the type, or null on the printing step, where the set
+  /// is what the user is about to choose.
+  final String? setLine;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = AppPalette.of(context);
+    final line = setLine;
+
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        CardArtThumbnail(card: card, size: CardThumbnailSizes.list),
+        const SizedBox(width: AppSpacing.md),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                card.name,
+                style: TextStyle(
+                  color: palette.onSurface,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 18,
+                ),
+              ),
+              if (card.type != null)
+                Text(
+                  card.type!,
+                  style: TextStyle(color: palette.onSurfaceMuted),
+                ),
+              if (line != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: AppSpacing.xs),
+                  child: Text(
+                    line,
+                    style: TextStyle(color: palette.onSurfaceMuted),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 }

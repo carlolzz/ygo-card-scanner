@@ -95,6 +95,13 @@ List<Printing> filterPrintings(List<Printing> printings, String query) => [
 ///    user's call and the camera cannot tell; picking one arbitrarily would
 ///    silently log the wrong set.
 ///
+/// This function is unchanged by Fast log, and deliberately so: Fast log
+/// suppresses the *picker*, not the rule, so a card with one known printing is
+/// still logged against it. What does change under Fast log is rule 2's
+/// reversibility — the wizard no longer offers the printing step to go back
+/// to, so the pick is visible (the set line under the card name) but only
+/// correctable afterwards, from the collection detail screen's edit sheet.
+///
 /// A `defaultRarity` preference used to sit between rules 2 and 3, narrowing
 /// several printings down to the one matching a persisted rarity. It was
 /// removed in step 24: its option list came from `PrintingDao.distinctRarities`

@@ -7,6 +7,7 @@ import '../../models/app_settings.dart';
 import '../../models/card_condition.dart';
 import '../../models/card_edition.dart';
 import '../../models/collection_entry.dart';
+import '../../models/fast_log_field.dart';
 import '../../models/printing.dart';
 import '../../models/ygo_card.dart';
 import '../collection/collection_providers.dart';
@@ -37,6 +38,20 @@ class ScanController extends _$ScanController {
   /// widget tests that pump the screen without a resolved settings load.
   late final AppSettings _settings =
       ref.read(settingsControllerProvider).value ?? const AppSettings();
+
+  /// Which per-card details the review gate should still show a control for,
+  /// and whether Fast log is suppressing anything at all.
+  ///
+  /// Both are passthroughs of the rule on [AppSettings], so this gate, the
+  /// manual add wizard and the Settings screen cannot disagree about it. They
+  /// read the same [_settings] snapshot the seeded condition/edition/language
+  /// below come from, which is why they live here rather than in the widget: a
+  /// `ref.watch` in the panel would be a second, later read of the same
+  /// setting, so the panel could render a different field set than the state
+  /// was seeded under. It could then hide the grade chips while `state.condition`
+  /// still holds a value the user picked and `confirm` still writes.
+  Set<FastLogField> get askedFields => _settings.fastLogAskedFields;
+  bool get fastLogActive => _settings.fastLogActive;
 
   ScanState _initialState() => ScanState(
     status: ScanStatus.detecting,

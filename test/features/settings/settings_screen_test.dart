@@ -10,12 +10,14 @@ import 'package:ygo_scanner/data/db/dao/meta_dao.dart';
 import 'package:ygo_scanner/data/db/dao/printing_dao.dart';
 import 'package:ygo_scanner/data/db/database.dart';
 import 'package:ygo_scanner/data/repositories/card_repository.dart';
+import 'package:ygo_scanner/data/repositories/settings_repository.dart';
 import 'package:ygo_scanner/features/settings/settings_providers.dart';
 import 'package:ygo_scanner/features/settings/settings_screen.dart';
 import 'package:ygo_scanner/models/app_settings.dart';
 import 'package:ygo_scanner/models/app_theme_mode.dart';
 import 'package:ygo_scanner/models/card_condition.dart';
 import 'package:ygo_scanner/models/card_edition.dart';
+import 'package:ygo_scanner/models/fast_log_field.dart';
 
 import '../../data/db/test_db.dart';
 import '../../support/widget_test_harness.dart';
@@ -155,6 +157,106 @@ void main() {
       await pumpUntilSettled(tester);
 
       expect(await MetaDao(testDb).get('settings.language'), 'JP');
+    });
+  });
+
+  group('fast log', () {
+    /// The Fast log section sits below the 600pt fold, and the `ListView` is
+    /// lazy, so its tiles have no element at all until they are dragged into
+    /// view.
+    ///
+    /// Anchored on the **switch**, which is the first of the two tiles:
+    /// scrolling to the Configure row below it carries the switch off the top
+    /// of the viewport, where the list disposes it and finders miss it again.
+    Future<void> scrollToFastLog(WidgetTester tester) =>
+        scrollTo(tester, find.text(AppStrings.settingsFastLogLabel));
+
+    testWidgets('switching it on persists it', (tester) async {
+      await tester.runAsync(() async {
+        await openSettings(tester);
+        await scrollToFastLog(tester);
+
+        await tester.tap(find.text(AppStrings.settingsFastLogLabel));
+        await pumpUntilSettled(tester);
+
+        expect(await MetaDao(testDb).get('settings.fast_log_enabled'), 'true');
+      });
+    });
+
+    testWidgets('the configure row reports it is off', (tester) async {
+      await tester.runAsync(() async {
+        await openSettings(tester);
+        await scrollToFastLog(tester);
+
+        expect(find.text(AppStrings.settingsFastLogSummaryOff), findsOneWidget);
+      });
+    });
+
+    testWidgets('the configure row lists what is still asked', (tester) async {
+      await tester.runAsync(() async {
+        await SettingsRepository(MetaDao(testDb)).save(
+          const AppSettings(
+            fastLogEnabled: true,
+            fastLogFields: {FastLogField.condition},
+          ),
+        );
+        await openSettings(tester);
+        await scrollToFastLog(tester);
+
+        expect(
+          find.text(
+            '${AppStrings.settingsFastLogSummaryPrefix}'
+            '${FastLogField.condition.label}',
+          ),
+          findsOneWidget,
+        );
+      });
+    });
+
+    testWidgets('the configure row says so when nothing is asked', (
+      tester,
+    ) async {
+      await tester.runAsync(() async {
+        await SettingsRepository(
+          MetaDao(testDb),
+        ).save(const AppSettings(fastLogEnabled: true));
+        await openSettings(tester);
+        await scrollToFastLog(tester);
+
+        expect(
+          find.text(AppStrings.settingsFastLogSummaryAsksNothing),
+          findsOneWidget,
+        );
+      });
+    });
+
+    // The degenerate configuration: ticked means "still ask me", so ticking
+    // everything asks for everything and Fast log suppresses nothing. The row
+    // has to say that, because the switch still reads as on.
+    testWidgets('the configure row says Fast log is doing nothing', (
+      tester,
+    ) async {
+      await tester.runAsync(() async {
+        await SettingsRepository(MetaDao(testDb)).save(
+          AppSettings(
+            fastLogEnabled: true,
+            fastLogFields: FastLogField.values.toSet(),
+          ),
+        );
+        await openSettings(tester);
+        await scrollToFastLog(tester);
+
+        expect(
+          find.text(AppStrings.settingsFastLogSummaryAsksEverything),
+          findsOneWidget,
+        );
+        // The switch stays bound to the stored intent, or turning it on here
+        // would visibly bounce back off.
+        final switchTile = tester.widget<SwitchListTile>(
+          find.widgetWithText(SwitchListTile, AppStrings.settingsFastLogLabel),
+        );
+        expect(switchTile.value, isTrue);
+      });
     });
   });
 

@@ -30,10 +30,30 @@ class SearchLanguageDropdown extends ConsumerWidget {
         color: palette.surfaceRaised,
         borderRadius: BorderRadius.circular(AppRadius.md),
       ),
-      padding: const EdgeInsets.symmetric(horizontal: AppSpacing.sm),
+      // Vertical padding as well as horizontal, which is what keeps the
+      // button's own ink inside this container's rounded border. With the
+      // underline hidden the button is wrapped in an `InkWell` that paints its
+      // focus highlight across the whole box, and the button's own padding is
+      // zero, so with a horizontal-only inset that highlight ran edge to edge
+      // the moment the menu was opened.
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppSpacing.sm,
+        vertical: AppSpacing.sm,
+      ),
       child: DropdownButtonHideUnderline(
         child: DropdownButton<String>(
           value: language,
+          // The selected value renders in an `IndexedStack` sized to the widest
+          // item, so without this the shorter label sits left of centre in a
+          // box shaped by the longer one.
+          alignment: AlignmentDirectional.center,
+          // Otherwise `itemHeight` pins the button at kMinInteractiveDimension
+          // (48) and the added vertical padding makes this taller than the
+          // search field it sits beside.
+          isDense: true,
+          // The container already reads as one control; a second highlight
+          // inside it just looks like the box growing.
+          focusColor: Colors.transparent,
           // The field beside this one is `filled`, which paints its own
           // background; without this the menu would open over a transparent
           // surface on some platforms.

@@ -8,6 +8,7 @@ import '../../models/card_condition.dart';
 import '../../models/card_edition.dart';
 import '../../models/card_search_hit.dart';
 import '../../models/collection_entry.dart';
+import '../../models/fast_log_field.dart';
 import '../../models/printing.dart';
 import '../../models/ygo_card.dart';
 import '../collection/collection_providers.dart';
@@ -71,6 +72,16 @@ class AddCardSelectionController extends _$AddCardSelectionController {
   late final AppSettings _settings =
       ref.read(settingsControllerProvider).value ?? const AppSettings();
 
+  /// Which per-card details the wizard should still show a control for, and
+  /// whether Fast log is suppressing anything at all.
+  ///
+  /// Passthroughs of the rule on [AppSettings], shared verbatim with the scan
+  /// review gate so a card logged either way is asked the same questions. They
+  /// read the same [_settings] snapshot [_initial] seeds from, which is why
+  /// they live here rather than being watched in the widget.
+  Set<FastLogField> get askedFields => _settings.fastLogAskedFields;
+  bool get fastLogActive => _settings.fastLogActive;
+
   AddCardSelection _initial() => AddCardSelection(
     condition: _settings.defaultCondition,
     edition: _settings.defaultEdition,
@@ -92,10 +103,22 @@ class AddCardSelectionController extends _$AddCardSelectionController {
   ///   stays visible and reversible: `_ConditionStep` prints the set under the
   ///   card name, and the back button routes to the printing step whenever
   ///   `printings` is non-empty.
+  ///
+  /// Under Fast log the printing step is skipped in **every** case, including
+  /// several printings, where the card is logged without one. The auto-pick is
+  /// then still visible (that same set line) but no longer reversible in place,
+  /// since the back button cannot route to a step that is not offered; it stays
+  /// correctable from the collection detail screen's edit sheet.
   Future<void> selectCard(YgoCard card) async {
     state = AddCardSelection(
       card: card,
-      step: AddCardStep.printing,
+      // Stay on the search list for the round trip rather than jumping to the
+      // condition step, which under Fast log is where this would otherwise
+      // land. That step carries a live Save button, and showing it before
+      // `preferredPrinting` has been applied is a real race on a cold sqflite
+      // isolate: Fast log is precisely the mode that encourages tapping a
+      // result and then Save immediately, and losing it logs `printingId` null.
+      step: fastLogActive ? AddCardStep.search : AddCardStep.printing,
       condition: state.condition,
       edition: state.edition,
       language: state.language,
@@ -118,7 +141,7 @@ class AddCardSelectionController extends _$AddCardSelectionController {
       card: state.card,
       printings: printings,
       printing: preferred,
-      step: printings.isEmpty || preferred != null
+      step: fastLogActive || printings.isEmpty || preferred != null
           ? AddCardStep.condition
           : AddCardStep.printing,
       condition: state.condition,

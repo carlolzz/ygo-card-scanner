@@ -24,4 +24,8 @@ class AppRoutes {
   /// [collectionDetail] and [cardDetail].
   static const String collectionValue = '/statistics/value';
   static const String settings = '/settings';
+
+  /// The three per-card details Fast log can stop asking about. A sibling path
+  /// like [collectionValue], not a nested route: this router has no nesting.
+  static const String fastLog = '/settings/fast-log';
 }

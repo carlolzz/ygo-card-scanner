@@ -2733,6 +2733,164 @@ order):
     fail** with the line removed, and the second asserts the *other* chips have
     not moved, which is the symptom that was actually reported.
 
+31. Fourteenth on-device feedback pass — Fast log, wizard artwork, help-box
+    scrim, dropdown alignment ← done (verified: `flutter analyze` clean, full
+    `flutter test` green at **814 tests**, `pytest tools/` green). **No DB
+    migration, no schema change, no new dependency.** Nothing here touches the
+    descriptor, `assets/card_hashes.json`, the detection algorithm or any
+    scan/matching/quality threshold.
+    **Fast log: log a card without being asked everything each time.** New
+    `AppSettings.fastLogEnabled` + `fastLogFields`, a `Set<FastLogField>` over a
+    new three-member enum (`condition`/`edition`/`language`). **Ticking a field
+    means "still ask me about it"**; anything unticked is written from its
+    Settings default with no control shown. The **set is never asked** while
+    Fast log is on: `preferredPrinting` is untouched, so a card with one known
+    printing is still logged against it and a card with several is logged
+    without one.
+    **The auto-disable rule is one derived getter**, `AppSettings.fastLogActive`
+    = `fastLogEnabled && !fastLogFields.containsAll(values)`. Ticking everything
+    asks for everything, so Fast log changes nothing and is treated as off. It
+    lives on the model, not in either flow, because the failure mode is silent
+    disagreement: the scan gate hiding a control the wizard still shows means
+    the same card is logged differently depending on how it was entered.
+    `fastLogAskedFields` is its companion, returning **everything** when
+    inactive so no caller has to ask both questions. The user originally phrased
+    the rule as "if nothing is selected" — that only holds under the opposite
+    tick semantics, and was settled the other way, so the degenerate case is
+    all-ticked rather than none.
+    **Two fields, not one.** `fastLogEnabled` is intent, `fastLogFields` is
+    configuration: folding them (an empty or null set meaning off) would make
+    the switch destroy the ticks, so turning Fast log off and on again would
+    lose what was configured. The default is the **empty set**, so the switch
+    does its whole job at the first tap instead of needing a second trip into a
+    sub-screen to do anything. And `AppSettings` still has **no `==`** —
+    `copyWith` always yields a non-identical object so Riverpod always notifies,
+    and adding deep set equality would newly suppress no-op writes across all
+    fourteen fields. `Set.unmodifiable` goes at the two producer boundaries,
+    never in the constructor, which would kill `const`.
+    **`_parseFields` is the first guard here whose cases are deliberately not
+    uniform**, and the asymmetry is the design: a missing key falls back; `''`
+    is the **empty set**, because "ask about nothing" is the maximal Fast log
+    and a real reachable configuration that must round-trip; unreadable members
+    are dropped individually; but a non-empty value with *nothing* readable
+    falls back rather than reading as empty. That last direction is the one that
+    matters — a value we cannot read must degrade toward asking **more**, since
+    the other way silently logs details the user was never shown. `save` writes
+    the set in **declaration order** (`values.where(contains)`), not the set's
+    own: a `{...set, field}` literal preserves insertion order, so without it
+    the identical configuration stores two different strings depending on which
+    switch was flipped first.
+    **`setFastLogField(field, {asked})` takes one field, never a whole set.**
+    `_update` composes each change onto the value the previous write published,
+    so a caller passing a set it computed from the snapshot it rendered is
+    exactly the stale-snapshot bug the `_writes` queue exists to prevent (step
+    27) — and three switches on one screen is precisely the "two changes before
+    the first write lands" case. **Verified to fail**: swapped for a whole-set
+    setter, the two-ticks-in-succession test goes red with the second reverting
+    the first.
+    **The Configure surface is a flat route**, `AppRoutes.fastLog =
+    '/settings/fast-log'`, the eleventh `GoRoute` and a sibling path like
+    `/statistics/value` (this router still has no nesting). Not a dialog: the
+    one dialog Settings owns is a *confirmation*, and an `AlertDialog` of
+    switches inherits OK/Cancel semantics that would force local draft state,
+    i.e. a second source of truth for a preference, where every other settings
+    control writes through immediately. Concretely it also keeps three tiles
+    titled Condition/Edition/Language off the Settings screen, where they would
+    collide with the Defaults section's identical `_FieldLabel`s and ambiguate
+    every finder.
+    **Both controllers read the rule once, at build, through a passthrough
+    getter** (`askedFields`/`fastLogActive` off the existing `late final
+    _settings`) — **not** `ref.watch` in the panel, which would be a second,
+    later read of the same setting: the panel could then render a different
+    field set than the state was seeded under, hiding the grade chips while
+    `state.condition` still holds a picked value that `confirm` still writes.
+    Not a `ScanState`/`AddCardSelection` field either: it never changes after
+    `build()`, and `AddCardSelection` has no `copyWith` at all, so it would mean
+    ten field-by-field rebuilds each able to drop it. **`scan_controller.dart`
+    gained no logic** — every gate-opening path already seeded
+    condition/edition/language from the defaults, so Fast log changes only
+    whether a control is *shown*, never what is written when one is left alone.
+    **Each hidden block owns its trailing gap, and the off-state is
+    pixel-identical.** `AppSpacing.md == 2 * sm` and `lg == md + sm`, so three
+    trailing `sm`s plus the quantity row's own leading `sm` reproduces the scan
+    panel's old `sm, sm, md`, and three trailing `md`s plus a leading `sm`
+    reproduces the wizard's `md, md, lg`. Commented at both sites so it is not
+    tidied back. The wizard's language block hides its muted label **and** its
+    `xs` spacer with the chips — the scan panel has no such label, so that one
+    is easy to leave orphaned above nothing.
+    **The wizard's phase-1 step is `search`, not `condition`.** `selectCard` is
+    two-phase with a stale-response guard, and jumping straight to the condition
+    step under Fast log would expose a live Save button *before*
+    `preferredPrinting` had been applied. On a cold sqflite isolate that is a
+    real race, and Fast log is precisely the mode that encourages tapping a
+    result then Save immediately, so losing it logs `printingId` null silently.
+    The cost is one local query's worth of no feedback on the tap; if that reads
+    badly on device the fix is a busy flag, not a step change. The app-bar back
+    button gained `&& !controller.fastLogActive` so it cannot route into a step
+    that is no longer offered, where Skip would null out an auto-picked set —
+    **verified to fail** without it. Consequence, and both comments were
+    corrected rather than left false: `preferredPrinting`'s rule 2 stays
+    *visible* under Fast log (the set line still prints) but is no longer
+    reversible in place, only correctable from the collection detail edit sheet.
+    **`FastLogSummary` is an addition beyond the brief, and the reason is the
+    review gate.** `_MatchedPanel`'s own doc calls it "the spec's non-negotiable
+    'reviewable before it reaches the database' gate", and with every field
+    hidden that panel is a picture, a quantity and a button while Confirm writes
+    a grade, an edition and a language appearing nowhere on screen: the tap
+    survives, its meaning does not. One muted `Logging as: NM · Unlimited · EN`
+    line, listing only the **unasked** values, in exactly the space the hidden
+    chip rows vacated. It returns `SizedBox.shrink()` when everything is asked,
+    so both flows build it unconditionally. Deliberately synchronous and
+    set-free: the wizard already prints the set, and reaching it in the scan
+    panel would mean a second `cardPrintingsProvider` read.
+    **The help box's scrim went 0.82 → 0.95**, which is the *same* fix
+    `_DiagnosticsBox` already carries with its reasoning written out.
+    `_SearchRoiOverlay` draws the reticle inflated by
+    `ScanDetectionTokens.reticleRoiMargin` (0.08), so on a 393x851 phone its
+    bottom edge lands ~36pt below the reticle border, inside the bottom-anchored
+    help box — `ScanReticleTokens.verticalOffsetFraction`'s 12pt clearance
+    budget is measured from the **border**, not the inflated search region. It
+    is an earlier stack child, so its opaque `onSurfaceMuted` stroke read
+    straight through. Suppressing the help box under diagnostics (the way
+    `_SurfaceHint` is) was rejected: the hint is suppressed because diagnostics
+    takes its slot in the capped band, while this box contends with nothing.
+    **`SearchLanguageDropdown`**, the only dropdown in the manual add flow (the
+    per-card language control is chips): `alignment: AlignmentDirectional.center`
+    because the selected value renders in an `IndexedStack` sized to the widest
+    item, so the shorter label sat left in a box shaped by the longer one; and
+    `focusColor: Colors.transparent` + `vertical: AppSpacing.sm` on the
+    container + `isDense: true`, because with the underline hidden the button is
+    wrapped in an `InkWell` whose focus highlight painted the whole box, and the
+    container had horizontal padding only. `isDense` offsets the added padding,
+    which `itemHeight` would otherwise pin at 48 and leave taller than the
+    search field beside it. **A rendering detail, so it wants a look on device.**
+    **The wizard shows artwork now**, on both the printing and condition steps,
+    via a shared private `_CardIdentity` shaped after the scan gate's identity
+    row. It was the only logging surface with no picture, so a name in a search
+    list was the only confirmation the right card had been picked.
+    `CardArtThumbnail`, **not** `CardThumbnail`: the card is not owned yet, so
+    `cards.local_image_path` is NULL and the plain thumbnail would render
+    nothing.
+    **Test gotchas, four.** `AppStrings.settingsFastLogLabel` is **"Use Fast
+    log"**, not "Fast log" — the section header already says that, so two
+    identical lines read as a rendering fault *and* made every `find.text`
+    ambiguous. The Settings group's scroll helper is anchored on the **switch**,
+    the first of the two tiles: scrolling to the Configure row below it carries
+    the switch off the top of the lazy `ListView`, where it is disposed and
+    finders miss it again. Any test whose subject is a setting must write the
+    `meta` rows **and resolve `settingsControllerProvider`** before `pumpWidget`
+    — both controllers read `.value` synchronously at build, so the flip-it-
+    afterwards trick the `showScanHelp`/diagnostics cases use cannot reach them,
+    and an unresolved load silently hands them `const AppSettings()`; the scan
+    group needs a `ProviderContainer`/`UncontrolledProviderScope` for this, and
+    `openWithSettings` was lifted out of its group in the wizard's suite. And
+    `contains` on a `List<Map>` compares by identity, so a saved-row assertion
+    needs `anyElement(equals({...}))`.
+    **Still open**, unchanged: `maxHammingDistance` at 72,
+    `CardDetectionTuning.innerQuadMinAreaRatio` at 0.78, the passcode ROI filter
+    off, `artAgreementFrames` at 2, every `FrameQualityTuning` threshold still
+    uncalibrated on device, and whether `kPriceTtl` at 24 h is right.
+
 ## Standing rules
 
 - No ORM. Raw SQL in DAOs only. No SQL outside `lib/data/db/`.

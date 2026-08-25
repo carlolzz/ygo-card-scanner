@@ -7,6 +7,7 @@ import '../../models/card_edition.dart';
 import '../../models/card_language.dart';
 import '../../models/collection_sort_by.dart';
 import '../../models/collection_view_mode.dart';
+import '../../models/fast_log_field.dart';
 import '../db/dao/meta_dao.dart';
 import '../db/database.dart';
 
@@ -26,6 +27,8 @@ const _collectionViewModeKey = 'settings.collection_view_mode';
 const _collectionSortByKey = 'settings.collection_sort_by';
 const _collectionSortDescendingKey = 'settings.collection_sort_descending';
 const _searchLanguageKey = 'settings.search_language';
+const _fastLogEnabledKey = 'settings.fast_log_enabled';
+const _fastLogFieldsKey = 'settings.fast_log_fields';
 
 /// Reads and writes [AppSettings] as key/value pairs in the existing `meta`
 /// table. No schema change: `meta` has carried arbitrary keys since v1, and a
@@ -89,6 +92,14 @@ class SettingsRepository {
         kSearchLanguages,
         defaults.searchLanguage,
       ),
+      fastLogEnabled: _parseBool(
+        await _metaDao.get(_fastLogEnabledKey),
+        defaults.fastLogEnabled,
+      ),
+      fastLogFields: _parseFields(
+        await _metaDao.get(_fastLogFieldsKey),
+        defaults.fastLogFields,
+      ),
     );
   }
 
@@ -120,6 +131,18 @@ class SettingsRepository {
       settings.collectionSortDescending.toString(),
     );
     await _metaDao.set(_searchLanguageKey, settings.searchLanguage);
+    await _metaDao.set(_fastLogEnabledKey, settings.fastLogEnabled.toString());
+    // Written in declaration order, not the set's own iteration order: a
+    // `{...set, field}` literal preserves insertion order, so ticking Edition
+    // then Condition would otherwise store a different value than ticking them
+    // the other way round for the identical configuration.
+    await _metaDao.set(
+      _fastLogFieldsKey,
+      FastLogField.values
+          .where(settings.fastLogFields.contains)
+          .map((field) => field.toDb())
+          .join(','),
+    );
   }
 
   /// Every `fromDb` throws on an unrecognized value. A stored value can be
@@ -146,6 +169,46 @@ class SettingsRepository {
     List<String> allowed,
     String fallback,
   ) => stored != null && allowed.contains(stored) ? stored : fallback;
+
+  /// A set of enum members, stored as a comma-separated list of
+  /// [FastLogField.toDb] names in one `meta` value.
+  ///
+  /// Four cases, and they are deliberately not all "fall back":
+  ///
+  /// - **Missing key** -> [fallback]. Never configured.
+  /// - **Present but empty** -> the empty set. "Ask about nothing" is a
+  ///   legitimate, reachable configuration (it is the maximal Fast log), so it
+  ///   has to round-trip rather than being read as "never configured".
+  /// - **Present with at least one readable member** -> those members, with
+  ///   unreadable ones dropped individually. An unknown name is a field this
+  ///   build does not have, and it could not be rendered anyway.
+  /// - **Present, non-empty, and nothing in it readable** -> [fallback], *not*
+  ///   the empty set. This is the one direction that matters: a value we cannot
+  ///   read at all must degrade toward asking *more*, because the other
+  ///   direction silently logs cards with details the user was never shown.
+  ///
+  /// Note that `save` writes every key on every call, so a member added by a
+  /// future build is dropped here and then erased from the database by the next
+  /// unrelated preference change. Same class of loss [_parse] already accepts,
+  /// and not worth engineering around for three members.
+  static Set<FastLogField> _parseFields(
+    String? stored,
+    Set<FastLogField> fallback,
+  ) {
+    if (stored == null) return fallback;
+    if (stored.trim().isEmpty) return const <FastLogField>{};
+    final parsed = <FastLogField>{};
+    for (final part in stored.split(',')) {
+      final name = part.trim();
+      if (name.isEmpty) continue;
+      try {
+        parsed.add(FastLogField.fromDb(name));
+      } on ArgumentError {
+        // Drop the member, keep the rest.
+      }
+    }
+    return parsed.isEmpty ? fallback : Set.unmodifiable(parsed);
+  }
 
   /// Booleans are stored as `bool.toString()` (`'true'`/`'false'`). Anything
   /// else — a missing key or a hand-edited value — falls back to [fallback].

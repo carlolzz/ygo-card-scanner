@@ -9,6 +9,7 @@ import '../../models/card_edition.dart';
 import '../../models/card_language.dart';
 import '../../models/collection_sort_by.dart';
 import '../../models/collection_view_mode.dart';
+import '../../models/fast_log_field.dart';
 import '../collection/collection_providers.dart';
 import '../sync/initial_sync_providers.dart';
 
@@ -74,6 +75,27 @@ class SettingsController extends _$SettingsController {
   /// results re-run on the change.
   Future<void> setSearchLanguage(String language) =>
       _update((s) => s.copyWith(searchLanguage: language));
+
+  Future<void> setFastLogEnabled(bool value) =>
+      _update((s) => s.copyWith(fastLogEnabled: value));
+
+  /// Takes one field and its new tick, **not** a whole set.
+  ///
+  /// [_update] composes each change onto the value the previous write
+  /// published; a caller passing a whole set would have computed it from the
+  /// snapshot it rendered, which is precisely the stale-snapshot bug the
+  /// [_writes] queue exists to prevent. Three switches on one screen is exactly
+  /// the "two changes before the first write lands" case.
+  Future<void> setFastLogField(FastLogField field, {required bool asked}) =>
+      _update((s) {
+        final next = {...s.fastLogFields};
+        if (asked) {
+          next.add(field);
+        } else {
+          next.remove(field);
+        }
+        return s.copyWith(fastLogFields: Set.unmodifiable(next));
+      });
 
   /// Serializes [_update]. Without it two changes made before the first write
   /// lands both read the *same* `state.value`, so the second saves a snapshot

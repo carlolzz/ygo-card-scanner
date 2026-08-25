@@ -382,11 +382,31 @@ class AppStrings {
   static const String settingsTitle = 'Settings';
   static const String settingsDefaultsSection = 'Defaults for new cards';
   static const String settingsDefaultsDescription =
-      'Pre-selected when you scan or add a card. Language and grade can still '
-      'be changed per card as you log it.';
+      'Pre-selected when you scan or add a card. Each one can still be changed '
+      'per card as you log it, unless Fast log is skipping it below.';
   static const String settingsConditionLabel = 'Condition';
   static const String settingsEditionLabel = 'Edition';
   static const String settingsLanguageLabel = 'Language';
+
+  // Fast log: fewer questions per card. The switch lives on the Settings
+  // screen; the three ticks live on their own screen, at AppRoutes.fastLog.
+  static const String settingsFastLogSection = 'Fast log';
+  // Not "Fast log" again: the section header above already says that, and two
+  // identical lines in a row read as a rendering fault.
+  static const String settingsFastLogLabel = 'Use Fast log';
+  static const String settingsFastLogDescription =
+      'Ask for fewer details when you log a card. Anything you are not asked '
+      'about uses your default above. The set is never asked.';
+  static const String settingsFastLogConfigureLabel =
+      'Choose what you are still asked';
+  static const String settingsFastLogSummaryOff = 'Off. Every detail is asked.';
+  static const String settingsFastLogSummaryPrefix = 'Still asked: ';
+  static const String settingsFastLogSummaryAsksNothing =
+      'Nothing is asked. Cards are logged with your defaults.';
+  // The degenerate configuration, said plainly on the row itself rather than
+  // only inside the screen the user would have to open to find out.
+  static const String settingsFastLogSummaryAsksEverything =
+      'Every detail is still ticked, so Fast log is doing nothing.';
 
   static const String settingsAppearanceSection = 'Appearance';
   static const String settingsThemeLabel = 'Theme';
@@ -421,6 +441,23 @@ class AppStrings {
   static const String settingsResyncDialogCancel = 'Cancel';
   static const String settingsResyncDialogConfirm = 'Re-sync';
   static const String settingsResyncDoneMessage = 'Card database updated.';
+
+  // The Fast log configuration screen, at AppRoutes.fastLog.
+  static const String fastLogTitle = 'Fast log';
+  static const String fastLogIntro =
+      'Tick a detail to keep being asked about it when you log a card. '
+      'Unticked details use your default, with no control shown.';
+  static const String fastLogDisabledNote =
+      'Fast log is off. These choices apply once you turn it on in Settings.';
+  static const String fastLogAllTickedNote =
+      'Everything is ticked, so Fast log changes nothing. Untick a detail to '
+      'start skipping it.';
+  static const String fastLogSetNote =
+      'The set is never asked while Fast log is on. A card with only one known '
+      'printing is still logged against it.';
+  // What a fast log is about to write for the details it did not ask about. A
+  // confirm the user cannot read is not the review the spec requires.
+  static const String fastLogSilentPrefix = 'Logging as: ';
 
   static const String statisticsTitle = 'Statistics';
   static const String statisticsEmptyMessage =

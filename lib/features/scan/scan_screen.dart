@@ -14,7 +14,9 @@ import '../../data/export/file_share.dart';
 import '../../models/card_condition.dart';
 import '../../models/card_edition.dart';
 import '../../models/card_language.dart';
+import '../../models/fast_log_field.dart';
 import '../../shared/widgets/card_art_thumbnail.dart';
+import '../../shared/widgets/fast_log_summary.dart';
 import '../../shared/widgets/labeled_choice_chip.dart';
 import '../../shared/widgets/printing_picker.dart';
 import '../collection/collection_providers.dart';
@@ -861,7 +863,13 @@ class _HelpPanel extends StatelessWidget {
           child: Container(
             padding: const EdgeInsets.all(AppSpacing.sm),
             decoration: BoxDecoration(
-              color: _cameraScrim.withValues(alpha: 0.82),
+              // Nearly opaque, not the 0.8 the other overlays use, and for the
+              // same reason `_DiagnosticsBox` is: `_SearchRoiOverlay` draws the
+              // reticle inflated by `ScanDetectionTokens.reticleRoiMargin`, so
+              // its bottom edge lands well inside this box. It is an earlier
+              // stack child, so at 0.82 that opaque grey stroke read straight
+              // through the help text.
+              color: _cameraScrim.withValues(alpha: 0.95),
               borderRadius: BorderRadius.circular(AppRadius.md),
             ),
             child: Column(
@@ -1477,6 +1485,10 @@ class _MatchedPanel extends ConsumerWidget {
     final controller = ref.read(scanControllerProvider.notifier);
     final card = state.matchedCard!;
     final palette = AppPalette.of(context);
+    // Read off the controller, which pinned it to the same settings snapshot
+    // the state's condition/edition/language were seeded from. Not watched
+    // here: see `ScanController.askedFields`.
+    final asked = controller.askedFields;
 
     return _ScanBottomPanel(
       child: SingleChildScrollView(
@@ -1534,53 +1546,79 @@ class _MatchedPanel extends ConsumerWidget {
               ],
             ),
             const SizedBox(height: AppSpacing.md),
-            // First, above the chips: its search field opens the keyboard,
-            // which covers everything below it. Self-hides (and supplies its
-            // own trailing gap) when the card has no known printings.
-            _SetPicker(passcode: card.passcode, printingId: state.printingId),
-            Wrap(
-              spacing: AppSpacing.xs,
-              runSpacing: AppSpacing.xs,
-              children: [
-                for (final condition in CardCondition.values)
-                  LabeledChoiceChip(
-                    label: condition.shortCode,
-                    selected: state.condition == condition,
-                    selectedColor:
-                        ConditionChipColors.byShortCode[condition.shortCode]!,
-                    onSelected: () => controller.setCondition(condition),
-                  ),
-              ],
-            ),
+            // Everything from here to the quantity row is Fast log territory,
+            // and each block owns its *trailing* gap rather than the leading
+            // one, so a hidden block takes its spacing with it. The off-state
+            // is pixel-identical to before because `md == 2 * sm`: three
+            // trailing `sm`s plus the quantity row's own leading `sm` is the
+            // `sm, sm, md` this used to read. Do not "tidy" it back.
+            //
+            // The set picker is first, above the chips: its search field opens
+            // the keyboard, which covers everything below it. It self-hides
+            // (and supplies its own trailing gap) when the card has no known
+            // printings, so suppressing it here is exactly that same case.
+            if (!controller.fastLogActive)
+              _SetPicker(passcode: card.passcode, printingId: state.printingId),
+            if (asked.contains(FastLogField.condition)) ...[
+              Wrap(
+                spacing: AppSpacing.xs,
+                runSpacing: AppSpacing.xs,
+                children: [
+                  for (final condition in CardCondition.values)
+                    LabeledChoiceChip(
+                      label: condition.shortCode,
+                      selected: state.condition == condition,
+                      selectedColor:
+                          ConditionChipColors.byShortCode[condition.shortCode]!,
+                      onSelected: () => controller.setCondition(condition),
+                    ),
+                ],
+              ),
+              const SizedBox(height: AppSpacing.sm),
+            ],
+            if (asked.contains(FastLogField.edition)) ...[
+              Wrap(
+                spacing: AppSpacing.xs,
+                runSpacing: AppSpacing.xs,
+                children: [
+                  for (final edition in CardEdition.values)
+                    LabeledChoiceChip(
+                      label: edition.label,
+                      selected: state.edition == edition,
+                      selectedColor: palette.accent,
+                      onSelected: () => controller.setEdition(edition),
+                    ),
+                ],
+              ),
+              const SizedBox(height: AppSpacing.sm),
+            ],
+            if (asked.contains(FastLogField.language)) ...[
+              Wrap(
+                spacing: AppSpacing.xs,
+                runSpacing: AppSpacing.xs,
+                children: [
+                  for (final language in kCardLanguages)
+                    LabeledChoiceChip(
+                      label: languageLabel(language),
+                      selected: state.language == language,
+                      selectedColor: palette.accent,
+                      onSelected: () => controller.setLanguage(language),
+                    ),
+                ],
+              ),
+              const SizedBox(height: AppSpacing.sm),
+            ],
+            // What Confirm is about to write for the fields with no control.
+            if (asked.length < FastLogField.values.length) ...[
+              FastLogSummary(
+                askedFields: asked,
+                condition: state.condition,
+                edition: state.edition,
+                language: state.language,
+              ),
+              const SizedBox(height: AppSpacing.sm),
+            ],
             const SizedBox(height: AppSpacing.sm),
-            Wrap(
-              spacing: AppSpacing.xs,
-              runSpacing: AppSpacing.xs,
-              children: [
-                for (final edition in CardEdition.values)
-                  LabeledChoiceChip(
-                    label: edition.label,
-                    selected: state.edition == edition,
-                    selectedColor: palette.accent,
-                    onSelected: () => controller.setEdition(edition),
-                  ),
-              ],
-            ),
-            const SizedBox(height: AppSpacing.sm),
-            Wrap(
-              spacing: AppSpacing.xs,
-              runSpacing: AppSpacing.xs,
-              children: [
-                for (final language in kCardLanguages)
-                  LabeledChoiceChip(
-                    label: languageLabel(language),
-                    selected: state.language == language,
-                    selectedColor: palette.accent,
-                    onSelected: () => controller.setLanguage(language),
-                  ),
-              ],
-            ),
-            const SizedBox(height: AppSpacing.md),
             Row(
               children: [
                 Text(

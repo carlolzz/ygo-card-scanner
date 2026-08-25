@@ -11,7 +11,9 @@ import 'package:ygo_scanner/core/constants.dart';
 import 'package:ygo_scanner/core/router.dart';
 import 'package:ygo_scanner/core/theme/tokens.dart';
 import 'package:ygo_scanner/data/db/dao/collection_dao.dart';
+import 'package:ygo_scanner/data/db/dao/meta_dao.dart';
 import 'package:ygo_scanner/data/db/database.dart';
+import 'package:ygo_scanner/data/repositories/settings_repository.dart';
 import 'package:ygo_scanner/data/seed/fake_collection_seed.dart';
 import 'package:ygo_scanner/features/scan/art_frame.dart';
 import 'package:ygo_scanner/features/scan/art_matcher.dart';
@@ -24,8 +26,13 @@ import 'package:ygo_scanner/features/scan/scan_providers.dart';
 import 'package:ygo_scanner/features/scan/scan_sample.dart';
 import 'package:ygo_scanner/features/scan/scan_screen.dart';
 import 'package:ygo_scanner/features/settings/settings_providers.dart';
+import 'package:ygo_scanner/models/app_settings.dart';
 import 'package:ygo_scanner/models/card_condition.dart';
+import 'package:ygo_scanner/models/card_edition.dart';
+import 'package:ygo_scanner/models/card_language.dart';
+import 'package:ygo_scanner/models/fast_log_field.dart';
 import 'package:ygo_scanner/models/ygo_card.dart';
+import 'package:ygo_scanner/shared/widgets/printing_picker.dart';
 
 import '../../data/db/test_db.dart';
 import '../../support/widget_test_harness.dart';
@@ -951,6 +958,119 @@ void main() {
           find.textContaining(AppStrings.scanDiagnosticsCamOpening),
           findsOneWidget,
         );
+      });
+    });
+  });
+
+  group('fast log', () {
+    /// Drives the machine to a review panel on Mirror Force, the seed's
+    /// multi-printing card, so the set picker would render if it were not
+    /// suppressed.
+    ///
+    /// The settings rows are written **before** `pumpWidget`, not flipped
+    /// afterwards the way the help/diagnostics cases above do: `ScanController`
+    /// reads its settings once, with `ref.read`, when it is built.
+    Future<void> pumpMatchedUnderFastLog(WidgetTester tester) async {
+      await SettingsRepository(MetaDao(testDb)).save(
+        const AppSettings(
+          defaultEdition: CardEdition.first,
+          language: 'DE',
+          fastLogEnabled: true,
+          fastLogFields: {FastLogField.condition},
+        ),
+      );
+
+      final artReadings = StreamController<ArtReading>.broadcast();
+      addTearDown(artReadings.close);
+
+      // Resolved before the screen builds, for the same reason the rows are
+      // written before it: `ScanController` reads `.value` synchronously, so an
+      // unresolved load would hand it `const AppSettings()` and Fast log would
+      // silently be off.
+      final container = ProviderContainer(
+        overrides: [
+          appDatabaseProvider.overrideWith((ref) async => testDb),
+          cameraServiceProvider.overrideWith((ref) => _InertCamera()),
+          artReadingsProvider.overrideWith((ref) => artReadings.stream),
+          passcodeReadingsProvider.overrideWith(
+            (ref) => const Stream<PasscodeReading>.empty(),
+          ),
+          artMatcherProvider.overrideWith(
+            (ref) async =>
+                _FakeArtMatcher(const [ArtCandidate(_mirrorForceCard, 2)]),
+          ),
+        ],
+      );
+      addTearDown(container.dispose);
+      await container.read(settingsControllerProvider.future);
+
+      await tester.pumpWidget(
+        UncontrolledProviderScope(
+          container: container,
+          child: MaterialApp.router(routerConfig: buildAppRouter()),
+        ),
+      );
+
+      await tester.tap(find.text(AppStrings.homeTileLogCards));
+      await pumpUntilSettled(tester);
+
+      for (var i = 0; i < 3; i++) {
+        artReadings.add(ArtReading(i, const HashMatch(_mirrorForce, 2)));
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+        await tester.pump(const Duration(milliseconds: 20));
+      }
+      await pumpUntilSettled(tester);
+      expect(find.text(AppStrings.scanConfirmButton), findsOneWidget);
+    }
+
+    testWidgets('the review gate hides the set picker and unticked chips', (
+      tester,
+    ) async {
+      await tester.runAsync(() async {
+        await pumpMatchedUnderFastLog(tester);
+
+        expect(find.byType(PrintingPicker), findsNothing);
+        expect(
+          find.widgetWithText(ChoiceChip, CardEdition.first.label),
+          findsNothing,
+        );
+        expect(
+          find.widgetWithText(ChoiceChip, languageLabel('DE')),
+          findsNothing,
+        );
+        // The ticked one, the quantity and the confirm gate all survive.
+        expect(
+          find.widgetWithText(ChoiceChip, CardCondition.nearMint.shortCode),
+          findsOneWidget,
+        );
+        expect(find.text(AppStrings.collectionQuantityLabel), findsOneWidget);
+        expect(
+          find.textContaining(AppStrings.fastLogSilentPrefix),
+          findsOneWidget,
+        );
+      });
+    });
+
+    testWidgets('confirming writes the defaults it never asked about', (
+      tester,
+    ) async {
+      await tester.runAsync(() async {
+        await pumpMatchedUnderFastLog(tester);
+
+        await tester.tap(find.text(AppStrings.scanConfirmButton));
+        await pumpUntilSettled(tester);
+
+        final entries = await CollectionDao(
+          testDb,
+        ).getEntriesForPasscode(_mirrorForce);
+        // Mirror Force has two printings, so `preferredPrinting` declines and
+        // Fast log offers no picker: logged without a set, by design. The
+        // seed's own two entries both carry one, so this row is unambiguous.
+        final scanned = entries.where((e) => e.printingId == null);
+        expect(scanned, hasLength(1));
+        expect(scanned.single.edition, CardEdition.first);
+        expect(scanned.single.language, 'DE');
+        expect(scanned.single.condition, CardCondition.nearMint);
       });
     });
   });

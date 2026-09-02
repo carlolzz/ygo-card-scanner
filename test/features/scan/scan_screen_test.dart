@@ -128,7 +128,11 @@ void main() {
       await tester.tap(find.text(AppStrings.scanConfirmButton));
       await pumpUntilSettled(tester);
 
-      expect(find.text(AppStrings.scanSavedMessage), findsOneWidget);
+      // The write is confirmed by the "log again" bar naming the card, which
+      // replaces the SnackBar here rather than joining it: both are anchored to
+      // the bottom of the screen, and the SnackBar floats over everything.
+      expect(find.byKey(scanLogAgainKey), findsOneWidget);
+      expect(find.text(AppStrings.scanSavedMessage), findsNothing);
 
       final entries = await CollectionDao(
         testDb,
@@ -243,6 +247,121 @@ void main() {
         expect(find.byIcon(Icons.bug_report), findsNothing);
         expect(find.byIcon(Icons.keyboard), findsNothing);
         expect(find.byIcon(Icons.pin_outlined), findsNothing);
+      });
+    });
+  });
+
+  // Logging the second copy of a duplicate used to mean pulling the card out of
+  // the reticle and waiting out the post-confirm debounce. The offer below is
+  // the shortcut back into its review gate.
+  group('the log-again offer', () {
+    /// Drives the machine through one confirm, leaving the offer on screen.
+    /// Returns the artwork stream so a test can go on feeding frames.
+    Future<StreamController<ArtReading>> pumpConfirmed(
+      WidgetTester tester,
+    ) async {
+      final artReadings = StreamController<ArtReading>.broadcast();
+      addTearDown(artReadings.close);
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            appDatabaseProvider.overrideWith((ref) async => testDb),
+            artReadingsProvider.overrideWith((ref) => artReadings.stream),
+            passcodeReadingsProvider.overrideWith(
+              (ref) => const Stream<PasscodeReading>.empty(),
+            ),
+            artMatcherProvider.overrideWith(
+              (ref) async => _FakeArtMatcher(const [ArtCandidate(_dmCard, 2)]),
+            ),
+          ],
+          child: MaterialApp.router(routerConfig: buildAppRouter()),
+        ),
+      );
+
+      await tester.tap(find.text(AppStrings.homeTileLogCards));
+      await pumpUntilSettled(tester);
+
+      // Nothing logged yet: the bottom slot belongs to the how-to box, which is
+      // on by default.
+      expect(find.byKey(scanLogAgainKey), findsNothing);
+      expect(find.text(AppStrings.scanHelpTitle), findsOneWidget);
+
+      for (var i = 0; i < 3; i++) {
+        artReadings.add(ArtReading(i, const HashMatch(_darkMagician, 2)));
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+        await tester.pump(const Duration(milliseconds: 20));
+      }
+      await pumpUntilSettled(tester);
+      expect(find.text(AppStrings.scanConfirmButton), findsOneWidget);
+
+      await tester.tap(find.text(AppStrings.scanConfirmButton));
+      await pumpUntilSettled(tester);
+      return artReadings;
+    }
+
+    testWidgets('appears after a confirm, in the help box\'s slot', (
+      tester,
+    ) async {
+      await tester.runAsync(() async {
+        final artReadings = await pumpConfirmed(tester);
+
+        expect(find.byKey(scanLogAgainKey), findsOneWidget);
+        expect(find.text(AppStrings.scanLogAgainButton), findsOneWidget);
+        expect(find.text('Dark Magician'), findsOneWidget);
+        // It takes that slot rather than stacking into it — both are bottom
+        // anchored, and by this point the how-to has served its purpose.
+        expect(find.text(AppStrings.scanHelpTitle), findsNothing);
+
+        // And it outlives the transient `confirmed` status. That is the whole
+        // reason the offer hangs off a state field instead: `confirmed` lasts
+        // about one frame, so anything keyed to it would blink out immediately.
+        artReadings.add(const ArtReading(99, null));
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+        await pumpUntilSettled(tester);
+
+        expect(find.byKey(scanLogAgainKey), findsOneWidget);
+      });
+    });
+
+    testWidgets('re-opens the review gate on the same card', (tester) async {
+      await tester.runAsync(() async {
+        await pumpConfirmed(tester);
+
+        await tester.tap(find.text(AppStrings.scanLogAgainButton));
+        await pumpUntilSettled(tester);
+
+        // The full review form is back, on the same card — and the offer is
+        // gone, because a result now owns the bottom of the screen.
+        expect(find.text(AppStrings.scanConfirmButton), findsOneWidget);
+        expect(find.text('Dark Magician'), findsOneWidget);
+        expect(find.byKey(scanLogAgainKey), findsNothing);
+      });
+    });
+
+    testWidgets('can be hidden', (tester) async {
+      await tester.runAsync(() async {
+        final artReadings = await pumpConfirmed(tester);
+
+        await tester.tap(
+          find.descendant(
+            of: find.byKey(scanLogAgainKey),
+            matching: find.byIcon(Icons.close),
+          ),
+        );
+        await pumpUntilSettled(tester);
+
+        expect(find.byKey(scanLogAgainKey), findsNothing);
+
+        // And the slot goes back to the how-to box. One empty frame first: the
+        // status is still the transient `confirmed` until a reading arrives,
+        // and the how-to only shows while actively scanning. On a device that
+        // is the next frame; here nothing moves unless it is fed.
+        artReadings.add(const ArtReading(99, null));
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+        await pumpUntilSettled(tester);
+
+        expect(find.text(AppStrings.scanHelpTitle), findsOneWidget);
       });
     });
   });

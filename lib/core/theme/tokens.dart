@@ -627,6 +627,22 @@ class ScanHelpTokens {
   static const double iconSize = 16;
 }
 
+/// The "log again" bar, which takes the help box's slot at the bottom of the
+/// scan screen once a card has been logged.
+///
+/// Sized like the help box rather than like a review panel: it sits over the
+/// live viewfinder and must not compete with the card the user is aiming at.
+class ScanLogAgainTokens {
+  const ScanLogAgainTokens._();
+
+  /// The muted "Just logged" line above the card name.
+  static const double labelFontSize = 11;
+
+  /// The card name. A step up from the label and still below body size, since
+  /// it is a reminder of something the user just did, not new information.
+  static const double nameFontSize = 14;
+}
+
 /// The status banner inside the guide box.
 class ScanStatusBannerTokens {
   const ScanStatusBannerTokens._();

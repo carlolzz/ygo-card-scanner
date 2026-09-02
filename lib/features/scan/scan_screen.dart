@@ -189,9 +189,16 @@ class _ScanScreenState extends ConsumerState<ScanScreen> {
             const _UnknownPanel()
           else if (scan.status == ScanStatus.error)
             const _CameraErrorPanel()
-          // The bottom is free while scanning — show the how-to there, unless
-          // the user has switched it off. It never coexists with the panels
-          // above (all other statuses render one).
+          // The bottom is free while scanning. Two things want it, in this
+          // order: the offer to log another copy of the card just confirmed,
+          // then the how-to (unless the user has switched it off). Neither ever
+          // coexists with the panels above — all other statuses render one.
+          //
+          // The condition lives on the state ([ScanState.offersLogAgain]) rather
+          // than here, because the review gate's confirm button reads its
+          // negation to decide whether to show a SnackBar at all — see there.
+          else if (scan.offersLogAgain)
+            _LogAgainBar(logged: scan.lastLogged!)
           else if (scanning && ref.watch(scanHelpEnabledProvider))
             const _HelpPanel(),
           // Last, so the top overlays stay above every panel.
@@ -891,6 +898,119 @@ class _HelpPanel extends StatelessWidget {
                 ),
                 const _HelpLine(Icons.pin, AppStrings.scanHelpCode),
                 const _HelpLine(Icons.keyboard, AppStrings.scanHelpManual),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Identifies the "log again" bar for tests, which assert when it is up rather
+/// than what it says.
+@visibleForTesting
+const Key scanLogAgainKey = Key('scan-log-again');
+
+/// The offer to log another copy of the card just confirmed, at the bottom of
+/// the scan screen.
+///
+/// It exists because the post-confirm debounce is doing its job: a card left
+/// under the camera stays suppressed until it has been out of frame for
+/// [ScanTuning.debounceEmptyFrames] frames, so logging the second copy of a
+/// duplicate meant pulling the card away and waiting for detection, hashing and
+/// the agreement gate all over again. Tapping here re-opens that card's review
+/// gate directly — see `ScanController.logAgain`, which leaves the debounce
+/// itself untouched.
+///
+/// Takes [_HelpPanel]'s slot rather than stacking with it: same corner of the
+/// screen, and the how-to is a first-run aid that has served its purpose by the
+/// time a card has been logged. Styled like it too — a scrimmed floating box
+/// fixed to the dark palette, **not** a [_ScanBottomPanel] sheet, because the
+/// camera behind it is still live and a full-width surface would read as a
+/// result waiting to be dealt with. The 0.95 alpha is not cosmetic: it is the
+/// same fix [_HelpPanel] and [_DiagnosticsBox] carry, since [_SearchRoiOverlay]
+/// is an earlier stack child whose stroke reads straight through anything
+/// lighter.
+///
+/// **Passcode mode is deliberately not covered.** `confirm()` re-arms the OCR
+/// pass there, so the status is [ScanStatus.readingCode] and
+/// [_ReadingCodePanel] owns this slot. Offering it from that panel later is
+/// purely additive: `logAgain()` would need `readingCode` in its status guard
+/// and a `_stopOcr()`.
+class _LogAgainBar extends ConsumerWidget {
+  const _LogAgainBar({required this.logged});
+
+  final LoggedCard logged;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final controller = ref.read(scanControllerProvider.notifier);
+    final palette = AppPalette.dark;
+    return Align(
+      key: scanLogAgainKey,
+      alignment: Alignment.bottomCenter,
+      child: SafeArea(
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(
+            AppSpacing.md,
+            AppSpacing.sm,
+            AppSpacing.md,
+            AppSpacing.sm,
+          ),
+          child: Container(
+            padding: const EdgeInsets.all(AppSpacing.sm),
+            decoration: BoxDecoration(
+              color: _cameraScrim.withValues(alpha: 0.95),
+              borderRadius: BorderRadius.circular(AppRadius.md),
+            ),
+            child: Row(
+              children: [
+                // `CardArtThumbnail`, not `CardThumbnail`: the art download that
+                // `addOrIncrement` fires is fire-and-forget, so a moment after a
+                // confirm `cards.local_image_path` is very often still NULL and
+                // the plain thumbnail would render nothing at all.
+                CardArtThumbnail(
+                  card: logged.card,
+                  size: CardThumbnailSizes.list,
+                ),
+                const SizedBox(width: AppSpacing.sm),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        AppStrings.scanJustLoggedLabel,
+                        style: TextStyle(
+                          color: palette.onSurfaceMuted,
+                          fontSize: ScanLogAgainTokens.labelFontSize,
+                        ),
+                      ),
+                      Text(
+                        logged.card.name,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: palette.onSurface,
+                          fontWeight: FontWeight.bold,
+                          fontSize: ScanLogAgainTokens.nameFontSize,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: AppSpacing.sm),
+                FilledButton(
+                  onPressed: controller.logAgain,
+                  child: const Text(AppStrings.scanLogAgainButton),
+                ),
+                IconButton(
+                  tooltip: AppStrings.scanLogAgainDismissTooltip,
+                  icon: Icon(Icons.close, color: palette.onSurfaceMuted),
+                  onPressed: controller.dismissLogAgain,
+                ),
               ],
             ),
           ),
@@ -1647,13 +1767,16 @@ class _MatchedPanel extends ConsumerWidget {
               child: FilledButton(
                 onPressed: () async {
                   await controller.confirm();
-                  if (context.mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text(AppStrings.scanSavedMessage),
-                      ),
-                    );
-                  }
+                  if (!context.mounted) return;
+                  // Only when the "log again" bar is not taking over the job.
+                  // A SnackBar floats over the bottom of the screen, so showing
+                  // both would cover that bar — and leave its button untappable
+                  // — for the four seconds the user is most likely to want the
+                  // next copy. See [ScanState.offersLogAgain].
+                  if (ref.read(scanControllerProvider).offersLogAgain) return;
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text(AppStrings.scanSavedMessage)),
+                  );
                 },
                 child: const Text(AppStrings.scanConfirmButton),
               ),

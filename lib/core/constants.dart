@@ -295,6 +295,16 @@ class AppStrings {
   static const String scanCandidatesSubtitle =
       'Tap the card that matches, or search by name.';
 
+  // The "log again" offer, shown after a confirm.
+  //
+  // A card just logged is debounced until it has left the lens, which is right
+  // for the automatic path and wrong for a stack of duplicates: logging the
+  // second copy meant pulling the card out of frame and letting detection find
+  // it all over again. This is the shortcut back into its review gate.
+  static const String scanJustLoggedLabel = 'Just logged';
+  static const String scanLogAgainButton = 'Log again';
+  static const String scanLogAgainDismissTooltip = 'Hide';
+
   // Bottom help panel on the scan screen — the three ways to log a card.
   static const String scanHelpTitle = 'Three ways to log a card';
   static const String scanHelpArtwork =

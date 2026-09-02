@@ -744,11 +744,94 @@ class ScanController extends _$ScanController {
       unmatchedStreak: 0,
       qualitySkipStreak: 0,
       hint: ScanHint.none,
+      // Everything the review gate would need to open on this card again,
+      // captured here because the clears above destroy all of it. Read off the
+      // pre-confirm `state`, which `copyWith` has not touched yet.
+      lastLogged: LoggedCard(
+        card: card,
+        indexPasscode: state.matchedIndexPasscode,
+        printingId: state.printingId,
+        condition: state.condition,
+        edition: state.edition,
+        language: state.language,
+      ),
     );
     // The chosen tool survives a save: in passcode mode go straight back to
     // reading codes for the next card instead of dropping into artwork
     // recognition, which would mean re-arming the mode for every card.
     if (state.mode == ScanMode.passcode) _beginPasscodeRead();
+  }
+
+  /// Re-opens the review gate on the card just logged, so another copy can be
+  /// logged without taking it out of the reticle first.
+  ///
+  /// The post-confirm debounce means a card left under the camera is suppressed
+  /// until [ScanTuning.debounceEmptyFrames] frames have passed with nothing in
+  /// view — pull the card out, wait, put it back, and let detection, hashing and
+  /// the agreement gate resolve it again. That rule is the spec's guard against
+  /// one card logging thirty times and is **not relaxed here**:
+  /// `lastConfirmedPasscode` and `dismissCooldown` are left untouched, so the
+  /// only way back into this card's gate is a deliberate tap.
+  ///
+  /// Not disturbing them is intent rather than a load-bearing invariant, and it
+  /// is worth being honest about which: the pipeline is paused for as long as
+  /// the re-opened gate is up, and both [confirm] and [dismiss] rewrite the
+  /// suppression on the way out, so clearing it here would not actually be
+  /// observable. What *is* load-bearing is [LoggedCard.indexPasscode] — the
+  /// value the second confirm suppresses on has to be the one the next frame's
+  /// reading carries.
+  ///
+  /// The form comes back on the set, grade, edition and language that were just
+  /// logged rather than the settings defaults: the common case is a stack of the
+  /// same card from the same pack, and every field is still editable for the
+  /// copy that differs.
+  ///
+  /// **Synchronous, deliberately.** Every other path into the gate
+  /// ([_resolveArtMatch], [showBestGuesses], [_lookup], [selectCandidate])
+  /// awaits a DB read for the preferred printing and so needs the
+  /// `handedOff`/`finally` discipline that keeps a leaked pause from killing
+  /// recognition for the process lifetime. Here the printing is already known,
+  /// so the pause is taken and handed to the panel in one step and a leak is
+  /// structurally impossible. Do not "make it consistent" by adding an await.
+  void logAgain() {
+    final logged = state.lastLogged;
+    if (logged == null) return;
+    // The states the offer is rendered in. Anything else means a panel is
+    // already up and owns the pause.
+    if (state.status != ScanStatus.detecting &&
+        state.status != ScanStatus.reading &&
+        state.status != ScanStatus.confirmed) {
+      return;
+    }
+    _setPaused(paused: true);
+    state = state.copyWith(
+      status: ScanStatus.matched,
+      matchedCard: logged.card,
+      matchedIndexPasscode: logged.indexPasscode,
+      // `matchedDistance` is deliberately omitted: passing a non-null
+      // `matchedCard` replaces it, so it lands null and the review gate does not
+      // hedge a card the user has already accepted. See [LoggedCard].
+      clearCandidates: true,
+      clearUnknownPasscode: true,
+      condition: logged.condition,
+      edition: logged.edition,
+      language: logged.language,
+      printingId: logged.printingId,
+      clearPrintingId: logged.printingId == null,
+      quantity: 1,
+      agreementBuffer: const [],
+      artAgreementBuffer: const [],
+      emptyFrameCount: 0,
+      unmatchedStreak: 0,
+      qualitySkipStreak: 0,
+      hint: ScanHint.none,
+    );
+  }
+
+  /// Hides the "log again" offer without touching anything else — the user is
+  /// done with that card and wants the screen back.
+  void dismissLogAgain() {
+    state = state.copyWith(clearLastLogged: true);
   }
 
   /// Discards the current match/unknown/candidates result without writing, and

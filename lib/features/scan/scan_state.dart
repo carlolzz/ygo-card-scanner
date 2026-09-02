@@ -76,6 +76,45 @@ enum ScanHint {
   unidentified,
 }
 
+/// The card most recently written to the collection from this scan session,
+/// carrying everything needed to re-open its review gate — see
+/// `ScanController.logAgain`.
+///
+/// It has to be captured explicitly because `confirm()` destroys every field the
+/// gate reads: [ScanState.matchedCard], [ScanState.matchedIndexPasscode],
+/// [ScanState.matchedDistance], [ScanState.candidates] and
+/// [ScanState.printingId] are all cleared as the status moves to
+/// [ScanStatus.confirmed].
+///
+/// **The distance is deliberately absent.** A re-log re-opens the gate with no
+/// distance, so the "best guess, check the picture" hedge does not reappear:
+/// the user already looked at this card and accepted it.
+class LoggedCard {
+  const LoggedCard({
+    required this.card,
+    required this.indexPasscode,
+    required this.printingId,
+    required this.condition,
+    required this.edition,
+    required this.language,
+  });
+
+  final YgoCard card;
+
+  /// The *index* passcode the match resolved through, if any — see
+  /// [ScanState.matchedIndexPasscode]. Kept so a re-log's confirm debounces in
+  /// the same namespace the next frame's reading arrives in; dropping it would
+  /// re-open the panel on the card just logged, for alt-arts.
+  final String? indexPasscode;
+
+  /// The set the copy was logged against, or null for "no specific set".
+  final int? printingId;
+
+  final CardCondition condition;
+  final CardEdition edition;
+  final String language;
+}
+
 /// Immutable snapshot of the scan pipeline. Hand-written (like
 /// `AddCardSelection` and `InitialSyncState`) rather than freezed, matching the
 /// project's controller-state convention.
@@ -101,6 +140,7 @@ class ScanState {
     this.hint = ScanHint.none,
     this.unmatchedStreak = 0,
     this.qualitySkipStreak = 0,
+    this.lastLogged,
     this.error,
   });
 
@@ -206,6 +246,38 @@ class ScanState {
   /// again with every on-screen signal still green.
   final int qualitySkipStreak;
 
+  /// The card most recently confirmed in this session, or null before the first
+  /// confirm (and after the user hides the offer). Backs the "log again" bar,
+  /// which re-opens this card's review gate so a second copy can be logged
+  /// without taking it out of the reticle and letting detection find it again.
+  ///
+  /// **Not derived from [status].** [ScanStatus.confirmed] lasts about one
+  /// frame — `_onArtReading`'s freeze guard deliberately excludes it so the
+  /// post-confirm empty-frame debounce keeps advancing — so an affordance hung
+  /// off that status would vanish immediately. This field is one the frame
+  /// handler never touches.
+  final LoggedCard? lastLogged;
+
+  /// Whether the "log again" offer is on screen for [lastLogged].
+  ///
+  /// **The single source of truth for it**, because two places have to agree:
+  /// the scan screen renders the bar on exactly this condition, and the review
+  /// gate's confirm button suppresses its "added to your collection" SnackBar on
+  /// exactly its negation. They must not drift — a SnackBar is bottom-anchored
+  /// and floats over everything, so when both appear it covers the offer, and
+  /// for the four seconds a user most wants to log the next copy the button is
+  /// not merely hidden but untappable. The bar names the card it just logged,
+  /// which is the same confirmation and a more useful one, so where it shows the
+  /// SnackBar is redundant; where it does not (passcode mode, whose own panel
+  /// owns that slot) the SnackBar is still the only feedback a write happened.
+  ///
+  /// [ScanStatus.confirmed] is included so there is no frame with neither.
+  bool get offersLogAgain =>
+      lastLogged != null &&
+      (status == ScanStatus.detecting ||
+          status == ScanStatus.reading ||
+          status == ScanStatus.confirmed);
+
   /// The camera error behind [ScanStatus.error].
   final Object? error;
 
@@ -235,6 +307,8 @@ class ScanState {
     ScanHint? hint,
     int? unmatchedStreak,
     int? qualitySkipStreak,
+    LoggedCard? lastLogged,
+    bool clearLastLogged = false,
     Object? error,
     bool clearError = false,
   }) {
@@ -261,8 +335,7 @@ class ScanState {
       unknownPasscode: clearUnknownPasscode
           ? null
           : (unknownPasscode ?? this.unknownPasscode),
-      candidates:
-          clearCandidates ? const [] : (candidates ?? this.candidates),
+      candidates: clearCandidates ? const [] : (candidates ?? this.candidates),
       condition: condition ?? this.condition,
       edition: edition ?? this.edition,
       language: language ?? this.language,
@@ -280,6 +353,7 @@ class ScanState {
       hint: hint ?? this.hint,
       unmatchedStreak: unmatchedStreak ?? this.unmatchedStreak,
       qualitySkipStreak: qualitySkipStreak ?? this.qualitySkipStreak,
+      lastLogged: clearLastLogged ? null : (lastLogged ?? this.lastLogged),
       // `error ?? this.error` alone makes an error write-once-sticky, so every
       // later transition drags it along and only a full reset can drop it.
       error: clearError ? null : (error ?? this.error),

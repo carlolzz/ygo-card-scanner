@@ -2891,6 +2891,91 @@ order):
     off, `artAgreementFrames` at 2, every `FrameQualityTuning` threshold still
     uncalibrated on device, and whether `kPriceTtl` at 24 h is right.
 
+32. "Log again" — re-opening the review gate on the card just logged ← done
+    (verified: `flutter analyze` clean, full `flutter test` green at **829
+    tests**). **No DB migration, no schema change, no new dependency.** Nothing
+    here touches the descriptor, `assets/card_hashes.json`, the detection
+    algorithm or any shape/matching/quality threshold.
+    Logging a stack of duplicates was slower than it should be, and the reason
+    was a guard doing its job: `confirm()` sets `lastConfirmedPasscode` with
+    `dismissCooldown: 0`, which only retires after
+    `ScanTuning.debounceEmptyFrames` (5) frames with **no card in view**. So the
+    second copy meant pulling the card out of the reticle, waiting ~1s, putting
+    it back, and paying for detection, hashing and the two-frame agreement gate
+    again. That debounce is the spec's non-optional guard against one card
+    logging thirty times, so this pass goes around it rather than through it:
+    one tap re-opens that card's review gate directly.
+    **The offer hangs off a state field, not off `ScanStatus.confirmed`.** That
+    status lasts about one frame — `_onArtReading`'s freeze guard deliberately
+    excludes it so the post-confirm empty-frame debounce keeps advancing — so
+    anything keyed to it blinks out immediately, and adding it to the guard
+    would freeze the pipeline and mean the suppression could never retire. New
+    `LoggedCard` (`scan_state.dart`, a const carrier beside `ScanState`,
+    following `ArtCandidate`) is captured inside the very `copyWith` that clears
+    the match, because `confirm()` destroys everything the gate reads:
+    `matchedCard`, `matchedIndexPasscode`, `matchedDistance`, `candidates` and
+    `printingId`.
+    **`indexPasscode` is the load-bearing field on it.** The index keys every
+    `card_images[i].id` while `cards` stores only `card_images[0]`, so on an
+    alt-art match the resolved card's passcode is not the one the next frame
+    carries; without carrying it across, the *second* confirm suppresses in the
+    wrong namespace and the panel re-opens on the card just logged — step 16's
+    bug, re-entered through the side door. The regression test was **verified to
+    fail** with the field dropped.
+    **`matchedDistance` is deliberately absent**, and gets it for free:
+    `copyWith` replaces the distance whenever a non-null `matchedCard` is passed,
+    so omitting it yields null and the "best guess, check the picture" hedge does
+    not reappear on a card the user has already looked at and accepted.
+    **Verified to fail** with a distance forced through.
+    **`ScanController.logAgain()` is synchronous, and that is the point.** Every
+    other path into the gate (`_resolveArtMatch`, `showBestGuesses`, `_lookup`,
+    `selectCandidate`) awaits a DB read for the preferred printing and therefore
+    needs the `handedOff`/`finally` discipline that keeps a leaked pause from
+    killing recognition for the process lifetime (step 21). Here the printing is
+    already known, so the pause is taken and handed to the panel in one step and
+    a leak is structurally impossible. Do not "make it consistent" by adding an
+    await. The form comes back on the set, grade, edition and language just
+    logged rather than the settings defaults — the common case is another copy
+    from the same pack — with quantity reset to 1.
+    **Honest scoping of one claim**: `logAgain` leaves `lastConfirmedPasscode`
+    and `dismissCooldown` untouched, but that is intent, not a load-bearing
+    invariant. The pipeline is paused while the re-opened gate is up, and both
+    `confirm` and `dismiss` rewrite the suppression on the way out, so clearing
+    it there would not actually be observable — a mutation test proved exactly
+    that, and the doc comment and the test's name were corrected rather than
+    left overclaiming.
+    **The SnackBar had to go where the bar goes, and finding that was the one
+    real surprise.** Both are anchored to the bottom of the screen and a SnackBar
+    floats over everything, so "Added to your collection." covered the offer —
+    leaving its button not merely hidden but **untappable** for the four seconds
+    the user is most likely to want the next copy. (It surfaced as two widget
+    taps silently missing, which is the step-9 gotcha in a new place.) New
+    `ScanState.offersLogAgain` is the single source of truth: the screen renders
+    `_LogAgainBar` on it, `_MatchedPanel`'s confirm button suppresses its
+    SnackBar on its negation, so the two cannot drift. The bar names the card it
+    just logged, which is the same confirmation and a better one; passcode mode,
+    where the bar does not render, keeps the SnackBar as its only feedback.
+    **UI**: `_LogAgainBar` is modelled on `_HelpPanel`, **not** `_ScanBottomPanel`
+    — the camera behind it is still live and a full-width sheet reads as a result
+    waiting to be dealt with. It takes the help box's slot rather than stacking
+    with it (same corner; the how-to is a first-run aid that has served its
+    purpose by the time a card is logged), carries the same 0.95 scrim for the
+    same `_SearchRoiOverlay` bleed-through reason, and uses `CardArtThumbnail`
+    because the art download `addOrIncrement` fires is fire-and-forget and
+    `cards.local_image_path` is very often still NULL a moment after a confirm.
+    New `ScanLogAgainTokens`, three `AppStrings`, and a `scanLogAgainKey`
+    following `scanReticleKey`/`scanStatusBannerKey`.
+    **Passcode mode is deliberately not covered**: `confirm()` re-arms the OCR
+    pass, so the status is `readingCode` and `_ReadingCodePanel` owns that slot.
+    Offering it from that panel later is purely additive — `logAgain()` would
+    need `readingCode` in its status guard and a `_stopOcr()`.
+    The manual add-card wizard is **unchanged** (decided with the user): the
+    duplicate-stack workflow happens at the camera.
+    **Still open**, unchanged: `maxHammingDistance` at 72,
+    `CardDetectionTuning.innerQuadMinAreaRatio` at 0.78, the passcode ROI filter
+    off, `artAgreementFrames` at 2, every `FrameQualityTuning` threshold still
+    uncalibrated on device, and whether `kPriceTtl` at 24 h is right.
+
 ## Standing rules
 
 - No ORM. Raw SQL in DAOs only. No SQL outside `lib/data/db/`.

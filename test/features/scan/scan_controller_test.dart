@@ -102,8 +102,11 @@ const blueEyes = '89631139';
 const mirrorForce = '44095762';
 const unknownPasscode = '00000000';
 
-const dmCard =
-    YgoCard(passcode: darkMagician, name: 'Dark Magician', type: 'Normal Monster');
+const dmCard = YgoCard(
+  passcode: darkMagician,
+  name: 'Dark Magician',
+  type: 'Normal Monster',
+);
 const beCard = YgoCard(
   passcode: blueEyes,
   name: 'Blue-Eyes White Dragon',
@@ -252,24 +255,26 @@ void main() {
     // `maxHammingDistance` was routed into the empty-frame branch and reported
     // as "can't identify this card"; on device the guess in that band was right
     // every time it was asked for. It is presented now — as a guess.
-    test('a read past the confidence boundary still resolves to a match',
-        () async {
-      const far = ArtMatchTuning.autoMatchMaxDistance + 2;
-      fakeCandidates = [const ArtCandidate(dmCard, far)];
-      for (var i = 0; i < ScanTuning.artAgreementFrames; i++) {
-        await feedArt(darkMagician, distance: far);
-      }
-      await settle();
+    test(
+      'a read past the confidence boundary still resolves to a match',
+      () async {
+        const far = ArtMatchTuning.autoMatchMaxDistance + 2;
+        fakeCandidates = [const ArtCandidate(dmCard, far)];
+        for (var i = 0; i < ScanTuning.artAgreementFrames; i++) {
+          await feedArt(darkMagician, distance: far);
+        }
+        await settle();
 
-      expect(state().status, ScanStatus.matched);
-      expect(state().matchedCard?.name, 'Dark Magician');
-      // What the review gate reads to decide whether to hedge.
-      expect(state().matchedDistance, far);
-      expect(
-        state().matchedDistance!,
-        greaterThan(ArtMatchTuning.autoMatchMaxDistance),
-      );
-    });
+        expect(state().status, ScanStatus.matched);
+        expect(state().matchedCard?.name, 'Dark Magician');
+        // What the review gate reads to decide whether to hedge.
+        expect(state().matchedDistance, far);
+        expect(
+          state().matchedDistance!,
+          greaterThan(ArtMatchTuning.autoMatchMaxDistance),
+        );
+      },
+    );
 
     test('a confident read carries its distance without hedging', () async {
       fakeCandidates = [const ArtCandidate(dmCard, 2)];
@@ -315,10 +320,11 @@ void main() {
       await controller().confirm();
       await settle();
 
-      final scanned = (await CollectionDao(db).getEntriesForPasscode(darkMagician))
-          .where(
-        (e) => e.condition == CardCondition.nearMint && e.printingId == null,
-      );
+      final scanned =
+          (await CollectionDao(db).getEntriesForPasscode(darkMagician)).where(
+            (e) =>
+                e.condition == CardCondition.nearMint && e.printingId == null,
+          );
       expect(scanned, hasLength(1));
       expect(scanned.first.quantity, 1);
       expect(state().status, ScanStatus.confirmed);
@@ -344,25 +350,27 @@ void main() {
       expect(state().status, ScanStatus.matched);
     });
 
-    test('"not the right card" reveals candidates; a pick re-enters review',
-        () async {
-      fakeCandidates = [
-        const ArtCandidate(dmCard, 2),
-        const ArtCandidate(beCard, 4),
-      ];
-      await agreeArt(darkMagician);
-      expect(state().status, ScanStatus.matched);
-      expect(state().matchedCard?.passcode, darkMagician);
+    test(
+      '"not the right card" reveals candidates; a pick re-enters review',
+      () async {
+        fakeCandidates = [
+          const ArtCandidate(dmCard, 2),
+          const ArtCandidate(beCard, 4),
+        ];
+        await agreeArt(darkMagician);
+        expect(state().status, ScanStatus.matched);
+        expect(state().matchedCard?.passcode, darkMagician);
 
-      controller().showCandidates();
-      expect(state().status, ScanStatus.candidates);
-      expect(state().candidates, hasLength(2));
+        controller().showCandidates();
+        expect(state().status, ScanStatus.candidates);
+        expect(state().candidates, hasLength(2));
 
-      await controller().selectCandidate(beCard);
-      expect(state().status, ScanStatus.matched);
-      expect(state().matchedCard?.passcode, blueEyes);
-      expect(state().condition, CardCondition.nearMint);
-    });
+        await controller().selectCandidate(beCard);
+        expect(state().status, ScanStatus.matched);
+        expect(state().matchedCard?.passcode, blueEyes);
+        expect(state().condition, CardCondition.nearMint);
+      },
+    );
 
     test('dismiss from a match returns to detecting', () async {
       fakeCandidates = [const ArtCandidate(dmCard, 2)];
@@ -447,15 +455,36 @@ void main() {
         ];
       });
 
-      test('a confirmed alt-art match is not immediately re-presented',
-          () async {
+      test(
+        'a confirmed alt-art match is not immediately re-presented',
+        () async {
+          await agreeArt(altArtId);
+          await controller().confirm();
+          await settle();
+
+          // Exactly the reported failure: the card is still under the lens, and
+          // the review panel re-opens on the card just logged — the "one card
+          // logs thirty times" case the debounce exists to prevent.
+          for (var i = 0; i < ScanTuning.artAgreementFrames * 2; i++) {
+            await feedArt(altArtId);
+          }
+          expect(state().status, isNot(ScanStatus.matched));
+        },
+      );
+
+      test('a re-logged alt-art match is still suppressed afterwards', () async {
         await agreeArt(altArtId);
         await controller().confirm();
         await settle();
 
-        // Exactly the reported failure: the card is still under the lens, and
-        // the review panel re-opens on the card just logged — the "one card
-        // logs thirty times" case the debounce exists to prevent.
+        controller().logAgain();
+        await controller().confirm();
+        await settle();
+
+        // The second confirm has to debounce in the *index* namespace too, so
+        // the re-log has to carry the index passcode across. Without it the
+        // suppression keys on the base card, the next frame carries the alt-art
+        // id, and the panel re-opens on the card just logged.
         for (var i = 0; i < ScanTuning.artAgreementFrames * 2; i++) {
           await feedArt(altArtId);
         }
@@ -502,14 +531,16 @@ void main() {
       // non-optional guard against one card logging thirty times. A stream of
       // unreadable frames must not be able to retire a confirmed card's
       // suppression while it is still sitting under the lens.
-      test('a rejected frame does not advance the post-confirm debounce',
-          () async {
-        await feedArt(null);
-        expect(state().emptyFrameCount, 1);
+      test(
+        'a rejected frame does not advance the post-confirm debounce',
+        () async {
+          await feedArt(null);
+          expect(state().emptyFrameCount, 1);
 
-        await feedLowQuality();
-        expect(state().emptyFrameCount, 1);
-      });
+          await feedLowQuality();
+          expect(state().emptyFrameCount, 1);
+        },
+      );
 
       test('it reports blur and glare separately', () async {
         await feedLowQuality();
@@ -523,18 +554,20 @@ void main() {
       // measure; if they are wrong for some device the failure mode without
       // this is that recognition never works again, with every on-screen signal
       // still green.
-      test('the gate stops rejecting after a streak, so it cannot wedge',
-          () async {
-        for (var i = 0; i < FrameQualityTuning.maxConsecutiveSkips; i++) {
+      test(
+        'the gate stops rejecting after a streak, so it cannot wedge',
+        () async {
+          for (var i = 0; i < FrameQualityTuning.maxConsecutiveSkips; i++) {
+            await feedLowQuality();
+            expect(state().qualitySkipStreak, i + 1);
+          }
+          // Past the cap the frame falls through to the normal path, which for a
+          // reading carrying no match is the empty-frame branch.
           await feedLowQuality();
-          expect(state().qualitySkipStreak, i + 1);
-        }
-        // Past the cap the frame falls through to the normal path, which for a
-        // reading carrying no match is the empty-frame branch.
-        await feedLowQuality();
-        expect(state().emptyFrameCount, 1);
-        expect(state().qualitySkipStreak, 0);
-      });
+          expect(state().emptyFrameCount, 1);
+          expect(state().qualitySkipStreak, 0);
+        },
+      );
 
       test('a good frame clears the skip streak', () async {
         await feedLowQuality();
@@ -551,13 +584,15 @@ void main() {
       // but matched nothing left the machine in `detecting`, which the banner
       // rendered as "Point at a card" — telling the user to do the one thing
       // they were already doing, with no way out.
-      test('a detected-but-unmatched frame is not reported as an empty frame',
-          () async {
-        await feedUnmatched();
-        expect(state().status, ScanStatus.detecting);
-        expect(state().unmatchedStreak, 1);
-        expect(state().hint, ScanHint.identifying);
-      });
+      test(
+        'a detected-but-unmatched frame is not reported as an empty frame',
+        () async {
+          await feedUnmatched();
+          expect(state().status, ScanStatus.detecting);
+          expect(state().unmatchedStreak, 1);
+          expect(state().hint, ScanHint.identifying);
+        },
+      );
 
       test('a frame with no card at all still reports nothing', () async {
         await feedArt(null);
@@ -566,7 +601,11 @@ void main() {
       });
 
       test('the banner becomes actionable after a streak', () async {
-        for (var i = 0; i < FrameQualityTuning.unmatchedStreakForHint - 1; i++) {
+        for (
+          var i = 0;
+          i < FrameQualityTuning.unmatchedStreakForHint - 1;
+          i++
+        ) {
           await feedUnmatched();
           expect(state().hint, ScanHint.identifying);
         }
@@ -586,17 +625,19 @@ void main() {
 
       // The escape hatch: `showCandidates` is guarded on `matched` and could not
       // be reached from here, so nothing was offered at all.
-      test('showBestGuesses resolves the last frame into the candidate panel',
-          () async {
-        fakeCandidates = const [ArtCandidate(dmCard, 40)];
-        await feedUnmatched();
-        await controller().showBestGuesses();
-        await settle();
+      test(
+        'showBestGuesses resolves the last frame into the candidate panel',
+        () async {
+          fakeCandidates = const [ArtCandidate(dmCard, 40)];
+          await feedUnmatched();
+          await controller().showBestGuesses();
+          await settle();
 
-        expect(state().status, ScanStatus.candidates);
-        expect(state().candidates.single.card.passcode, dmCard.passcode);
-        expect(state().hint, ScanHint.none);
-      });
+          expect(state().status, ScanStatus.candidates);
+          expect(state().candidates.single.card.passcode, dmCard.passcode);
+          expect(state().hint, ScanHint.none);
+        },
+      );
 
       // Now that every in-threshold hit auto-presents, getting here at all means
       // `match` has nothing: the useful answer is the unthresholded nearest few.
@@ -628,44 +669,50 @@ void main() {
         );
       });
 
-      test('a pick from those guesses goes through the same review gate',
-          () async {
-        fakeCandidates = const [ArtCandidate(dmCard, 40)];
-        await feedUnmatched();
-        await controller().showBestGuesses();
-        await settle();
+      test(
+        'a pick from those guesses goes through the same review gate',
+        () async {
+          fakeCandidates = const [ArtCandidate(dmCard, 40)];
+          await feedUnmatched();
+          await controller().showBestGuesses();
+          await settle();
 
-        await controller().selectCandidate(dmCard);
-        expect(state().status, ScanStatus.matched);
-        expect(state().matchedCard, dmCard);
-      });
+          await controller().selectCandidate(dmCard);
+          expect(state().status, ScanStatus.matched);
+          expect(state().matchedCard, dmCard);
+        },
+      );
 
-      test('showBestGuesses is inert once a result already awaits the user',
-          () async {
-        fakeCandidates = [const ArtCandidate(beCard, 2)];
-        await agreeArt(blueEyes);
-        expect(state().status, ScanStatus.matched);
+      test(
+        'showBestGuesses is inert once a result already awaits the user',
+        () async {
+          fakeCandidates = [const ArtCandidate(beCard, 2)];
+          await agreeArt(blueEyes);
+          expect(state().status, ScanStatus.matched);
 
-        await controller().showBestGuesses();
-        expect(state().status, ScanStatus.matched);
-      });
+          await controller().showBestGuesses();
+          expect(state().status, ScanStatus.matched);
+        },
+      );
     });
   });
 
   group('fallback path: on-demand passcode OCR', () {
-    test('request then N agreeing reads that hit the db resolve to a match',
-        () async {
-      controller().requestPasscodeRead();
-      expect(state().status, ScanStatus.readingCode);
+    test(
+      'request then N agreeing reads that hit the db resolve to a match',
+      () async {
+        controller().requestPasscodeRead();
+        expect(state().status, ScanStatus.readingCode);
 
-      await feedOcr(darkMagician);
-      await feedOcr(darkMagician);
-      await feedOcr(darkMagician);
-      await settle();
+        await feedOcr(darkMagician);
+        await feedOcr(darkMagician);
+        await feedOcr(darkMagician);
+        await settle();
 
-      expect(state().status, ScanStatus.matched);
-      expect(state().matchedCard?.name, 'Dark Magician');
-    });
+        expect(state().status, ScanStatus.matched);
+        expect(state().matchedCard?.name, 'Dark Magician');
+      },
+    );
 
     test('a read with no db hit resolves to unknown', () async {
       controller().requestPasscodeRead();
@@ -781,9 +828,9 @@ void main() {
     // which one is in hand and the review gate starts on "no specific set".
     // The Metal Raiders printing: seeded at Excellent, so a Near Mint scan
     // against it is a new row rather than an increment of an existing one.
-    final printing = (await PrintingDao(db).getForPasscode(
-      mirrorForce,
-    )).firstWhere((p) => p.setCode == 'MRD-EN094');
+    final printing = (await PrintingDao(
+      db,
+    ).getForPasscode(mirrorForce)).firstWhere((p) => p.setCode == 'MRD-EN094');
     fakeCandidates = [const ArtCandidate(mfCard, 2)];
     await agreeArt(mirrorForce);
     expect(state().status, ScanStatus.matched);
@@ -807,40 +854,51 @@ void main() {
   });
 
   group('the sole printing is picked for you', () {
-    test('a card with exactly one known printing arrives with it selected',
-        () async {
-      final printing = (await PrintingDao(db).getForPasscode(blueEyes)).single;
-      fakeCandidates = [const ArtCandidate(beCard, 2)];
-      await agreeArt(blueEyes);
+    test(
+      'a card with exactly one known printing arrives with it selected',
+      () async {
+        final printing = (await PrintingDao(
+          db,
+        ).getForPasscode(blueEyes)).single;
+        fakeCandidates = [const ArtCandidate(beCard, 2)];
+        await agreeArt(blueEyes);
 
-      expect(state().status, ScanStatus.matched);
-      expect(state().printingId, printing.id);
-    });
+        expect(state().status, ScanStatus.matched);
+        expect(state().printingId, printing.id);
+      },
+    );
 
-    test('and confirm writes it, so a scan no longer lands with no set at all',
-        () async {
-      final printing = (await PrintingDao(db).getForPasscode(blueEyes)).single;
-      fakeCandidates = [const ArtCandidate(beCard, 2)];
-      await agreeArt(blueEyes);
-      await controller().confirm();
-      await settle();
+    test(
+      'and confirm writes it, so a scan no longer lands with no set at all',
+      () async {
+        final printing = (await PrintingDao(
+          db,
+        ).getForPasscode(blueEyes)).single;
+        fakeCandidates = [const ArtCandidate(beCard, 2)];
+        await agreeArt(blueEyes);
+        await controller().confirm();
+        await settle();
 
-      final scanned = (await CollectionDao(db).getEntriesForPasscode(blueEyes))
-          .where((e) => e.edition == CardEdition.unlimited);
-      expect(scanned, hasLength(1));
-      expect(scanned.first.printingId, printing.id);
-      // Cleared again, or it leaks onto whatever is logged next.
-      expect(state().printingId, isNull);
-    });
+        final scanned = (await CollectionDao(db).getEntriesForPasscode(
+          blueEyes,
+        )).where((e) => e.edition == CardEdition.unlimited);
+        expect(scanned, hasLength(1));
+        expect(scanned.first.printingId, printing.id);
+        // Cleared again, or it leaks onto whatever is logged next.
+        expect(state().printingId, isNull);
+      },
+    );
 
-    test('a reprinted card is left to the user — several sets, one card',
-        () async {
-      fakeCandidates = [const ArtCandidate(mfCard, 2)];
-      await agreeArt(mirrorForce);
+    test(
+      'a reprinted card is left to the user — several sets, one card',
+      () async {
+        fakeCandidates = [const ArtCandidate(mfCard, 2)];
+        await agreeArt(mirrorForce);
 
-      expect(state().status, ScanStatus.matched);
-      expect(state().printingId, isNull);
-    });
+        expect(state().status, ScanStatus.matched);
+        expect(state().printingId, isNull);
+      },
+    );
 
     test('a card with no known printings is unaffected', () async {
       fakeCandidates = [const ArtCandidate(dmCard, 2)];
@@ -850,23 +908,27 @@ void main() {
       expect(state().printingId, isNull);
     });
 
-    test('picking a candidate swaps in that card\'s own sole printing',
-        () async {
-      final printing = (await PrintingDao(db).getForPasscode(blueEyes)).single;
-      fakeCandidates = [
-        const ArtCandidate(dmCard, 2),
-        const ArtCandidate(beCard, 4),
-      ];
-      await agreeArt(darkMagician);
-      expect(state().printingId, isNull, reason: 'Dark Magician has none');
+    test(
+      'picking a candidate swaps in that card\'s own sole printing',
+      () async {
+        final printing = (await PrintingDao(
+          db,
+        ).getForPasscode(blueEyes)).single;
+        fakeCandidates = [
+          const ArtCandidate(dmCard, 2),
+          const ArtCandidate(beCard, 4),
+        ];
+        await agreeArt(darkMagician);
+        expect(state().printingId, isNull, reason: 'Dark Magician has none');
 
-      controller().showCandidates();
-      await controller().selectCandidate(beCard);
-      await settle();
+        controller().showCandidates();
+        await controller().selectCandidate(beCard);
+        await settle();
 
-      expect(state().matchedCard?.passcode, blueEyes);
-      expect(state().printingId, printing.id);
-    });
+        expect(state().matchedCard?.passcode, blueEyes);
+        expect(state().printingId, printing.id);
+      },
+    );
 
     test('the passcode-OCR path preselects it too', () async {
       final printing = (await PrintingDao(db).getForPasscode(blueEyes)).single;
@@ -878,6 +940,182 @@ void main() {
 
       expect(state().status, ScanStatus.matched);
       expect(state().printingId, printing.id);
+    });
+  });
+
+  // Logging a second copy of a card used to mean taking it out of the reticle,
+  // waiting out the post-confirm debounce and letting detection find it again.
+  // "Log again" is the shortcut straight back into its review gate — without
+  // relaxing that debounce, which is the spec's guard against one card logging
+  // thirty times.
+  group('log again', () {
+    test('confirm records what is needed to re-open the gate', () async {
+      final printing = (await PrintingDao(db).getForPasscode(
+        mirrorForce,
+      )).firstWhere((p) => p.setCode == 'MRD-EN094');
+      fakeCandidates = [const ArtCandidate(mfCard, 2)];
+      await agreeArt(mirrorForce);
+      controller().setPrinting(printing.id);
+      controller().setCondition(CardCondition.excellent);
+      controller().setLanguage('IT');
+      await controller().confirm();
+      await settle();
+
+      final logged = state().lastLogged;
+      expect(logged, isNotNull);
+      expect(logged!.card.passcode, mirrorForce);
+      expect(logged.printingId, printing.id);
+      expect(logged.condition, CardCondition.excellent);
+      expect(logged.language, 'IT');
+    });
+
+    test(
+      're-opens the gate on the same card, prefilled with what was logged',
+      () async {
+        final printing = (await PrintingDao(db).getForPasscode(
+          mirrorForce,
+        )).firstWhere((p) => p.setCode == 'MRD-EN094');
+        fakeCandidates = [const ArtCandidate(mfCard, 2)];
+        await agreeArt(mirrorForce);
+        controller().setPrinting(printing.id);
+        controller().setCondition(CardCondition.good);
+        controller().setLanguage('IT');
+        controller().setQuantity(3);
+        await controller().confirm();
+        await settle();
+
+        controller().logAgain();
+
+        expect(state().status, ScanStatus.matched);
+        expect(state().matchedCard?.passcode, mirrorForce);
+        // The common case is another copy from the same pack, so the set, grade
+        // and language come back rather than resetting to the settings defaults.
+        expect(state().printingId, printing.id);
+        expect(state().condition, CardCondition.good);
+        expect(state().language, 'IT');
+        // The count does not: each re-log is a fresh copy being counted.
+        expect(state().quantity, 1);
+      },
+    );
+
+    test('a second confirm with the same details increments the row', () async {
+      fakeCandidates = [const ArtCandidate(dmCard, 2)];
+      await agreeArt(darkMagician);
+      await controller().confirm();
+      await settle();
+
+      controller().logAgain();
+      await controller().confirm();
+      await settle();
+
+      final scanned = (await CollectionDao(db).getEntriesForPasscode(
+        darkMagician,
+      )).where((e) => e.condition == CardCondition.nearMint);
+      expect(scanned, hasLength(1), reason: 'one row, not a duplicate');
+      expect(scanned.first.quantity, 2);
+      // And the offer survives its own use, for the third copy.
+      expect(state().lastLogged?.card.passcode, darkMagician);
+    });
+
+    test('a different grade on the re-log writes a separate row', () async {
+      // The workflow the feature exists for: a stack of the same card whose
+      // copies are not all in the same shape.
+      fakeCandidates = [const ArtCandidate(dmCard, 2)];
+      await agreeArt(darkMagician);
+      await controller().confirm();
+      await settle();
+
+      controller().logAgain();
+      controller().setCondition(CardCondition.played);
+      await controller().confirm();
+      await settle();
+
+      final entries = await CollectionDao(
+        db,
+      ).getEntriesForPasscode(darkMagician);
+      expect(
+        entries.where((e) => e.condition == CardCondition.nearMint),
+        hasLength(1),
+      );
+      expect(
+        entries.where((e) => e.condition == CardCondition.played),
+        hasLength(1),
+      );
+    });
+
+    test('a re-logged card is still debounced afterwards', () async {
+      // The feature must not become a way around the "one card logs thirty
+      // times" guard: after the second copy is written, the card sitting in the
+      // reticle has to go back to being refused until it leaves the lens, just
+      // as it would after any other confirm.
+      fakeCandidates = [const ArtCandidate(dmCard, 2)];
+      await agreeArt(darkMagician);
+      await controller().confirm();
+      await settle();
+
+      controller().logAgain();
+      await controller().confirm();
+      await settle();
+
+      for (var i = 0; i < ScanTuning.dismissCooldownFrames * 3; i++) {
+        await feedArt(darkMagician);
+      }
+      expect(state().status, isNot(ScanStatus.matched));
+    });
+
+    test('a re-logged card is presented as a match, not a guess', () async {
+      // The original match was past `autoMatchMaxDistance`, so the gate hedged
+      // it. The user looked at the picture and accepted it anyway, so the hedge
+      // must not come back on a card they have already vouched for.
+      fakeCandidates = [
+        const ArtCandidate(dmCard, ArtMatchTuning.autoMatchMaxDistance + 2),
+      ];
+      await agreeArt(darkMagician);
+      expect(state().matchedDistance, isNotNull);
+
+      await controller().confirm();
+      await settle();
+      controller().logAgain();
+
+      expect(state().matchedDistance, isNull);
+    });
+
+    test('is a no-op before anything has been logged', () async {
+      controller().logAgain();
+      expect(state().status, ScanStatus.detecting);
+      expect(state().matchedCard, isNull);
+    });
+
+    test('is a no-op while a result is already up', () async {
+      fakeCandidates = [const ArtCandidate(dmCard, 2)];
+      await agreeArt(darkMagician);
+      await controller().confirm();
+      await settle();
+
+      // A different card resolves; the offer is not on screen and must not be
+      // able to replace what the user is looking at.
+      fakeCandidates = [const ArtCandidate(beCard, 2)];
+      for (var i = 0; i < ScanTuning.debounceEmptyFrames; i++) {
+        await feedArt(null);
+      }
+      await agreeArt(blueEyes);
+      expect(state().matchedCard?.passcode, blueEyes);
+
+      controller().logAgain();
+      expect(state().matchedCard?.passcode, blueEyes);
+    });
+
+    test('hiding the offer clears it', () async {
+      fakeCandidates = [const ArtCandidate(dmCard, 2)];
+      await agreeArt(darkMagician);
+      await controller().confirm();
+      await settle();
+      expect(state().lastLogged, isNotNull);
+
+      controller().dismissLogAgain();
+      expect(state().lastLogged, isNull);
+      // And nothing else moved: the camera is still scanning.
+      expect(state().status, isNot(ScanStatus.matched));
     });
   });
 
@@ -893,8 +1131,9 @@ void main() {
 
     // Keyed on the language, not on a null printing: Blue-Eyes has exactly one
     // known printing, so a scan now arrives with that set already selected.
-    final scanned = (await CollectionDao(db).getEntriesForPasscode(blueEyes))
-        .where((e) => e.language == 'IT');
+    final scanned = (await CollectionDao(
+      db,
+    ).getEntriesForPasscode(blueEyes)).where((e) => e.language == 'IT');
     expect(scanned, hasLength(1));
     expect(scanned.first.language, 'IT');
   });
@@ -937,31 +1176,37 @@ void main() {
       await settle();
     }
 
-    test('a match is offered for review with the configured defaults',
-        () async {
-      await agreeConfigured(darkMagician);
+    test(
+      'a match is offered for review with the configured defaults',
+      () async {
+        await agreeConfigured(darkMagician);
 
-      final s = configured.read(scanControllerProvider);
-      expect(s.status, ScanStatus.matched);
-      expect(s.condition, CardCondition.lightPlayed);
-      expect(s.edition, CardEdition.first);
-      expect(s.language, 'DE');
-    });
+        final s = configured.read(scanControllerProvider);
+        expect(s.status, ScanStatus.matched);
+        expect(s.condition, CardCondition.lightPlayed);
+        expect(s.edition, CardEdition.first);
+        expect(s.language, 'DE');
+      },
+    );
 
-    test('confirm writes the configured condition, edition and language',
-        () async {
-      await agreeConfigured(darkMagician);
-      await configured.read(scanControllerProvider.notifier).confirm();
-      await settle();
+    test(
+      'confirm writes the configured condition, edition and language',
+      () async {
+        await agreeConfigured(darkMagician);
+        await configured.read(scanControllerProvider.notifier).confirm();
+        await settle();
 
-      final scanned = (await CollectionDao(db).getEntriesForPasscode(darkMagician))
-          .where(
-        (e) => e.printingId == null && e.condition == CardCondition.lightPlayed,
-      );
-      expect(scanned, hasLength(1));
-      expect(scanned.first.edition, CardEdition.first);
-      expect(scanned.first.language, 'DE');
-    });
+        final scanned =
+            (await CollectionDao(db).getEntriesForPasscode(darkMagician)).where(
+              (e) =>
+                  e.printingId == null &&
+                  e.condition == CardCondition.lightPlayed,
+            );
+        expect(scanned, hasLength(1));
+        expect(scanned.first.edition, CardEdition.first);
+        expect(scanned.first.language, 'DE');
+      },
+    );
   });
 
   // A set is preselected only when the card has exactly one printing — see
@@ -1021,24 +1266,27 @@ void main() {
       expect(
         container.read(scanPausedProvider),
         isTrue,
-        reason: 'the review gate is meant to freeze the pipeline — the '
+        reason:
+            'the review gate is meant to freeze the pipeline — the '
             '`finally` must not undo the hand-off',
       );
     });
 
-    test('a failing resolution resumes scanning instead of wedging it',
-        () async {
-      fakeMatcher = _ThrowingArtMatcher();
-      await agreeArt(darkMagician);
+    test(
+      'a failing resolution resumes scanning instead of wedging it',
+      () async {
+        fakeMatcher = _ThrowingArtMatcher();
+        await agreeArt(darkMagician);
 
-      expect(state().status, ScanStatus.detecting);
-      expect(state().artAgreementBuffer, isEmpty);
-      expect(
-        container.read(scanPausedProvider),
-        isFalse,
-        reason: 'a DB or matcher hiccup costs one run, not the session',
-      );
-    });
+        expect(state().status, ScanStatus.detecting);
+        expect(state().artAgreementBuffer, isEmpty);
+        expect(
+          container.read(scanPausedProvider),
+          isFalse,
+          reason: 'a DB or matcher hiccup costs one run, not the session',
+        );
+      },
+    );
 
     test('a status change mid-resolution does not pin the pause', () async {
       final gate = Completer<void>();
@@ -1070,6 +1318,43 @@ void main() {
       expect(state().unmatchedStreak, 0);
       expect(container.read(scanPausedProvider), isFalse);
     });
+
+    test(
+      'a re-log takes the pause, and the confirm after it gives it back',
+      () async {
+        fakeCandidates = const [ArtCandidate(dmCard, 4)];
+        await agreeArt(darkMagician);
+        await controller().confirm();
+        await settle();
+        expect(container.read(scanPausedProvider), isFalse);
+
+        controller().logAgain();
+        expect(
+          container.read(scanPausedProvider),
+          isTrue,
+          reason: 'the re-opened gate freezes the pipeline like any other',
+        );
+
+        await controller().confirm();
+        await settle();
+        expect(container.read(scanPausedProvider), isFalse);
+      },
+    );
+
+    test(
+      'a re-log dismissed instead of confirmed still releases the pause',
+      () async {
+        fakeCandidates = const [ArtCandidate(dmCard, 4)];
+        await agreeArt(darkMagician);
+        await controller().confirm();
+        await settle();
+
+        controller().logAgain();
+        controller().dismiss();
+
+        expect(container.read(scanPausedProvider), isFalse);
+      },
+    );
 
     test('showBestGuesses finding nothing releases the pause', () async {
       fakeCandidates = const [];

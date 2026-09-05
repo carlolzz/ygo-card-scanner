@@ -8,6 +8,7 @@ import '../../data/repositories/collection_repository.dart';
 import '../../data/seed/fake_collection_seed.dart';
 import '../../models/app_settings.dart';
 import '../../models/card_condition.dart';
+import '../../models/card_language.dart';
 import '../../models/collection_entry.dart';
 import '../../models/collection_entry_with_card.dart';
 import '../../models/printing.dart';
@@ -142,12 +143,40 @@ class CollectionSelectionController extends _$CollectionSelectionController {
   void exit() => state = const CollectionSelection();
 }
 
+/// The collection list, narrowed by the filter and matched in the language the
+/// app-bar picker selects.
+///
+/// The language is `searchLanguageProvider`, the same persisted preference the
+/// two card-search screens read, rather than a field on [CollectionFilter]:
+/// one value, one source of truth. It is **watched** here (unlike the sort,
+/// which [CollectionFilterController] reads once at build) because the language
+/// is a search input, not a starting position.
 @riverpod
 Future<List<CollectionEntryWithCard>> collectionEntries(Ref ref) async {
   await ref.watch(debugSeedCollectionProvider.future);
   final filter = ref.watch(collectionFilterControllerProvider);
+  final language = ref.watch(searchLanguageProvider);
   final repository = await ref.watch(collectionRepositoryProvider.future);
-  return repository.getAll(filter: filter);
+
+  var nameLanguage = language;
+  final query = filter.nameQuery;
+  // Gated on there being a query at all: the first run of
+  // `ensureLocalizedNames` decodes a 435 KB asset and inserts ~11.6k rows, and
+  // merely picking a language must not pay for it.
+  if (language != kDefaultSearchLanguage && query != null && query.isNotEmpty) {
+    try {
+      final cards = await ref.watch(cardRepositoryProvider.future);
+      await cards.ensureLocalizedNames(language);
+    } catch (_) {
+      // Degrade to English rather than blanking the collection. The OR in
+      // `CollectionDao.getAll` means every owned card is still findable by its
+      // English name, so a missing or malformed asset costs reach, not the
+      // list. A card *search* can surface that failure; the collection is the
+      // wrong screen to report it on.
+      nameLanguage = kDefaultSearchLanguage;
+    }
+  }
+  return repository.getAll(filter: filter, nameLanguage: nameLanguage);
 }
 
 /// Every value the filter sheet's controls can offer — rarities, sets,

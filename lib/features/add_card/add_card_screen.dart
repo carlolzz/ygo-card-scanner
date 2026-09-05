@@ -13,7 +13,7 @@ import '../../shared/widgets/card_art_thumbnail.dart';
 import '../../shared/widgets/card_search_subtitle.dart';
 import '../../shared/widgets/fast_log_summary.dart';
 import '../../shared/widgets/labeled_choice_chip.dart';
-import '../../shared/widgets/search_language_dropdown.dart';
+import '../../shared/widgets/search_language_picker.dart';
 import 'add_card_providers.dart';
 
 /// Manual add-card flow: search by name -> pick a printing (skipped when
@@ -96,7 +96,7 @@ class _SearchStep extends ConsumerWidget {
                 ),
               ),
               const SizedBox(width: AppSpacing.sm),
-              const SearchLanguageDropdown(),
+              const SearchLanguagePicker(),
             ],
           ),
         ),

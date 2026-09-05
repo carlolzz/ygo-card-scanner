@@ -7,7 +7,7 @@ import '../../core/routes.dart';
 import '../../core/theme/tokens.dart';
 import '../../shared/widgets/card_art_thumbnail.dart';
 import '../../shared/widgets/card_search_subtitle.dart';
-import '../../shared/widgets/search_language_dropdown.dart';
+import '../../shared/widgets/search_language_picker.dart';
 import 'card_search_providers.dart';
 
 /// Search the whole card database and open a card to read it.
@@ -59,7 +59,7 @@ class CardSearchScreen extends ConsumerWidget {
                   ),
                 ),
                 const SizedBox(width: AppSpacing.sm),
-                const SearchLanguageDropdown(),
+                const SearchLanguagePicker(),
               ],
             ),
           ),

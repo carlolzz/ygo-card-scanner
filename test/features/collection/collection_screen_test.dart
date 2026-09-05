@@ -3,13 +3,20 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:ygo_scanner/core/constants.dart';
-import 'package:ygo_scanner/features/settings/settings_providers.dart';
+import 'package:ygo_scanner/data/assets/localized_names.dart';
+import 'package:ygo_scanner/data/db/dao/card_name_dao.dart';
+import 'package:ygo_scanner/data/db/dao/meta_dao.dart';
+import 'package:ygo_scanner/data/repositories/settings_repository.dart';
 import 'package:ygo_scanner/data/seed/fake_collection_seed.dart';
+import 'package:ygo_scanner/features/settings/settings_providers.dart';
+import 'package:ygo_scanner/models/app_settings.dart';
+import 'package:ygo_scanner/models/card_language.dart';
 import 'package:ygo_scanner/features/collection/collection_grid_tile.dart';
 import 'package:ygo_scanner/features/collection/collection_list_tile.dart';
 import 'package:ygo_scanner/models/collection_view_mode.dart';
 import 'package:ygo_scanner/shared/widgets/card_art_thumbnail.dart';
 import 'package:ygo_scanner/shared/widgets/card_thumbnail.dart';
+import 'package:ygo_scanner/shared/widgets/search_language_picker.dart';
 import 'package:ygo_scanner/shared/widgets/searchable_text_picker.dart';
 
 import '../../data/db/test_db.dart';
@@ -27,7 +34,22 @@ void main() {
     await testDb.close();
   });
 
-  Future<void> openCollection(WidgetTester tester) async {
+  /// Opens the collection, first pinning the view mode in `meta` so the case
+  /// gets the layout it is written against.
+  ///
+  /// [viewMode] defaults to [CollectionViewMode.standard] because most cases
+  /// here reach the quantity, delete and long-press controls, which live only
+  /// on the full row. Pass **null** to leave the row unwritten and exercise the
+  /// real default from [AppSettings].
+  Future<void> openCollection(
+    WidgetTester tester, {
+    CollectionViewMode? viewMode = CollectionViewMode.standard,
+  }) async {
+    if (viewMode != null) {
+      await SettingsRepository(
+        MetaDao(testDb),
+      ).save(AppSettings(collectionViewMode: viewMode));
+    }
     await pumpApp(tester, testDb);
     await tester.tap(find.text(AppStrings.homeTileMyCollection));
     await pumpUntilSettled(tester);
@@ -346,9 +368,22 @@ void main() {
       await pumpUntilSettled(tester);
     }
 
-    testWidgets('standard is the default and renders full rows', (
-      tester,
-    ) async {
+    testWidgets('artwork + name is the default on an install that has never '
+        'stored one', (tester) async {
+      await tester.runAsync(() async {
+        // `viewMode: null` leaves the `meta` row unwritten, which is the only
+        // way to reach `AppSettings`' own default here — every other case in
+        // this file pins the mode so it gets the row controls.
+        await openCollection(tester, viewMode: null);
+
+        expect(find.byType(CollectionGridTile), findsWidgets);
+        expect(find.byType(CollectionListTile), findsNothing);
+        // Captioned, which is what separates this mode from artwork-only.
+        expect(find.text('Dark Magician'), findsOneWidget);
+      });
+    });
+
+    testWidgets('standard renders full rows', (tester) async {
       await tester.runAsync(() async {
         await openCollection(tester);
 
@@ -459,6 +494,81 @@ void main() {
     });
   });
 
+  group('search language', () {
+    /// Italian names for two seeded cards, standing in for the bundled
+    /// `assets/card_names_it.json`. Red-Eyes is deliberately left untranslated:
+    /// the shipped asset covers ~11.6k of ~14.6k cards, so a card in the
+    /// collection with no Italian name is the normal case.
+    Future<void> seedItalianNames() => CardNameDao(testDb).insertAll(const [
+      CardName(passcode: '46986414', language: 'IT', name: 'Mago Nero'),
+      CardName(passcode: '44095762', language: 'IT', name: 'Forza Speculare'),
+    ]);
+
+    /// Marks the names as already imported, so `ensureLocalizedNames` skips the
+    /// `rootBundle` read a widget test has no bundle for.
+    Future<void> markImported() =>
+        MetaDao(testDb).set('localized_names_it', '$kLocalizedNamesVersion');
+
+    Future<void> chooseLanguage(WidgetTester tester, String code) async {
+      await tester.tap(find.byType(SearchLanguagePicker));
+      await pumpUntilSettled(tester);
+      // Only the open menu spells the language out, so this matches the item
+      // and not the closed control.
+      await tester.tap(find.text(languageLabel(code)).last);
+      await pumpUntilSettled(tester);
+    }
+
+    testWidgets('the picker sits in the app bar', (tester) async {
+      await tester.runAsync(() async {
+        await openCollection(tester);
+
+        expect(find.byType(SearchLanguagePicker), findsOneWidget);
+      });
+    });
+
+    testWidgets('an Italian query finds a card the list names in English', (
+      tester,
+    ) async {
+      await tester.runAsync(() async {
+        await seedItalianNames();
+        await markImported();
+        await openCollection(tester);
+
+        // English first: the Italian name matches nothing until the language is
+        // switched, so the switch is what the assertion below is about.
+        await tester.enterText(find.byType(TextField), 'Mago');
+        await pumpUntilSettled(tester);
+        expect(find.text('Dark Magician'), findsNothing);
+
+        await chooseLanguage(tester, 'IT');
+
+        // Matched in Italian, still shown in English.
+        expect(find.text('Dark Magician'), findsOneWidget);
+        expect(find.text('Blue-Eyes White Dragon'), findsNothing);
+      });
+    });
+
+    testWidgets('an English query still works with Italian selected', (
+      tester,
+    ) async {
+      await tester.runAsync(() async {
+        await seedItalianNames();
+        await markImported();
+        await openCollection(tester);
+        await chooseLanguage(tester, 'IT');
+
+        // Red-Eyes has no Italian name at all. A card in the collection must
+        // not become unfindable in the collection because of a gap in the
+        // asset, which is why the DAO's predicate is an OR.
+        await tester.enterText(find.byType(TextField), 'Red-Eyes');
+        await pumpUntilSettled(tester);
+
+        expect(find.text('Red-Eyes B. Dragon'), findsOneWidget);
+        expect(find.text('Dark Magician'), findsNothing);
+      });
+    });
+  });
+
   group('multi-select delete', () {
     /// The grid modes only build their cells when there is room for them, and
     /// the standard list is lazy — so every case here needs the tall viewport.
@@ -513,6 +623,22 @@ void main() {
         expect(find.byIcon(Icons.add_circle_outline), findsNothing);
         expect(find.byIcon(Icons.remove_circle_outline), findsNothing);
         expect(find.byIcon(Icons.check_circle), findsOneWidget);
+      });
+    });
+
+    testWidgets('the language picker is gone while selecting', (tester) async {
+      useTallViewport(tester);
+      await tester.runAsync(() async {
+        await openCollection(tester);
+        expect(find.byType(SearchLanguagePicker), findsOneWidget);
+
+        await longPress(tester, find.text('Dark Magician'));
+
+        // Not cosmetic. The selection is cleared by watching the *filter*, and
+        // the search language does not live there, so changing it mid-selection
+        // would narrow the list while leaving invisible rows selected for the
+        // bulk delete. Unreachable is what makes that impossible.
+        expect(find.byType(SearchLanguagePicker), findsNothing);
       });
     });
 

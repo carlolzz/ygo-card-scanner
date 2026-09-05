@@ -2,6 +2,7 @@ import 'package:sqflite/sqflite.dart';
 
 import '../../../models/card_condition.dart';
 import '../../../models/card_edition.dart';
+import '../../../models/card_language.dart';
 import '../../../models/collection_entry.dart';
 import '../../../models/collection_entry_with_card.dart';
 import '../../../models/collection_sort_by.dart';
@@ -484,15 +485,42 @@ class CollectionDao {
     });
   }
 
+  /// [nameLanguage] is the language [CollectionFilter.nameQuery] is matched in.
+  /// It is not on the filter itself: it is a persisted preference with its own
+  /// provider, and a copy on the filter would be a second source of truth for
+  /// one value. It only ever does anything when there *is* a query.
   Future<List<CollectionEntryWithCard>> getAll({
     CollectionFilter filter = const CollectionFilter(),
+    String nameLanguage = kDefaultSearchLanguage,
   }) async {
     final conditions = <String>[];
     final args = <Object?>[];
 
     if (filter.nameQuery != null && filter.nameQuery!.isNotEmpty) {
-      conditions.add('c.name LIKE ?');
-      args.add('%${filter.nameQuery}%');
+      final pattern = '%${filter.nameQuery}%';
+      if (nameLanguage == kDefaultSearchLanguage) {
+        conditions.add('c.name LIKE ?');
+        args.add(pattern);
+      } else {
+        // OR, not a replacement — the opposite of `CardDao
+        // .searchByLocalizedName`, whose inner join deliberately hides
+        // untranslated cards. Here the rows are cards the user demonstrably
+        // owns: `card_names` covers ~11.6k of ~14.6k cards, and every one of
+        // them has an English name, so matching only the localized name would
+        // make a card in the collection unfindable in the collection.
+        //
+        // EXISTS rather than a LEFT JOIN: nothing here displays the matched
+        // name, and a join would change the row shape of a query whose SELECT
+        // list every consumer reads by column. `card_names` is keyed on
+        // (passcode, language), so the subquery is index-served.
+        conditions.add(
+          '(c.name LIKE ? OR EXISTS ('
+          ' SELECT 1 FROM card_names cn'
+          ' WHERE cn.passcode = ce.passcode'
+          ' AND cn.language = ? AND cn.name LIKE ?))',
+        );
+        args.addAll([pattern, nameLanguage, pattern]);
+      }
     }
     if (filter.cardType != null) {
       conditions.add('c.type = ?');

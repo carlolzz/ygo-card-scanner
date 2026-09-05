@@ -188,6 +188,21 @@ class LanguageFlagTokens {
   static const double fallbackBorderWidth = 1;
 }
 
+/// The boxed form of `SearchLanguagePicker`, the control beside a search field.
+class SearchLanguagePickerTokens {
+  const SearchLanguagePickerTokens._();
+
+  /// Matched to the search field it sits beside: a filled [TextField] with an
+  /// [OutlineInputBorder] and a prefix icon lands on exactly this height, so
+  /// pinning it here is what keeps the two boxes level. It is also the app's
+  /// own tap-target floor, which this control wants anyway.
+  static const double height = AppTapTarget.minSize;
+
+  /// A size down from the default 24: the caret marks the box as openable, it
+  /// is not the thing being read.
+  static const double caretSize = 20;
+}
+
 /// The home screen: a 2x2 grid of Log Cards, My Collection, Statistics and
 /// Settings, with Card Search as a full-width tile under them.
 ///

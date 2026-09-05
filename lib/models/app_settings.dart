@@ -26,7 +26,7 @@ class AppSettings {
     this.showScanHelp = true,
     this.keepCameraReady = true,
     this.confirmBeforeDelete = true,
-    this.collectionViewMode = CollectionViewMode.standard,
+    this.collectionViewMode = CollectionViewMode.minifyStandard,
     this.collectionSortBy = CollectionSortBy.name,
     this.collectionSortDescending = false,
     this.searchLanguage = kDefaultSearchLanguage,
@@ -79,6 +79,13 @@ class AppSettings {
   /// Deliberately has no row on the Settings screen — its control lives on the
   /// collection screen, where the effect is visible. `showScanDiagnostics` has
   /// the same shape in reverse (a Settings row *and* a scan-screen shortcut).
+  ///
+  /// Defaults to the captioned grid: a collection is browsed far more often
+  /// than it is edited, and the full row exists for the quantity and delete
+  /// controls, which are also on the detail screen. Note that this default only
+  /// reaches an install that has never stored one — `SettingsRepository.save`
+  /// writes every key on every call, so any device that has changed a setting
+  /// keeps whatever it has.
   final CollectionViewMode collectionViewMode;
 
   /// How the collection list is ordered, and in which direction. Persisted for

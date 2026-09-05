@@ -2,6 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:ygo_scanner/data/db/dao/card_dao.dart';
+import 'package:ygo_scanner/data/db/dao/card_name_dao.dart';
 import 'package:ygo_scanner/data/db/dao/collection_dao.dart';
 import 'package:ygo_scanner/data/db/dao/printing_dao.dart';
 import 'package:ygo_scanner/models/card_condition.dart';
@@ -406,6 +407,85 @@ void main() {
         expect(await collectionDao.distinctCardCount(), 2);
       },
     );
+  });
+
+  group('name search by language', () {
+    setUp(() async {
+      await collectionDao.addOrIncrement(
+        _entry(passcode: _blueEyes.passcode, condition: CardCondition.nearMint),
+      );
+      await collectionDao.addOrIncrement(
+        _entry(passcode: _redEyes.passcode, condition: CardCondition.nearMint),
+      );
+      // Only Blue-Eyes is translated: the shipped asset covers ~11.6k of the
+      // ~14.6k cards, so an untranslated card in the collection is the normal
+      // case, not an edge one.
+      await CardNameDao(db).insertAll(const [
+        CardName(
+          passcode: '89631139',
+          language: 'IT',
+          name: 'Drago Bianco Occhi Blu',
+        ),
+      ]);
+    });
+
+    test('the default language matches the English name only', () async {
+      final italian = await collectionDao.getAll(
+        filter: const CollectionFilter(nameQuery: 'Drago Bianco'),
+      );
+      expect(italian, isEmpty);
+
+      final english = await collectionDao.getAll(
+        filter: const CollectionFilter(nameQuery: 'Blue-Eyes'),
+      );
+      expect(english.single.card.name, 'Blue-Eyes White Dragon');
+    });
+
+    test('a localized language matches the localized name', () async {
+      final results = await collectionDao.getAll(
+        filter: const CollectionFilter(nameQuery: 'Drago Bianco'),
+        nameLanguage: 'IT',
+      );
+      expect(results, hasLength(1));
+      // The row is still the English card: the language changes what is
+      // matched, never what is shown.
+      expect(results.single.card.name, 'Blue-Eyes White Dragon');
+    });
+
+    test('a localized language still matches the English name', () async {
+      final results = await collectionDao.getAll(
+        filter: const CollectionFilter(nameQuery: 'Blue-Eyes'),
+        nameLanguage: 'IT',
+      );
+      expect(results.single.card.name, 'Blue-Eyes White Dragon');
+    });
+
+    test('an untranslated card stays findable by its English name', () async {
+      // The whole reason this is an OR rather than `CardDao
+      // .searchByLocalizedName`'s inner join: Red-Eyes has no `card_names` row,
+      // and a card in the collection must not become unfindable in the
+      // collection because of a gap in the asset.
+      final results = await collectionDao.getAll(
+        filter: const CollectionFilter(nameQuery: 'Red-Eyes'),
+        nameLanguage: 'IT',
+      );
+      expect(results.single.card.name, 'Red-Eyes Black Dragon');
+    });
+
+    test('a localized name for another language does not match', () async {
+      final results = await collectionDao.getAll(
+        filter: const CollectionFilter(nameQuery: 'Drago Bianco'),
+        nameLanguage: 'FR',
+      );
+      expect(results, isEmpty);
+    });
+
+    test('a language with no query narrows nothing', () async {
+      final results = await collectionDao.getAll(nameLanguage: 'IT');
+      // Both entries, including the card with no Italian name at all: the
+      // language only ever qualifies a query.
+      expect(results, hasLength(2));
+    });
   });
 
   group('rarity filter', () {
@@ -824,18 +904,21 @@ void main() {
     // away because no price source distinguishes them: Blue-Eyes' two language
     // rows price identically, so they arrive as one group of five copies rather
     // than two of three and two.
-    test('quantityByPasscodeAndPrinting sums a card\'s language rows', () async {
-      final groups = await collectionDao.quantityByPasscodeAndPrinting();
-      expect(
-        {for (final g in groups) g.passcode: g.quantity},
-        {_blueEyes.passcode: 5, _redEyes.passcode: 5},
-      );
-      expect(
-        groups.every((g) => g.printingId == null),
-        isTrue,
-        reason: 'none of these entries records a set',
-      );
-    });
+    test(
+      'quantityByPasscodeAndPrinting sums a card\'s language rows',
+      () async {
+        final groups = await collectionDao.quantityByPasscodeAndPrinting();
+        expect(
+          {for (final g in groups) g.passcode: g.quantity},
+          {_blueEyes.passcode: 5, _redEyes.passcode: 5},
+        );
+        expect(
+          groups.every((g) => g.printingId == null),
+          isTrue,
+          reason: 'none of these entries records a set',
+        );
+      },
+    );
   });
 
   group('quantityByPasscodeAndPrinting', () {
@@ -848,8 +931,16 @@ void main() {
     // priced — and therefore grouped — separately.
     test('splits one card held as two printings into two groups', () async {
       await printingDao.insertAll(const [
-        Printing(passcode: '89631139', setCode: 'LOB-EN001', rarity: 'Ultra Rare'),
-        Printing(passcode: '89631139', setCode: 'CT13-EN008', rarity: 'Ultra Rare'),
+        Printing(
+          passcode: '89631139',
+          setCode: 'LOB-EN001',
+          rarity: 'Ultra Rare',
+        ),
+        Printing(
+          passcode: '89631139',
+          setCode: 'CT13-EN008',
+          rarity: 'Ultra Rare',
+        ),
       ]);
       final printings = await printingDao.getForPasscode('89631139');
       final lob = printings.firstWhere((p) => p.setCode == 'LOB-EN001').id;
@@ -912,7 +1003,11 @@ void main() {
 
     test('two languages under one printing stay one group', () async {
       await printingDao.insertAll(const [
-        Printing(passcode: '89631139', setCode: 'LOB-EN001', rarity: 'Ultra Rare'),
+        Printing(
+          passcode: '89631139',
+          setCode: 'LOB-EN001',
+          rarity: 'Ultra Rare',
+        ),
       ]);
       final printing = (await printingDao.getForPasscode('89631139')).single;
 
@@ -1306,10 +1401,10 @@ void main() {
     test('ids are parameterized, not interpolated', () async {
       expect(await collectionDao.deleteMany([blueEyesLp]), 1);
       final remaining = await collectionDao.getAll();
-      expect(remaining.map((e) => e.entry.id), unorderedEquals([
-        blueEyesNm,
-        redEyesNm,
-      ]));
+      expect(
+        remaining.map((e) => e.entry.id),
+        unorderedEquals([blueEyesNm, redEyesNm]),
+      );
     });
   });
 }

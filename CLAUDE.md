@@ -96,7 +96,7 @@ lib/
     card_thumbnail.dart
     card_details_view.dart
     card_search_subtitle.dart
-    search_language_dropdown.dart
+    search_language_picker.dart
 test/
   data/db/
   data/repositories/
@@ -2975,6 +2975,112 @@ order):
     `CardDetectionTuning.innerQuadMinAreaRatio` at 0.78, the passcode ROI filter
     off, `artAgreementFrames` at 2, every `FrameQualityTuning` threshold still
     uncalibrated on device, and whether `kPriceTtl` at 24 h is right.
+
+33. Fifteenth on-device feedback pass — compact language picker, collection
+    search by language, grid by default ← done (verified: `flutter analyze`
+    clean, full `flutter test` green at **846 tests**, `pytest tools/` green).
+    **No DB migration, no schema change, no new dependency.** Nothing here
+    touches the descriptor, `assets/card_hashes.json`, the detection algorithm
+    or any scan/matching/quality threshold.
+    **`SearchLanguageDropdown` is now `SearchLanguagePicker`, and a
+    `PopupMenuButton`.** The report was that the control beside the search box
+    is too big and its menu nearly touches the screen edges. Both follow from
+    one fact: it rendered `languageLabel(code)` — "English" / "Italian" — and a
+    `DropdownButton` sizes its **menu to the button**, so the widest label set
+    the width of both. A popup menu is sized to its own content, which is what
+    lets the closed control shrink to a flag and two letters while the menu
+    still spells the languages out; the full name had previously to live in the
+    closed box to be readable anywhere. The conversion also retires the three
+    `DropdownButton` workarounds step 31 added (`alignment`, `isDense`,
+    `focusColor`) — they existed to fight the `IndexedStack` sizing and the
+    `InkWell` focus highlight a popup menu does not have.
+    The rename is honest rather than churn: the widget stops being a dropdown,
+    and deleting the old file rather than aliasing it made `flutter analyze` the
+    completeness check for the three call sites, the same technique step 9 used
+    for `AppColors`. `LanguageFlag` is reused, not reinvented — it already
+    handles the code-that-names-no-country case (`AE`) with an outlined badge
+    and already wraps itself in `Semantics(label: languageLabel(...))`. Its
+    documented caveat matters for tests: **on Windows and in the test
+    environment the emoji font has no coverage and a regional-indicator pair
+    renders as two letters**, so assertions match the *code*, never the glyph.
+    New `SearchLanguagePickerTokens.height` = `AppTapTarget.minSize` (56), which
+    is exactly what a filled `TextField` with an `OutlineInputBorder` and a
+    prefix icon measures — pinning it is what keeps the two boxes level, and a
+    widget test measures it, since a mismatch here reads as a misaligned control
+    rather than as a wrong number.
+    A `bare: true` form (the flag alone, no box and no code) is the app-bar
+    shape. One widget with a flag rather than two widgets: what would actually
+    be wrong if it drifted is the menu and the preference wiring, and those are
+    shared.
+    **The collection can be searched in Italian.** `CollectionDao.getAll`
+    matched `c.name LIKE ?` against `cards.name`, which the sync only ever fills
+    in English, so a card findable in the card database was not findable in the
+    user's own collection. `getAll` gained a `nameLanguage` parameter and, past
+    the default, an `EXISTS` on `card_names` beside the English predicate.
+    **It is an OR, and that is the whole design decision** (settled with the
+    user). `CardDao.searchByLocalizedName` uses an *inner join* on purpose — a
+    card with no translation is absent rather than listed under its English name
+    — but these rows are cards the user demonstrably owns: the asset covers
+    ~11.6k of ~14.6k cards, so localized-only matching would make a card in the
+    collection unfindable in the collection. Two DAO cases were **verified to
+    fail** against a localized-only predicate before being kept.
+    `EXISTS` rather than a `LEFT JOIN card_names`: nothing here displays the
+    matched name, and a join would change the row shape of a query whose
+    `SELECT` list every consumer reads by column. `card_names` is keyed on
+    `(passcode, language)`, so the subquery is index-served.
+    **`nameLanguage` is deliberately *not* a `CollectionFilter` field.** The
+    language is already a persisted preference with its own provider
+    (`searchLanguageProvider`, shared with both card-search screens), and a copy
+    on the filter would be a second source of truth plus the exact
+    `ref.read`-vs-`watch` trap `CollectionFilterController.build()` documents.
+    So `activeCount`, `cleared()` and the exporter's and statistics'
+    `const CollectionFilter()` call sites are all untouched.
+    `collectionEntries` **watches** the language (unlike the sort, which is read
+    once at build) because it is a search input, not a starting position, and
+    calls `ensureLocalizedNames` **only when there is a query** — its first run
+    decodes a 435 KB asset and inserts ~11.6k rows, and merely picking a
+    language must not pay for that. A failure there degrades to English rather
+    than propagating: the OR means every owned card is still findable, so a
+    missing asset costs reach, not the list, and the collection is the wrong
+    screen to report an asset fault on.
+    The control is `SearchLanguagePicker(bare: true)`, **first** in the app
+    bar's actions so sort and its direction toggle stay adjacent, and
+    deliberately **absent from `_selectionAppBar`**. That closes a real hazard:
+    `CollectionSelectionController` clears the selection by watching the
+    *filter*, and this preference does not live there, so changing it
+    mid-selection would narrow the list while leaving invisible rows selected
+    for the bulk delete. Unreachable is what makes it impossible — the same
+    argument that already hides the filter bar while selecting. Test-pinned.
+    **The collection opens on "Artwork + name".** `AppSettings
+    .collectionViewMode` defaults to `minifyStandard`; a collection is browsed
+    far more often than edited, and the full row exists for the quantity and
+    delete controls, which the detail screen also carries. The two
+    `?? CollectionViewMode.standard` fallbacks that stand in while settings
+    resolve became `const AppSettings().collectionViewMode`, so one source of
+    truth and no flash of the wrong layout.
+    **Known and accepted, not a bug**: `SettingsRepository.save` writes every
+    key on every call, so any device that has ever changed a setting already has
+    `settings.collection_view_mode` stored and keeps it. The new default reaches
+    fresh installs only; an existing phone picks it once from the View menu. A
+    one-time migration was considered and dropped (decided with the user) — it
+    would silently override a mode the user may have chosen deliberately.
+    **Test gotcha, and it is the real cost of that default.** About fifteen
+    cases in `collection_screen_test` reach the +/− / delete controls or the
+    long press, all of which live only on the standard row, and every one of
+    them relied on `standard` being the default. Rather than editing each,
+    `openCollection` gained
+    `{CollectionViewMode? viewMode = CollectionViewMode.standard}` and writes
+    that mode to `meta` before `pumpApp` — so every existing call site keeps its
+    behaviour untouched, and **`viewMode: null`** (leave the row unwritten) is
+    the one way to reach the real default, which the renamed
+    "artwork + name is the default" case uses.
+    **Still open**, unchanged: `maxHammingDistance` at 72,
+    `CardDetectionTuning.innerQuadMinAreaRatio` at 0.78, the passcode ROI filter
+    off, `artAgreementFrames` at 2, every `FrameQualityTuning` threshold still
+    uncalibrated on device, and whether `kPriceTtl` at 24 h is right. New and
+    open: the View button tints itself accent whenever the mode is not
+    `standard`, so with the new default it reads "active" on first launch. Still
+    literally true (you are in a grid), left alone pending a look on device.
 
 ## Standing rules
 

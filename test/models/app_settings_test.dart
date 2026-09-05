@@ -1,11 +1,22 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ygo_scanner/models/app_settings.dart';
+import 'package:ygo_scanner/models/collection_view_mode.dart';
 import 'package:ygo_scanner/models/fast_log_field.dart';
 
 /// The Fast log rule. It lives on [AppSettings] precisely so that both logging
 /// flows and the Settings screen read one definition, which makes this the
 /// single place it is worth pinning.
 void main() {
+  // Two widgets fall back to this value while settings resolve, and the
+  // collection screen renders a grid or a list off it, so the default is worth
+  // naming here rather than only inferring it from what a screen draws.
+  test('the collection opens on the captioned grid by default', () {
+    expect(
+      const AppSettings().collectionViewMode,
+      CollectionViewMode.minifyStandard,
+    );
+  });
+
   group('fastLogActive', () {
     test('is false while the switch is off, whatever the fields hold', () {
       expect(const AppSettings().fastLogActive, isFalse);

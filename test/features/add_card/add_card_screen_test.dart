@@ -19,7 +19,7 @@ import 'package:ygo_scanner/models/card_edition.dart';
 import 'package:ygo_scanner/models/card_language.dart';
 import 'package:ygo_scanner/models/fast_log_field.dart';
 import 'package:ygo_scanner/shared/widgets/card_art_thumbnail.dart';
-import 'package:ygo_scanner/shared/widgets/search_language_dropdown.dart';
+import 'package:ygo_scanner/shared/widgets/search_language_picker.dart';
 
 import '../../data/db/test_db.dart';
 import '../../support/widget_test_harness.dart';
@@ -391,10 +391,10 @@ void main() {
         MetaDao(testDb).set('localized_names_it', '$kLocalizedNamesVersion');
 
     Future<void> chooseLanguage(WidgetTester tester, String code) async {
-      await tester.tap(find.byType(SearchLanguageDropdown));
+      await tester.tap(find.byType(SearchLanguagePicker));
       await pumpUntilSettled(tester);
-      // The dropdown's menu duplicates the button's own label, so scope the
-      // tap to the overlay rather than the first match.
+      // Only the open menu spells the language out — the closed control shows
+      // the code — so this matches the menu item and nothing else.
       await tester.tap(find.text(languageLabel(code)).last);
       await pumpUntilSettled(tester);
     }
@@ -408,7 +408,10 @@ void main() {
         await openAddCard(tester);
 
         expect(
-          find.widgetWithText(SearchLanguageDropdown, languageLabel('EN')),
+          // The code, not `languageLabel('EN')`: the closed control carries the
+          // flag and the two letters, and the full name only appears in the
+          // menu it opens.
+          find.widgetWithText(SearchLanguagePicker, 'EN'),
           findsOneWidget,
         );
         await search(tester, 'Mago');
@@ -597,7 +600,7 @@ void main() {
         // The printing step is unreachable under Fast log, so the back button
         // must not route into it: its Skip button would null out the set.
         expect(find.text(AppStrings.addCardPrintingSkip), findsNothing);
-        expect(find.byType(SearchLanguageDropdown), findsOneWidget);
+        expect(find.byType(SearchLanguagePicker), findsOneWidget);
       });
     });
   });

@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/constants.dart';
 import '../../core/theme/tokens.dart';
+import '../../models/app_settings.dart';
 import '../../models/collection_view_mode.dart';
 import '../settings/settings_providers.dart';
 import 'collection_filter_sheet.dart';
@@ -69,7 +70,9 @@ class CollectionFilterBar extends ConsumerWidget {
                         ? palette.onSurface
                         : palette.accent,
                     side: BorderSide(
-                      color: activeCount == 0 ? palette.divider : palette.accent,
+                      color: activeCount == 0
+                          ? palette.divider
+                          : palette.accent,
                     ),
                   ),
                 ),
@@ -92,9 +95,12 @@ class _MinifyMenu extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final palette = AppPalette.of(context);
+    // The model's own default, not a literal: the button must not read as a
+    // different mode than the list beside it is rendering while settings
+    // resolve. See the same fallback in `CollectionScreen`.
     final mode =
         ref.watch(settingsControllerProvider).value?.collectionViewMode ??
-        CollectionViewMode.standard;
+        const AppSettings().collectionViewMode;
 
     return PopupMenuButton<CollectionViewMode>(
       tooltip: AppStrings.collectionMinifyTooltip,

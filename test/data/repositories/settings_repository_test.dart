@@ -38,7 +38,7 @@ void main() {
     expect(settings.showScanHelp, isTrue);
     expect(settings.keepCameraReady, isTrue);
     expect(settings.confirmBeforeDelete, isTrue);
-    expect(settings.collectionViewMode, CollectionViewMode.standard);
+    expect(settings.collectionViewMode, CollectionViewMode.minifyStandard);
     expect(settings.collectionSortBy, CollectionSortBy.name);
     expect(settings.collectionSortDescending, isFalse);
     expect(settings.fastLogEnabled, isFalse);
@@ -142,7 +142,7 @@ void main() {
     expect(settings.defaultCondition, CardCondition.nearMint);
     expect(settings.defaultEdition, CardEdition.unlimited);
     expect(settings.themeMode, AppThemeMode.dark);
-    expect(settings.collectionViewMode, CollectionViewMode.standard);
+    expect(settings.collectionViewMode, CollectionViewMode.minifyStandard);
     expect(settings.collectionSortBy, CollectionSortBy.name);
   });
 

@@ -7,8 +7,10 @@ import '../../core/routes.dart';
 import '../../core/theme/tokens.dart';
 import '../../data/db/dao/collection_dao.dart';
 import '../../data/repositories/collection_repository.dart';
+import '../../models/app_settings.dart';
 import '../../models/collection_entry_with_card.dart';
 import '../../models/collection_view_mode.dart';
+import '../../shared/widgets/search_language_picker.dart';
 import '../settings/settings_providers.dart';
 import 'collection_delete_confirm.dart';
 import 'collection_filter_bar.dart';
@@ -26,11 +28,13 @@ class CollectionScreen extends ConsumerWidget {
     final entriesAsync = ref.watch(collectionEntriesProvider);
     final filter = ref.watch(collectionFilterControllerProvider);
     final selection = ref.watch(collectionSelectionControllerProvider);
-    // `.value ?? default`: the list must not blank out while settings resolve,
-    // and Standard is what it would have rendered before this setting existed.
+    // `.value ?? default`: the list must not blank out while settings resolve.
+    // The fallback is the model's own default rather than a literal, so a
+    // slow settings read cannot flash a different layout than the one that is
+    // about to arrive.
     final viewMode =
         ref.watch(settingsControllerProvider).value?.collectionViewMode ??
-        CollectionViewMode.standard;
+        const AppSettings().collectionViewMode;
 
     // Android back cancels the selection rather than leaving the screen. Without
     // this the only way out is the close icon, and backing out of a mode is what
@@ -48,6 +52,17 @@ class CollectionScreen extends ConsumerWidget {
             : AppBar(
                 title: const Text(AppStrings.homeTileMyCollection),
                 actions: [
+                  // Which language the search box matches names in. First, so
+                  // sort and its direction toggle stay adjacent.
+                  //
+                  // Deliberately absent from `_selectionAppBar` below, and that
+                  // closes a hazard: `CollectionSelectionController` clears the
+                  // selection by watching the *filter*, but this preference
+                  // does not live there, so a language change would narrow the
+                  // list without clearing what is selected. It cannot happen,
+                  // because the control is unreachable while selecting, for the
+                  // same reason the filter bar is hidden then.
+                  const SearchLanguagePicker(bare: true),
                   // Sort moved here when the chip rows it used to sit among were
                   // replaced by the filter sheet — it belongs beside its own
                   // direction toggle, and sorting is not a filter.
@@ -145,9 +160,7 @@ class CollectionScreen extends ConsumerWidget {
     CollectionSelection selection,
     List<CollectionEntryWithCard>? entries,
   ) {
-    final controller = ref.read(
-      collectionSelectionControllerProvider.notifier,
-    );
+    final controller = ref.read(collectionSelectionControllerProvider.notifier);
     final visible = entries ?? const <CollectionEntryWithCard>[];
     final allSelected =
         visible.isNotEmpty &&
@@ -158,9 +171,7 @@ class CollectionScreen extends ConsumerWidget {
         icon: const Icon(Icons.close),
         onPressed: controller.exit,
       ),
-      title: Text(
-        '${selection.count} ${AppStrings.collectionSelectedSuffix}',
-      ),
+      title: Text('${selection.count} ${AppStrings.collectionSelectedSuffix}'),
       actions: [
         IconButton(
           tooltip: allSelected
@@ -248,7 +259,10 @@ class CollectionScreen extends ConsumerWidget {
     ref.invalidate(collectionFilterOptionsProvider);
   }
 
-  void _openDetail(BuildContext context, CollectionEntryWithCard entryWithCard) {
+  void _openDetail(
+    BuildContext context,
+    CollectionEntryWithCard entryWithCard,
+  ) {
     context.push(AppRoutes.collectionDetail, extra: entryWithCard);
   }
 }

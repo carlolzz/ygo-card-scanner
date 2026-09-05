@@ -4,6 +4,7 @@ import 'package:riverpod_annotation/riverpod_annotation.dart';
 
 import '../../models/card_condition.dart';
 import '../../models/card_edition.dart';
+import '../../models/card_language.dart';
 import '../../models/collection_entry.dart';
 import '../../models/collection_entry_with_card.dart';
 import '../db/dao/collection_dao.dart';
@@ -52,9 +53,12 @@ class CollectionRepository {
     language: language,
   );
 
+  /// [nameLanguage] picks the language [CollectionFilter.nameQuery] is matched
+  /// in; see [CollectionDao.getAll].
   Future<List<CollectionEntryWithCard>> getAll({
     CollectionFilter filter = const CollectionFilter(),
-  }) => _dao.getAll(filter: filter);
+    String nameLanguage = kDefaultSearchLanguage,
+  }) => _dao.getAll(filter: filter, nameLanguage: nameLanguage);
 
   /// The rarity values present in the collection (a null element = "no
   /// rarity"), for the collection filter row's chips.

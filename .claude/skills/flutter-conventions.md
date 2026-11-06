@@ -9,5 +9,5 @@ House style. Apply to all Dart code in this repo.
 - No business logic in `build()`. Widgets read providers and render; decisions happen in notifiers and repositories.
 - freezed/json_serializable part files sit beside their source. Regenerate with `dart run build_runner build --delete-conflicting-outputs`.
 - Errors cross layer boundaries as typed failures via `core/result.dart`, not raw exceptions escaping the data layer.
-- Every user-visible string goes through a single constants file for now, so localization is a refactor and not a rewrite.
+- Every user-visible string goes through `AppStrings` in `lib/core/constants.dart`, written as `_t('English', 'Italiano')` — both languages, every time; the second argument is required, so a missing translation is a compile error. They are getters, so never read one in a `const` context or capture one in a `final`/`static final` (that freezes the language the first time it is read — use a getter, as `home_screen.dart`'s `_tiles` does). Card data from YGOPRODeck is never translated.
 - `flutter analyze` must be clean before any session ends. Warnings are errors.

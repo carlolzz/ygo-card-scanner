@@ -13,6 +13,7 @@ import 'package:ygo_scanner/data/repositories/card_repository.dart';
 import 'package:ygo_scanner/data/repositories/settings_repository.dart';
 import 'package:ygo_scanner/features/settings/settings_providers.dart';
 import 'package:ygo_scanner/features/settings/settings_screen.dart';
+import 'package:ygo_scanner/models/app_language.dart';
 import 'package:ygo_scanner/models/app_settings.dart';
 import 'package:ygo_scanner/models/app_theme_mode.dart';
 import 'package:ygo_scanner/models/card_condition.dart';
@@ -288,6 +289,33 @@ void main() {
         container.read(settingsControllerProvider).value?.themeMode,
         AppThemeMode.light,
       );
+    });
+  });
+
+  // The remount that makes the change visible is `App`'s job and is covered in
+  // app_language_switch_test; this is the control and its write-through.
+  testWidgets('choosing Italiano persists the interface language', (
+    tester,
+  ) async {
+    addTearDown(() => AppStrings.select(AppLanguage.english));
+    await tester.runAsync(() async {
+      await openSettings(tester);
+
+      final italian = find.widgetWithText(
+        ChoiceChip,
+        AppLanguage.italian.label,
+      );
+      await scrollTo(tester, italian);
+      await tester.tap(italian);
+      await pumpUntilSettled(tester);
+
+      expect(
+        await MetaDao(testDb).get('settings.app_language'),
+        AppLanguage.italian.toDb(),
+      );
+      // Selected before the controller publishes, so the rebuild it triggers
+      // already reads Italian.
+      expect(AppStrings.language, AppLanguage.italian);
     });
   });
 

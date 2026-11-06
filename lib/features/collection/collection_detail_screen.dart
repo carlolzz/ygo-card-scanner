@@ -62,7 +62,7 @@ class _CollectionDetailScreenState
               onPressed: () => _confirmDelete(entry.id!),
             ),
           ],
-          bottom: const TabBar(
+          bottom: TabBar(
             tabs: [
               Tab(text: AppStrings.cardTabDetails),
               Tab(text: AppStrings.cardTabPrices),
@@ -446,14 +446,14 @@ class _EditEntrySheetState extends ConsumerState<_EditEntrySheet> {
                       onPressed: _saving
                           ? null
                           : () => Navigator.of(context).pop(),
-                      child: const Text(AppStrings.collectionEditCancelButton),
+                      child: Text(AppStrings.collectionEditCancelButton),
                     ),
                   ),
                   const SizedBox(width: AppSpacing.md),
                   Expanded(
                     child: FilledButton(
                       onPressed: _saving ? null : _save,
-                      child: const Text(AppStrings.collectionEditSaveButton),
+                      child: Text(AppStrings.collectionEditSaveButton),
                     ),
                   ),
                 ],

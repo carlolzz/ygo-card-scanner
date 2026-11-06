@@ -23,9 +23,12 @@ Use exactly this, do not substitute.
 equivalent. Packages have been *added* where the list covers no equivalent at
 all, each recorded in the build-order step that added it — `path_provider` and
 `path` (file paths, step 5), `opencv_core` (the artwork-first pivot),
-`share_plus` (getting exports and scan samples off the device, steps 10/18) and
-`file_selector` (opening a user-chosen file, step 20). A new one needs that same
-justification: a capability none of the above provides.
+`share_plus` (getting exports and scan samples off the device, steps 10/18),
+`file_selector` (opening a user-chosen file, step 20) and the SDK's
+`flutter_localizations` (Italian for Material's own text — the Back tooltip, the
+copy/paste toolbar — step 34; it pulls in `intl` transitively, but app code
+still never imports `intl`). A new one needs that same justification: a
+capability none of the above provides.
 
 Generated code (`*.freezed.dart`, `*.g.dart`) is gitignored, not committed.
 Regenerate with `dart run build_runner build --delete-conflicting-outputs`
@@ -40,7 +43,7 @@ lib/
   core/
     theme/app_theme.dart
     theme/tokens.dart
-    constants.dart
+    constants.dart                    # AppStrings, English + Italian
     money.dart
     result.dart
   data/
@@ -82,6 +85,7 @@ lib/
     collection_sort_by.dart
     app_settings.dart
     app_theme_mode.dart
+    app_language.dart
   features/
     home/
     scan/
@@ -97,6 +101,9 @@ lib/
     card_details_view.dart
     card_search_subtitle.dart
     search_language_picker.dart
+    search_field.dart                 # the search box with a clear button
+    justified_wrap.dart               # a Wrap whose rows fill the width
+    justified_wrap_layout.dart        # its packing arithmetic, pure
 test/
   data/db/
   data/repositories/
@@ -3081,6 +3088,92 @@ order):
     open: the View button tints itself accent whenever the mode is not
     `standard`, so with the new default it reads "active" on first launch. Still
     literally true (you are in a grid), left alone pending a look on device.
+
+34. Sixteenth on-device feedback pass — Italian interface, clear-search button,
+    full-width filter chips, uncropped artwork, a shorter "Export cancelled" ←
+    done (verified: `flutter analyze` clean, full `flutter test` green at **883
+    tests**, `pytest tools/` green; **not yet checked on a device**). **No DB
+    migration, no schema change.** One addition to the stack:
+    `flutter_localizations` (see below). Nothing here touches the descriptor,
+    `assets/card_hashes.json`, the detection algorithm or any
+    scan/matching/quality threshold.
+    **The interface is available in Italian, chosen in Settings → Appearance.**
+    New `AppLanguage` enum (`ENGLISH`/`ITALIAN`) and `AppSettings.appLanguage`
+    (default English, `settings.app_language` in `meta`, guarded `_parse`). Its
+    labels are endonyms and never translated, so someone who switched by mistake
+    can read the way back. **Interface text only** (decided with the user): card
+    names, effect text and the API's type/race/attribute values stay as
+    YGOPRODeck supplies them. Also deliberately untranslated: the scan
+    diagnostics lines (a developer readout, kept comparable with the code that
+    writes them) and `CardCondition.label`, since Cardmarket uses those grade
+    names as-is in every language.
+    **Every string is a getter written as `_t('English', 'Italiano')`**, all in
+    `lib/core/constants.dart`. Both arguments are required, so a missing
+    translation is a compile error. Keeping the name `AppStrings.x` meant none of
+    the ~560 call sites and test references had to be rewritten, only the ~65
+    `const` contexts around them, which the analyzer listed. **Consequences**:
+    never read a string in a `const` context, and never capture one in a `final`
+    or `static final`, which freezes the language it was first read in — hence
+    `home_screen.dart`'s `_tiles` is a getter. Enum `label`s moved from
+    constructor fields to getters for the same reason, and
+    `kCardLanguageNames` became `AppStrings.cardLanguageNames`.
+    **A `ValueKey` on `MaterialApp` looks like the fix and does not work.** That
+    was the first implementation. go_router's navigator has a `GlobalKey`, so it
+    is *moved* into the new tree intact, and `const HomeScreen()`, which watches
+    nothing, keeps its English text. Screens that watch settings update anyway,
+    which hides the bug: the first route-survival test passed on Fast log. `App`
+    now `ref.listen`s for a language change and marks **every descendant element**
+    dirty, the same walk a hot reload does, which also keeps the route, scroll
+    positions and all other `State`. `SettingsController` calls
+    `AppStrings.select` immediately before publishing, on load and in `_update`,
+    so nothing can rebuild against the old table. Home is what
+    `app_language_switch_test` asserts on, precisely because only the walk can
+    reach it; **verified to fail** with the walk removed.
+    `flutter_localizations` is an SDK package and the only source of Italian for
+    Material's own text (the Back tooltip, the copy/paste toolbar). It pulls in
+    `intl` transitively; app code still does not import it.
+    `money.dart` uses a decimal comma in Italian, symbol still leading. The CSV
+    writers do not use it, so exports stay `0.29`.
+    `CsvFormatException` gained `missingColumn`, and the Statistics screen words
+    the refusal, keeping interface text out of `lib/data/`. Its English `message`
+    stays for developers and logs. Sentences glued to a number at the call site
+    were kept wherever the number comes first in both languages; only the import
+    summary (`'$n added'`) needed real functions.
+    **How the longer text was checked**: the whole suite was run once with Italian
+    as a temporary default. Tests read strings through `AppStrings` so they keep
+    matching, and a string too long for its layout surfaces as an overflow. There
+    were **no overflows**, and all 18 failures were tests pinning English
+    literals. Worth repeating after adding strings to a fixed-size layout.
+    **Clear button on search**: new `SearchField` replaces the three hand-rolled
+    fields (collection, card search, manual add), which had no controller to clear
+    through. `TextEditingController.clear()` does not fire `onChanged`, so the
+    button reports `''` itself, or the field would empty over a list that stayed
+    filtered. Each field is seeded from its provider's query, so a remount cannot
+    show an empty box over a filtered list.
+    **Filter chips fill the row** (the filter sheet only; the logging flows and
+    Settings keep `Wrap`). New `JustifiedWrap` packs exactly as `Wrap` does and
+    shares each run's leftover space equally, the last partial run included
+    (decided with the user). The arithmetic is the pure, host-tested
+    `justifyRuns`. `LabeledChoiceChip(expand: true)` centres its label with a
+    `Center`, whose intrinsic width is still the text's, so packing is unaffected.
+    It must stay off inside a plain `Wrap`, where a `Center` label would grow every
+    chip to the full row. **Test gotcha**: measure the chip's `Material`, not the
+    `ChoiceChip`. `RawChip` centres a natural-width pill inside whatever it is
+    given, so the widget's box fills its slot even when the visible pill does not;
+    the first version of the test passed with the centring removed.
+    **Uncropped artwork**: `_CardIdentity` in the wizard passed no `aspectRatio`,
+    which makes the thumbnail a square `cover` crop. It and the three scan-screen
+    sites with the same omission (the review gate, the log-again bar, the guesses
+    list) now draw the whole card.
+    **"Export cancelled." lasts 2 s** (`SnackBarTokens.briefDuration`), on both
+    export buttons via `_exportSnackBar`. Every other notice keeps Material's 4 s,
+    including "Sharing cancelled." on the scan screen (decided with the user).
+    **Still open**, unchanged: `maxHammingDistance` at 72,
+    `CardDetectionTuning.innerQuadMinAreaRatio` at 0.78, the passcode ROI filter
+    off, `artAgreementFrames` at 2, every `FrameQualityTuning` threshold still
+    uncalibrated on device, and whether `kPriceTtl` at 24 h is right. New: the
+    Italian wording has only been checked by its author, so it wants a native
+    read on device, and the overflow check above used the test font, not Roboto.
 
 ## Standing rules
 

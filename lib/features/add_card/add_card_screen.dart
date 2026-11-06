@@ -13,6 +13,7 @@ import '../../shared/widgets/card_art_thumbnail.dart';
 import '../../shared/widgets/card_search_subtitle.dart';
 import '../../shared/widgets/fast_log_summary.dart';
 import '../../shared/widgets/labeled_choice_chip.dart';
+import '../../shared/widgets/search_field.dart';
 import '../../shared/widgets/search_language_picker.dart';
 import 'add_card_providers.dart';
 
@@ -30,7 +31,7 @@ class AddCardScreen extends ConsumerWidget {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text(AppStrings.addCardTitle),
+        title: Text(AppStrings.addCardTitle),
         leading: selection.step == AddCardStep.search
             ? null
             : IconButton(
@@ -73,23 +74,10 @@ class _SearchStep extends ConsumerWidget {
           child: Row(
             children: [
               Expanded(
-                child: TextField(
+                child: SearchField(
                   autofocus: true,
-                  style: TextStyle(color: palette.onSurface),
-                  decoration: InputDecoration(
-                    hintText: AppStrings.addCardSearchHint,
-                    hintStyle: TextStyle(color: palette.onSurfaceMuted),
-                    prefixIcon: Icon(
-                      Icons.search,
-                      color: palette.onSurfaceMuted,
-                    ),
-                    filled: true,
-                    fillColor: palette.surfaceRaised,
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(AppRadius.md),
-                      borderSide: BorderSide.none,
-                    ),
-                  ),
+                  hintText: AppStrings.addCardSearchHint,
+                  initialValue: query,
                   onChanged: (query) => ref
                       .read(addCardQueryControllerProvider.notifier)
                       .setQuery(query),
@@ -259,7 +247,7 @@ class _PrintingStepState extends ConsumerState<_PrintingStep> {
             width: double.infinity,
             child: OutlinedButton(
               onPressed: controller.skipPrinting,
-              child: const Text(AppStrings.addCardPrintingSkip),
+              child: Text(AppStrings.addCardPrintingSkip),
             ),
           ),
         ),
@@ -398,13 +386,13 @@ class _ConditionStep extends ConsumerWidget {
                 await controller.save();
                 if (context.mounted) {
                   ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
+                    SnackBar(
                       content: Text(AppStrings.addCardSavedMessage),
                     ),
                   );
                 }
               },
-              child: const Text(AppStrings.addCardSaveButton),
+              child: Text(AppStrings.addCardSaveButton),
             ),
           ),
         ],
@@ -441,7 +429,14 @@ class _CardIdentity extends StatelessWidget {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        CardArtThumbnail(card: card, size: CardThumbnailSizes.list),
+        // The whole card, uncropped: without an aspect ratio the thumbnail is a
+        // square `cover` crop, which cut the card off at the sides and bottom.
+        CardArtThumbnail(
+          card: card,
+          size: CardThumbnailSizes.list,
+          aspectRatio: ScanReticleTokens.cardAspectRatio,
+          fit: BoxFit.contain,
+        ),
         const SizedBox(width: AppSpacing.md),
         Expanded(
           child: Column(

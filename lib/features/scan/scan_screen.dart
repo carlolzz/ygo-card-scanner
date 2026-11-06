@@ -98,7 +98,7 @@ class _ScanScreenState extends ConsumerState<ScanScreen> {
       appBar: AppBar(
         backgroundColor: Colors.transparent,
         elevation: 0,
-        title: const Text(AppStrings.scanTitle),
+        title: Text(AppStrings.scanTitle),
         // **Every action is gated on the camera being live.** The app bar is
         // transparent over `extendBodyBehindAppBar`, so these float above the
         // body — including above a review panel, which grows upward from the
@@ -892,12 +892,12 @@ class _HelpPanel extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: AppSpacing.xs),
-                const _HelpLine(
+                _HelpLine(
                   Icons.center_focus_strong,
                   AppStrings.scanHelpArtwork,
                 ),
-                const _HelpLine(Icons.pin, AppStrings.scanHelpCode),
-                const _HelpLine(Icons.keyboard, AppStrings.scanHelpManual),
+                _HelpLine(Icons.pin, AppStrings.scanHelpCode),
+                _HelpLine(Icons.keyboard, AppStrings.scanHelpManual),
               ],
             ),
           ),
@@ -974,6 +974,8 @@ class _LogAgainBar extends ConsumerWidget {
                 CardArtThumbnail(
                   card: logged.card,
                   size: CardThumbnailSizes.list,
+                  aspectRatio: ScanReticleTokens.cardAspectRatio,
+                  fit: BoxFit.contain,
                 ),
                 const SizedBox(width: AppSpacing.sm),
                 Expanded(
@@ -1004,7 +1006,7 @@ class _LogAgainBar extends ConsumerWidget {
                 const SizedBox(width: AppSpacing.sm),
                 FilledButton(
                   onPressed: controller.logAgain,
-                  child: const Text(AppStrings.scanLogAgainButton),
+                  child: Text(AppStrings.scanLogAgainButton),
                 ),
                 IconButton(
                   tooltip: AppStrings.scanLogAgainDismissTooltip,
@@ -1620,7 +1622,12 @@ class _MatchedPanel extends ConsumerWidget {
             Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                CardArtThumbnail(card: card, size: CardThumbnailSizes.list),
+                CardArtThumbnail(
+                  card: card,
+                  size: CardThumbnailSizes.list,
+                  aspectRatio: ScanReticleTokens.cardAspectRatio,
+                  fit: BoxFit.contain,
+                ),
                 const SizedBox(width: AppSpacing.md),
                 Expanded(
                   child: Column(
@@ -1775,10 +1782,10 @@ class _MatchedPanel extends ConsumerWidget {
                   // next copy. See [ScanState.offersLogAgain].
                   if (ref.read(scanControllerProvider).offersLogAgain) return;
                   ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text(AppStrings.scanSavedMessage)),
+                    SnackBar(content: Text(AppStrings.scanSavedMessage)),
                   );
                 },
-                child: const Text(AppStrings.scanConfirmButton),
+                child: Text(AppStrings.scanConfirmButton),
               ),
             ),
             // An automatic artwork guess can be wrong, so always offer a way
@@ -1802,7 +1809,7 @@ class _MatchedPanel extends ConsumerWidget {
                       context.push(AppRoutes.addCard);
                     }
                   },
-                  child: const Text(AppStrings.scanNotThisCardButton),
+                  child: Text(AppStrings.scanNotThisCardButton),
                 ),
               ),
           ],
@@ -1934,6 +1941,8 @@ class _CandidatePanel extends ConsumerWidget {
                   leading: CardArtThumbnail(
                     card: candidate.card,
                     size: CardThumbnailSizes.list,
+                    aspectRatio: ScanReticleTokens.cardAspectRatio,
+                    fit: BoxFit.contain,
                   ),
                   title: Text(
                     candidate.card.name,
@@ -1964,7 +1973,7 @@ class _CandidatePanel extends ConsumerWidget {
                   controller.dismiss();
                   context.push(AppRoutes.addCard);
                 },
-                child: const Text(AppStrings.scanUnknownSearchButton),
+                child: Text(AppStrings.scanUnknownSearchButton),
               ),
             ),
           ),
@@ -2044,7 +2053,7 @@ class _ReadingCodePanel extends ConsumerWidget {
               width: double.infinity,
               child: OutlinedButton(
                 onPressed: controller.exitPasscodeMode,
-                child: const Text(AppStrings.scanReadCodeCancelButton),
+                child: Text(AppStrings.scanReadCodeCancelButton),
               ),
             ),
           ],

@@ -50,13 +50,13 @@ class _CollectionValueScreenState extends State<CollectionValueScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text(AppStrings.valueBreakdownTitle),
+        title: Text(AppStrings.valueBreakdownTitle),
         actions: [
           PopupMenuButton<ValueSortMode>(
             icon: const Icon(Icons.sort),
             initialValue: _sort,
             onSelected: (mode) => setState(() => _sort = mode),
-            itemBuilder: (context) => const [
+            itemBuilder: (context) => [
               PopupMenuItem(
                 value: ValueSortMode.byValue,
                 child: Text(AppStrings.valueBreakdownSortByValue),

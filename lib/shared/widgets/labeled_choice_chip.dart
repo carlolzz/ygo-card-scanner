@@ -12,6 +12,7 @@ class LabeledChoiceChip extends StatelessWidget {
     required this.selected,
     required this.selectedColor,
     required this.onSelected,
+    this.expand = false,
   });
 
   final String label;
@@ -19,11 +20,25 @@ class LabeledChoiceChip extends StatelessWidget {
   final Color selectedColor;
   final VoidCallback onSelected;
 
+  /// Centre the label in whatever width the chip is given, for a parent that
+  /// stretches its chips (`JustifiedWrap`). Off everywhere else, and it must
+  /// be: a centred label fills the chip's *maximum* width, so inside an
+  /// ordinary `Wrap` every chip would grow to the full row.
+  final bool expand;
+
   @override
   Widget build(BuildContext context) {
     final palette = AppPalette.of(context);
     return ChoiceChip(
-      label: Text(label),
+      // `Center` measures as its child's intrinsic width, so a stretching
+      // parent still packs the chip at the width of its text. `heightFactor`
+      // 1 keeps it from growing vertically: only the width is meant to fill.
+      label: expand
+          ? Center(
+              heightFactor: 1,
+              child: Text(label, textAlign: TextAlign.center),
+            )
+          : Text(label),
       selected: selected,
       // Material inserts a leading checkmark when a `ChoiceChip` is selected,
       // which makes the chip **wider than it was**. In a `Wrap` that reflows

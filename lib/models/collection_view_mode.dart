@@ -1,3 +1,5 @@
+import '../core/constants.dart';
+
 /// How densely the collection list renders. Persisted to SQLite by name (in the
 /// `meta` table, not a column), never by ordinal — same rule as every other enum
 /// here.
@@ -9,17 +11,20 @@
 /// browsing and the list is for editing.
 enum CollectionViewMode {
   /// The full row: grade chip, artwork, name, set, rarity, quantity, controls.
-  standard('Standard'),
+  standard,
 
   /// A grid of artwork with the card name captioned under each.
-  minifyStandard('Artwork + name'),
+  minifyStandard,
 
   /// A denser grid of artwork alone.
-  minifyFull('Artwork only');
+  minifyFull;
 
-  const CollectionViewMode(this.label);
-
-  final String label;
+  /// The mode's name in the current interface language.
+  String get label => switch (this) {
+    CollectionViewMode.standard => AppStrings.viewModeStandard,
+    CollectionViewMode.minifyStandard => AppStrings.viewModeMinifyStandard,
+    CollectionViewMode.minifyFull => AppStrings.viewModeMinifyFull,
+  };
 
   bool get isGrid => this != CollectionViewMode.standard;
 

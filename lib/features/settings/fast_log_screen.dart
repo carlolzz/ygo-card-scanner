@@ -29,7 +29,7 @@ class FastLogScreen extends ConsumerWidget {
     final palette = AppPalette.of(context);
 
     return Scaffold(
-      appBar: AppBar(title: const Text(AppStrings.fastLogTitle)),
+      appBar: AppBar(title: Text(AppStrings.fastLogTitle)),
       body: settingsAsync.when(
         data: (settings) => _FastLogBody(settings: settings),
         loading: () => const Center(child: CircularProgressIndicator()),

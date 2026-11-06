@@ -76,15 +76,15 @@ void main() {
       // Both languages appear in the breakdown; whichever entry was opened also
       // shows its own language in the per-entry detail row, so allow >1.
       expect(find.text(AppStrings.collectionByLanguageLabel), findsOneWidget);
-      expect(find.text('English'), findsWidgets);
-      expect(find.text('German'), findsWidgets);
+      expect(find.text(languageLabel('EN')), findsWidgets);
+      expect(find.text(languageLabel('DE')), findsWidgets);
       expect(find.text('×2'), findsOneWidget);
       expect(find.text('×1'), findsOneWidget);
 
       // Both breakdown rows are flagged, plus the per-entry Language row above
       // them. The names above are the point of these two: the flag is a
       // *leading widget*, not a prefix folded into the label, so the exact-text
-      // matchers still see 'English' and 'German' on their own.
+      // matchers still see the two language names on their own.
       expect(find.byType(LanguageFlag), findsNWidgets(3));
       expect(find.text(kCardLanguageFlags['DE']!), findsOneWidget);
     });

@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:ygo_scanner/core/constants.dart';
+import 'package:ygo_scanner/core/theme/tokens.dart';
 import 'package:ygo_scanner/data/assets/localized_names.dart';
 import 'package:ygo_scanner/data/db/dao/card_name_dao.dart';
 import 'package:ygo_scanner/data/db/dao/collection_dao.dart';
@@ -117,6 +118,14 @@ void main() {
       // The condition step.
       expect(find.byType(CardArtThumbnail), findsOneWidget);
       expect(find.text('Mirror Force'), findsOneWidget);
+
+      // The whole card. Without these the thumbnail defaults to a square
+      // `cover` crop, which cut the card off at the sides and bottom.
+      final art = tester.widget<CardArtThumbnail>(
+        find.byType(CardArtThumbnail),
+      );
+      expect(art.aspectRatio, ScanReticleTokens.cardAspectRatio);
+      expect(art.fit, BoxFit.contain);
     });
   });
 

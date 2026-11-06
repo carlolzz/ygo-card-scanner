@@ -1,12 +1,18 @@
+import '../core/constants.dart';
+
 /// Card edition. Persisted to SQLite by name, never by ordinal.
 enum CardEdition {
-  first('1st Edition'),
-  unlimited('Unlimited'),
-  limited('Limited Edition');
+  first,
+  unlimited,
+  limited;
 
-  const CardEdition(this.label);
-
-  final String label;
+  /// The edition's name in the current interface language. A getter rather
+  /// than a constructor field so it follows `AppStrings.select`.
+  String get label => switch (this) {
+    CardEdition.first => AppStrings.editionFirst,
+    CardEdition.unlimited => AppStrings.editionUnlimited,
+    CardEdition.limited => AppStrings.editionLimited,
+  };
 
   String toDb() => switch (this) {
     CardEdition.first => 'FIRST',

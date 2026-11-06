@@ -7,6 +7,7 @@ import '../../core/routes.dart';
 import '../../core/theme/tokens.dart';
 import '../../shared/widgets/card_art_thumbnail.dart';
 import '../../shared/widgets/card_search_subtitle.dart';
+import '../../shared/widgets/search_field.dart';
 import '../../shared/widgets/search_language_picker.dart';
 import 'card_search_providers.dart';
 
@@ -28,7 +29,7 @@ class CardSearchScreen extends ConsumerWidget {
     final palette = AppPalette.of(context);
 
     return Scaffold(
-      appBar: AppBar(title: const Text(AppStrings.cardSearchTitle)),
+      appBar: AppBar(title: Text(AppStrings.cardSearchTitle)),
       body: Column(
         children: [
           Padding(
@@ -36,23 +37,10 @@ class CardSearchScreen extends ConsumerWidget {
             child: Row(
               children: [
                 Expanded(
-                  child: TextField(
+                  child: SearchField(
                     autofocus: true,
-                    style: TextStyle(color: palette.onSurface),
-                    decoration: InputDecoration(
-                      hintText: AppStrings.cardSearchHint,
-                      hintStyle: TextStyle(color: palette.onSurfaceMuted),
-                      prefixIcon: Icon(
-                        Icons.search,
-                        color: palette.onSurfaceMuted,
-                      ),
-                      filled: true,
-                      fillColor: palette.surfaceRaised,
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(AppRadius.md),
-                        borderSide: BorderSide.none,
-                      ),
-                    ),
+                    hintText: AppStrings.cardSearchHint,
+                    initialValue: query,
                     onChanged: (value) => ref
                         .read(cardSearchQueryControllerProvider.notifier)
                         .setQuery(value),

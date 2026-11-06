@@ -7,7 +7,15 @@
 /// The two are deliberately never combined. YGOPRODeck reports Cardmarket in
 /// euros and everything else in US dollars, the app carries no exchange rate,
 /// and inventing one would turn a stated estimate into a wrong number.
+///
+/// The decimal mark follows the interface language: a comma in Italian
+/// (`€0,29`), a point in English. The symbol stays in front in both, so a
+/// figure reads the same shape either way. The CSV writers do not use this
+/// file, so exported numbers are always `0.29`, whatever the interface says.
 library;
+
+import '../models/app_language.dart';
+import 'constants.dart';
 
 /// Shown in place of a figure the API did not supply. A dash, deliberately not
 /// `0.00`: a card with no known price is not a card worth nothing, and the
@@ -25,5 +33,9 @@ String formatUsd(double? value) => _format(value, r'$');
 /// so a zero reaching here is a summed total of nothing, and reads the same.
 String _format(double? value, String symbol) {
   if (value == null || !value.isFinite || value <= 0) return kNoPrice;
-  return '$symbol${value.toStringAsFixed(2)}';
+  final digits = value.toStringAsFixed(2);
+  return switch (AppStrings.language) {
+    AppLanguage.english => '$symbol$digits',
+    AppLanguage.italian => '$symbol${digits.replaceFirst('.', ',')}',
+  };
 }

@@ -91,7 +91,7 @@ class _FailureView extends ConsumerWidget {
         FilledButton(
           onPressed: () =>
               ref.read(initialSyncControllerProvider.notifier).start(),
-          child: const Text(AppStrings.syncRetryButton),
+          child: Text(AppStrings.syncRetryButton),
         ),
       ],
     );

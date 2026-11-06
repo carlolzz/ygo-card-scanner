@@ -6,6 +6,7 @@ import '../../core/constants.dart';
 import '../../core/routes.dart';
 import '../../core/theme/tokens.dart';
 import '../../data/repositories/card_repository.dart';
+import '../../models/app_language.dart';
 import '../../models/app_settings.dart';
 import '../../models/app_theme_mode.dart';
 import '../../models/card_condition.dart';
@@ -29,7 +30,7 @@ class SettingsScreen extends ConsumerWidget {
     final palette = AppPalette.of(context);
 
     return Scaffold(
-      appBar: AppBar(title: const Text(AppStrings.settingsTitle)),
+      appBar: AppBar(title: Text(AppStrings.settingsTitle)),
       body: settingsAsync.when(
         data: (settings) => _SettingsBody(settings: settings),
         loading: () => const Center(child: CircularProgressIndicator()),
@@ -61,13 +62,13 @@ class _SettingsBody extends ConsumerWidget {
     return ListView(
       padding: const EdgeInsets.all(AppSpacing.lg),
       children: [
-        const _SectionHeader(title: AppStrings.settingsDefaultsSection),
+        _SectionHeader(title: AppStrings.settingsDefaultsSection),
         Text(
           AppStrings.settingsDefaultsDescription,
           style: TextStyle(color: palette.onSurfaceMuted),
         ),
         const SizedBox(height: AppSpacing.md),
-        const _FieldLabel(label: AppStrings.settingsConditionLabel),
+        _FieldLabel(label: AppStrings.settingsConditionLabel),
         Wrap(
           spacing: AppSpacing.xs,
           runSpacing: AppSpacing.xs,
@@ -83,7 +84,7 @@ class _SettingsBody extends ConsumerWidget {
           ],
         ),
         const SizedBox(height: AppSpacing.md),
-        const _FieldLabel(label: AppStrings.settingsEditionLabel),
+        _FieldLabel(label: AppStrings.settingsEditionLabel),
         Wrap(
           spacing: AppSpacing.xs,
           runSpacing: AppSpacing.xs,
@@ -98,7 +99,7 @@ class _SettingsBody extends ConsumerWidget {
           ],
         ),
         const SizedBox(height: AppSpacing.md),
-        const _FieldLabel(label: AppStrings.settingsLanguageLabel),
+        _FieldLabel(label: AppStrings.settingsLanguageLabel),
         DropdownButton<String>(
           value: settings.language,
           dropdownColor: palette.surfaceRaised,
@@ -115,7 +116,7 @@ class _SettingsBody extends ConsumerWidget {
         // Directly below the defaults it qualifies: that section sets *what
         // value is used*, this one sets *how often you are asked to override
         // it*.
-        const _SectionHeader(title: AppStrings.settingsFastLogSection),
+        _SectionHeader(title: AppStrings.settingsFastLogSection),
         SwitchListTile(
           contentPadding: EdgeInsets.zero,
           activeThumbColor: palette.accent,
@@ -150,8 +151,8 @@ class _SettingsBody extends ConsumerWidget {
           onTap: () => context.push(AppRoutes.fastLog),
         ),
         const Divider(height: AppSpacing.xl),
-        const _SectionHeader(title: AppStrings.settingsAppearanceSection),
-        const _FieldLabel(label: AppStrings.settingsThemeLabel),
+        _SectionHeader(title: AppStrings.settingsAppearanceSection),
+        _FieldLabel(label: AppStrings.settingsThemeLabel),
         Wrap(
           spacing: AppSpacing.xs,
           runSpacing: AppSpacing.xs,
@@ -165,8 +166,25 @@ class _SettingsBody extends ConsumerWidget {
               ),
           ],
         ),
+        const SizedBox(height: AppSpacing.md),
+        _FieldLabel(label: AppStrings.settingsAppLanguageLabel),
+        Wrap(
+          spacing: AppSpacing.xs,
+          runSpacing: AppSpacing.xs,
+          children: [
+            // Each chip names its language in that language, so the way back
+            // is readable from whichever one was picked by mistake.
+            for (final language in AppLanguage.values)
+              LabeledChoiceChip(
+                label: language.label,
+                selected: settings.appLanguage == language,
+                selectedColor: palette.accent,
+                onSelected: () => controller.setAppLanguage(language),
+              ),
+          ],
+        ),
         const Divider(height: AppSpacing.xl),
-        const _SectionHeader(title: AppStrings.settingsCollectionSection),
+        _SectionHeader(title: AppStrings.settingsCollectionSection),
         SwitchListTile(
           contentPadding: EdgeInsets.zero,
           activeThumbColor: palette.accent,
@@ -182,7 +200,7 @@ class _SettingsBody extends ConsumerWidget {
           onChanged: controller.setConfirmBeforeDelete,
         ),
         const Divider(height: AppSpacing.xl),
-        const _SectionHeader(title: AppStrings.settingsScanningSection),
+        _SectionHeader(title: AppStrings.settingsScanningSection),
         SwitchListTile(
           contentPadding: EdgeInsets.zero,
           activeThumbColor: palette.accent,
@@ -226,7 +244,7 @@ class _SettingsBody extends ConsumerWidget {
           onChanged: controller.setKeepCameraReady,
         ),
         const Divider(height: AppSpacing.xl),
-        const _SectionHeader(title: AppStrings.settingsDatabaseSection),
+        _SectionHeader(title: AppStrings.settingsDatabaseSection),
         const _ResyncSection(),
       ],
     );
@@ -333,7 +351,7 @@ class _ResyncSection extends ConsumerWidget {
             width: double.infinity,
             child: OutlinedButton(
               onPressed: () => _confirmResync(context, ref),
-              child: const Text(AppStrings.settingsResyncButton),
+              child: Text(AppStrings.settingsResyncButton),
             ),
           ),
         ],
@@ -347,16 +365,16 @@ class _ResyncSection extends ConsumerWidget {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text(AppStrings.settingsResyncDialogTitle),
-        content: const Text(AppStrings.settingsResyncDialogMessage),
+        title: Text(AppStrings.settingsResyncDialogTitle),
+        content: Text(AppStrings.settingsResyncDialogMessage),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(false),
-            child: const Text(AppStrings.settingsResyncDialogCancel),
+            child: Text(AppStrings.settingsResyncDialogCancel),
           ),
           TextButton(
             onPressed: () => Navigator.of(context).pop(true),
-            child: const Text(AppStrings.settingsResyncDialogConfirm),
+            child: Text(AppStrings.settingsResyncDialogConfirm),
           ),
         ],
       ),
@@ -368,7 +386,7 @@ class _ResyncSection extends ConsumerWidget {
     if (ref.read(resyncControllerProvider)?.status ==
         InitialSyncStatus.success) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text(AppStrings.settingsResyncDoneMessage)),
+        SnackBar(content: Text(AppStrings.settingsResyncDoneMessage)),
       );
     }
   }

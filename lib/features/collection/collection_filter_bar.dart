@@ -5,6 +5,7 @@ import '../../core/constants.dart';
 import '../../core/theme/tokens.dart';
 import '../../models/app_settings.dart';
 import '../../models/collection_view_mode.dart';
+import '../../shared/widgets/search_field.dart';
 import '../settings/settings_providers.dart';
 import 'collection_filter_sheet.dart';
 import 'collection_providers.dart';
@@ -35,19 +36,9 @@ class CollectionFilterBar extends ConsumerWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          TextField(
-            style: TextStyle(color: palette.onSurface),
-            decoration: InputDecoration(
-              hintText: AppStrings.collectionSearchHint,
-              hintStyle: TextStyle(color: palette.onSurfaceMuted),
-              prefixIcon: Icon(Icons.search, color: palette.onSurfaceMuted),
-              filled: true,
-              fillColor: palette.surfaceRaised,
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(AppRadius.md),
-                borderSide: BorderSide.none,
-              ),
-            ),
+          SearchField(
+            hintText: AppStrings.collectionSearchHint,
+            initialValue: filter.nameQuery ?? '',
             onChanged: controller.setNameQuery,
           ),
           const SizedBox(height: AppSpacing.sm),

@@ -1,5 +1,6 @@
 import 'package:riverpod_annotation/riverpod_annotation.dart';
 
+import '../../models/app_language.dart';
 import '../../models/app_settings.dart';
 import '../../models/app_theme_mode.dart';
 import '../../models/card_condition.dart';
@@ -19,6 +20,7 @@ const _conditionKey = 'settings.default_condition';
 const _editionKey = 'settings.default_edition';
 const _languageKey = 'settings.language';
 const _themeModeKey = 'settings.theme_mode';
+const _appLanguageKey = 'settings.app_language';
 const _showScanDiagnosticsKey = 'settings.show_scan_diagnostics';
 const _showScanHelpKey = 'settings.show_scan_help';
 const _keepCameraReadyKey = 'settings.keep_camera_ready';
@@ -56,6 +58,11 @@ class SettingsRepository {
         await _metaDao.get(_themeModeKey),
         AppThemeMode.fromDb,
         defaults.themeMode,
+      ),
+      appLanguage: _parse(
+        await _metaDao.get(_appLanguageKey),
+        AppLanguage.fromDb,
+        defaults.appLanguage,
       ),
       showScanDiagnostics: _parseBool(
         await _metaDao.get(_showScanDiagnosticsKey),
@@ -108,6 +115,7 @@ class SettingsRepository {
     await _metaDao.set(_editionKey, settings.defaultEdition.toDb());
     await _metaDao.set(_languageKey, settings.language);
     await _metaDao.set(_themeModeKey, settings.themeMode.toDb());
+    await _metaDao.set(_appLanguageKey, settings.appLanguage.toDb());
     await _metaDao.set(
       _showScanDiagnosticsKey,
       settings.showScanDiagnostics.toString(),

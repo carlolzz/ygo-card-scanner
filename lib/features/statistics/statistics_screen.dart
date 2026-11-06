@@ -6,6 +6,7 @@ import '../../core/constants.dart';
 import '../../core/money.dart';
 import '../../core/routes.dart';
 import '../../core/theme/tokens.dart';
+import '../../data/export/collection_csv.dart';
 import '../../data/export/collection_csv_parser.dart';
 import '../../data/export/collection_exporter.dart';
 import '../../data/export/file_share.dart';
@@ -32,7 +33,7 @@ class StatisticsScreen extends ConsumerWidget {
     final palette = AppPalette.of(context);
 
     return Scaffold(
-      appBar: AppBar(title: const Text(AppStrings.statisticsTitle)),
+      appBar: AppBar(title: Text(AppStrings.statisticsTitle)),
       body: statsAsync.when(
         // The actions live outside the empty check on purpose: importing a CSV
         // into an empty collection is the *main* case for that button, and it
@@ -251,7 +252,7 @@ class _CollectionValueSection extends ConsumerWidget {
             width: double.infinity,
             child: OutlinedButton.icon(
               icon: const Icon(Icons.payments_outlined),
-              label: const Text(AppStrings.statisticsValueButton),
+              label: Text(AppStrings.statisticsValueButton),
               onPressed: controller.calculate,
             ),
           ),
@@ -276,7 +277,7 @@ class _CollectionValueSection extends ConsumerWidget {
               const SizedBox(height: AppSpacing.sm),
               OutlinedButton(
                 onPressed: controller.calculate,
-                child: const Text(AppStrings.pricesRetryButton),
+                child: Text(AppStrings.pricesRetryButton),
               ),
             ],
           ),
@@ -356,7 +357,7 @@ class _ValueResult extends StatelessWidget {
           width: double.infinity,
           child: OutlinedButton.icon(
             icon: const Icon(Icons.receipt_long),
-            label: const Text(AppStrings.statisticsValueBreakdownButton),
+            label: Text(AppStrings.statisticsValueBreakdownButton),
             onPressed: () =>
                 context.push(AppRoutes.collectionValue, extra: value),
           ),
@@ -366,7 +367,7 @@ class _ValueResult extends StatelessWidget {
           width: double.infinity,
           child: OutlinedButton.icon(
             icon: const Icon(Icons.refresh),
-            label: const Text(AppStrings.statisticsValueRefreshButton),
+            label: Text(AppStrings.statisticsValueRefreshButton),
             onPressed: onRefresh,
           ),
         ),
@@ -392,6 +393,21 @@ String _exportMessage(ShareOutcome outcome) => switch (outcome) {
   ShareOutcome.unknown => AppStrings.statisticsExportDoneMessage,
   ShareOutcome.cancelled => AppStrings.statisticsExportCancelledMessage,
 };
+
+/// The SnackBar both export buttons show once they are done.
+///
+/// A cancelled share is reported briefly: the user dismissed the sheet a
+/// moment ago and only needs to see that nothing was sent, while every other
+/// outcome keeps Material's default so a success or failure can be read in
+/// full. [outcome] is null when the share sheet never opened (the write
+/// failed), which is not a cancellation.
+SnackBar _exportSnackBar(String message, ShareOutcome? outcome) =>
+    outcome == ShareOutcome.cancelled
+    ? SnackBar(
+        content: Text(message),
+        duration: SnackBarTokens.briefDuration,
+      )
+    : SnackBar(content: Text(message));
 
 /// Writes the per-card figures behind the totals to their own CSV.
 ///
@@ -430,8 +446,9 @@ class _ValueExportButtonState extends ConsumerState<_ValueExportButton> {
     setState(() => _running = false);
     // The message is chosen *after* the sheet resolves. It used to be fixed
     // before the sheet even opened, so a cancelled share still claimed success.
+    ShareOutcome? outcome;
     if (path != null) {
-      final outcome = await ref.read(fileShareProvider).shareFiles([
+      outcome = await ref.read(fileShareProvider).shareFiles([
         path,
       ], subject: AppStrings.statisticsValueExportSubject);
       message = _exportMessage(outcome);
@@ -439,7 +456,7 @@ class _ValueExportButtonState extends ConsumerState<_ValueExportButton> {
     if (!mounted) return;
     ScaffoldMessenger.of(
       context,
-    ).showSnackBar(SnackBar(content: Text(message)));
+    ).showSnackBar(_exportSnackBar(message, outcome));
   }
 
   @override
@@ -501,8 +518,9 @@ class _ExportButtonState extends ConsumerState<_ExportButton> {
     // Hand the written file to the OS share sheet — the app-documents path it
     // lives at isn't browsable, so sharing is how the user saves it to
     // Downloads/Drive/Files or sends it on.
+    ShareOutcome? outcome;
     if (path != null) {
-      final outcome = await ref.read(fileShareProvider).shareFiles([
+      outcome = await ref.read(fileShareProvider).shareFiles([
         path,
       ], subject: AppStrings.statisticsExportSubject);
       message = _exportMessage(outcome);
@@ -510,7 +528,7 @@ class _ExportButtonState extends ConsumerState<_ExportButton> {
     if (!mounted) return;
     ScaffoldMessenger.of(
       context,
-    ).showSnackBar(SnackBar(content: Text(message)));
+    ).showSnackBar(_exportSnackBar(message, outcome));
   }
 
   @override
@@ -554,7 +572,14 @@ class _ImportButtonState extends ConsumerState<_ImportButton> {
       try {
         preview = await importer.preview(picked.contents);
       } on CsvFormatException catch (error) {
-        _say('${AppStrings.statisticsImportFailedMessage}\n\n$error');
+        final column = error.missingColumn;
+        final reason = column == null
+            ? AppStrings.statisticsImportEmptyFile
+            : AppStrings.statisticsImportMissingColumn(
+                column,
+                collectionCsvHeader.join(', '),
+              );
+        _say('${AppStrings.statisticsImportFailedMessage}\n\n$reason');
         return;
       }
       if (!mounted) return;
@@ -588,9 +613,12 @@ class _ImportButtonState extends ConsumerState<_ImportButton> {
 
   String _describe(CollectionImportResult result) {
     final parts = <String>[
-      if (result.entriesAdded > 0) '${result.entriesAdded} added',
-      if (result.entriesMerged > 0) '${result.entriesMerged} merged',
-      if (result.skipped > 0) '${result.skipped} skipped',
+      if (result.entriesAdded > 0)
+        AppStrings.statisticsImportAddedCount(result.entriesAdded),
+      if (result.entriesMerged > 0)
+        AppStrings.statisticsImportMergedCount(result.entriesMerged),
+      if (result.skipped > 0)
+        AppStrings.statisticsImportSkippedCount(result.skipped),
     ];
     if (parts.isEmpty) return AppStrings.statisticsImportDoneMessage;
     return '${AppStrings.statisticsImportDoneMessage} ${parts.join(', ')}.';
@@ -641,7 +669,7 @@ class _ImportPreviewDialogState extends State<_ImportPreviewDialog> {
     final plan = preview.plan;
 
     return AlertDialog(
-      title: const Text(AppStrings.statisticsImportTitle),
+      title: Text(AppStrings.statisticsImportTitle),
       content: SingleChildScrollView(
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -704,11 +732,11 @@ class _ImportPreviewDialogState extends State<_ImportPreviewDialog> {
       actions: [
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
-          child: const Text(AppStrings.statisticsImportCancelButton),
+          child: Text(AppStrings.statisticsImportCancelButton),
         ),
         FilledButton(
           onPressed: () => Navigator.of(context).pop(_strategy),
-          child: const Text(AppStrings.statisticsImportConfirmButton),
+          child: Text(AppStrings.statisticsImportConfirmButton),
         ),
       ],
     );

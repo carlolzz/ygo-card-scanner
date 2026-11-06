@@ -7,6 +7,7 @@ import '../../data/db/dao/collection_dao.dart';
 import '../../models/card_condition.dart';
 import '../../models/card_edition.dart';
 import '../../models/card_language.dart';
+import '../../shared/widgets/justified_wrap.dart';
 import '../../shared/widgets/labeled_choice_chip.dart';
 import '../../shared/widgets/searchable_text_picker.dart';
 import 'collection_providers.dart';
@@ -398,7 +399,9 @@ class _ChipRowState<T> extends State<_ChipRow<T>> {
       isSelected: (value) => widget.selected == value,
       expanded: _expanded,
     );
-    return Wrap(
+    // Stretched rows, not a `Wrap`: a row of three short chips used to sit in
+    // a cluster on the left of a full-width sheet.
+    return JustifiedWrap(
       spacing: AppSpacing.xs,
       runSpacing: AppSpacing.xs,
       children: [
@@ -407,6 +410,7 @@ class _ChipRowState<T> extends State<_ChipRow<T>> {
           selected: widget.selected == null,
           selectedColor: palette.accent,
           onSelected: () => widget.onSelected(null),
+          expand: true,
         ),
         for (final value in visible)
           LabeledChoiceChip(
@@ -415,6 +419,7 @@ class _ChipRowState<T> extends State<_ChipRow<T>> {
             selectedColor: widget.colorOf?.call(value) ?? palette.accent,
             onSelected: () =>
                 widget.onSelected(widget.selected == value ? null : value),
+            expand: true,
           ),
         // Measured against `values`, not the "All" chip prepended above it:
         // "All" is not one of the choices being collapsed.
@@ -456,11 +461,17 @@ class _ExpandChip extends StatelessWidget {
         expanded ? Icons.expand_less : Icons.expand_more,
         color: palette.accent,
       ),
-      label: Text(
-        expanded
-            ? AppStrings.collectionFilterShowLess
-            : AppStrings.collectionFilterShowAll(total),
-        style: TextStyle(color: palette.accent),
+      // Centred for the same reason as `LabeledChoiceChip(expand: true)`: it
+      // sits in a `JustifiedWrap` and is stretched along with the chips.
+      label: Center(
+        heightFactor: 1,
+        child: Text(
+          expanded
+              ? AppStrings.collectionFilterShowLess
+              : AppStrings.collectionFilterShowAll(total),
+          textAlign: TextAlign.center,
+          style: TextStyle(color: palette.accent),
+        ),
       ),
     );
   }
@@ -500,7 +511,7 @@ class _RarityRowState extends State<_RarityRow> {
       isSelected: (rarity) => widget.selected == _filterFor(rarity),
       expanded: _expanded,
     );
-    return Wrap(
+    return JustifiedWrap(
       spacing: AppSpacing.xs,
       runSpacing: AppSpacing.xs,
       children: [
@@ -509,6 +520,7 @@ class _RarityRowState extends State<_RarityRow> {
           selected: widget.selected == null,
           selectedColor: palette.accent,
           onSelected: () => widget.onSelected(null),
+          expand: true,
         ),
         for (final rarity in visible)
           Builder(
@@ -520,6 +532,7 @@ class _RarityRowState extends State<_RarityRow> {
                 selected: isSelected,
                 selectedColor: palette.accent,
                 onSelected: () => widget.onSelected(isSelected ? null : value),
+                expand: true,
               );
             },
           ),

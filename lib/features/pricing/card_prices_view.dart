@@ -260,7 +260,7 @@ class _Failure extends StatelessWidget {
             const SizedBox(height: AppSpacing.md),
             FilledButton(
               onPressed: onRetry,
-              child: const Text(AppStrings.pricesRetryButton),
+              child: Text(AppStrings.pricesRetryButton),
             ),
           ],
         ),

@@ -25,7 +25,7 @@ class CardDetailScreen extends StatelessWidget {
       child: Scaffold(
         appBar: AppBar(
           title: Text(card.name),
-          bottom: const TabBar(
+          bottom: TabBar(
             tabs: [
               Tab(text: AppStrings.cardTabDetails),
               Tab(text: AppStrings.cardTabPrices),

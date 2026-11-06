@@ -1,3 +1,4 @@
+import 'app_language.dart';
 import 'app_theme_mode.dart';
 import 'card_condition.dart';
 import 'card_edition.dart';
@@ -22,6 +23,7 @@ class AppSettings {
     this.language = kDefaultCardLanguage,
     // Dark-first, per the project's design direction.
     this.themeMode = AppThemeMode.dark,
+    this.appLanguage = AppLanguage.english,
     this.showScanDiagnostics = false,
     this.showScanHelp = true,
     this.keepCameraReady = true,
@@ -45,6 +47,14 @@ class AppSettings {
   final String language;
 
   final AppThemeMode themeMode;
+
+  /// The language the app's own interface is written in. Not [language] (a
+  /// card's printed language) and not [searchLanguage] (what names are matched
+  /// in): card data stays as YGOPRODeck supplies it whichever this is.
+  ///
+  /// English by default, so an existing install reads exactly as before until
+  /// the user picks otherwise.
+  final AppLanguage appLanguage;
 
   /// Whether the developer recognition-diagnostics overlay is shown on the scan
   /// screen. Off by default — it's a tuning aid, not a normal-use feature.
@@ -156,6 +166,7 @@ class AppSettings {
     CardEdition? defaultEdition,
     String? language,
     AppThemeMode? themeMode,
+    AppLanguage? appLanguage,
     bool? showScanDiagnostics,
     bool? showScanHelp,
     bool? keepCameraReady,
@@ -173,6 +184,7 @@ class AppSettings {
       defaultEdition: defaultEdition ?? this.defaultEdition,
       language: language ?? this.language,
       themeMode: themeMode ?? this.themeMode,
+      appLanguage: appLanguage ?? this.appLanguage,
       showScanDiagnostics: showScanDiagnostics ?? this.showScanDiagnostics,
       showScanHelp: showScanHelp ?? this.showScanHelp,
       keepCameraReady: keepCameraReady ?? this.keepCameraReady,

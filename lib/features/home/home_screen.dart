@@ -10,7 +10,10 @@ import 'home_menu_tile.dart';
 
 typedef _HomeTileSpec = ({IconData icon, String label, String route});
 
-const List<_HomeTileSpec> _tiles = [
+/// A getter, not a `const` or `final`: the labels follow the interface
+/// language, and a top-level `final` is evaluated once on first access — it
+/// would keep whichever language was active the first time Home was built.
+List<_HomeTileSpec> get _tiles => [
   (
     icon: Icons.camera_alt,
     label: AppStrings.homeTileLogCards,

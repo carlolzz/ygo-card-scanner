@@ -2,6 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:ygo_scanner/data/db/dao/meta_dao.dart';
 import 'package:ygo_scanner/data/repositories/settings_repository.dart';
+import 'package:ygo_scanner/models/app_language.dart';
 import 'package:ygo_scanner/models/app_settings.dart';
 import 'package:ygo_scanner/models/app_theme_mode.dart';
 import 'package:ygo_scanner/models/card_condition.dart';
@@ -34,6 +35,8 @@ void main() {
     expect(settings.defaultEdition, CardEdition.unlimited);
     expect(settings.language, 'EN');
     expect(settings.themeMode, AppThemeMode.dark);
+    // English, so an existing install reads exactly as it did before.
+    expect(settings.appLanguage, AppLanguage.english);
     expect(settings.showScanDiagnostics, isFalse);
     expect(settings.showScanHelp, isTrue);
     expect(settings.keepCameraReady, isTrue);
@@ -52,6 +55,7 @@ void main() {
         defaultEdition: CardEdition.first,
         language: 'DE',
         themeMode: AppThemeMode.light,
+        appLanguage: AppLanguage.italian,
         showScanDiagnostics: true,
         showScanHelp: false,
         keepCameraReady: false,
@@ -70,6 +74,7 @@ void main() {
     expect(settings.defaultEdition, CardEdition.first);
     expect(settings.language, 'DE');
     expect(settings.themeMode, AppThemeMode.light);
+    expect(settings.appLanguage, AppLanguage.italian);
     expect(settings.showScanDiagnostics, isTrue);
     expect(settings.showScanHelp, isFalse);
     expect(settings.keepCameraReady, isFalse);
@@ -113,6 +118,7 @@ void main() {
         defaultCondition: CardCondition.poor,
         defaultEdition: CardEdition.limited,
         themeMode: AppThemeMode.system,
+        appLanguage: AppLanguage.italian,
         collectionViewMode: CollectionViewMode.minifyStandard,
         collectionSortBy: CollectionSortBy.dateAdded,
       ),
@@ -121,6 +127,7 @@ void main() {
     expect(await metaDao.get('settings.default_condition'), 'POOR');
     expect(await metaDao.get('settings.default_edition'), 'LIMITED');
     expect(await metaDao.get('settings.theme_mode'), 'SYSTEM');
+    expect(await metaDao.get('settings.app_language'), 'ITALIAN');
     expect(
       await metaDao.get('settings.collection_view_mode'),
       'MINIFY_STANDARD',
@@ -134,6 +141,7 @@ void main() {
     await metaDao.set('settings.default_condition', 'PRISTINE');
     await metaDao.set('settings.default_edition', 'SOMETHING_NEW');
     await metaDao.set('settings.theme_mode', 'SEPIA');
+    await metaDao.set('settings.app_language', 'KLINGON');
     await metaDao.set('settings.collection_view_mode', 'TINY');
     await metaDao.set('settings.collection_sort_by', 'RARITY');
 
@@ -142,6 +150,7 @@ void main() {
     expect(settings.defaultCondition, CardCondition.nearMint);
     expect(settings.defaultEdition, CardEdition.unlimited);
     expect(settings.themeMode, AppThemeMode.dark);
+    expect(settings.appLanguage, AppLanguage.english);
     expect(settings.collectionViewMode, CollectionViewMode.minifyStandard);
     expect(settings.collectionSortBy, CollectionSortBy.name);
   });

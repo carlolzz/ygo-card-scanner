@@ -16,6 +16,7 @@ import 'package:ygo_scanner/features/collection/collection_list_tile.dart';
 import 'package:ygo_scanner/models/collection_view_mode.dart';
 import 'package:ygo_scanner/shared/widgets/card_art_thumbnail.dart';
 import 'package:ygo_scanner/shared/widgets/card_thumbnail.dart';
+import 'package:ygo_scanner/shared/widgets/justified_wrap.dart';
 import 'package:ygo_scanner/shared/widgets/search_language_picker.dart';
 import 'package:ygo_scanner/shared/widgets/searchable_text_picker.dart';
 
@@ -107,6 +108,25 @@ void main() {
     });
   });
 
+  testWidgets('the clear button empties the search and restores the list', (
+    tester,
+  ) async {
+    await tester.runAsync(() async {
+      await openCollection(tester);
+
+      await tester.enterText(find.byType(TextField), 'Dark');
+      await pumpUntilSettled(tester);
+      expect(find.text('Blue-Eyes White Dragon'), findsNothing);
+
+      await tester.tap(find.byTooltip(AppStrings.searchClearTooltip));
+      await pumpUntilSettled(tester);
+
+      expect(find.text('Blue-Eyes White Dragon'), findsOneWidget);
+      expect(find.text('Dark Magician'), findsOneWidget);
+      expect(find.byTooltip(AppStrings.searchClearTooltip), findsNothing);
+    });
+  });
+
   testWidgets('condition chip narrows the list', (tester) async {
     await tester.runAsync(() async {
       await openCollection(tester);
@@ -115,6 +135,44 @@ void main() {
 
       expect(find.text('Red-Eyes B. Dragon'), findsOneWidget);
       expect(find.text('Dark Magician'), findsNothing);
+    });
+  });
+
+  // The reported layout: a row of three short chips used to sit in a cluster on
+  // the left of a full-width sheet. Measured on the drawn chip, its `Material`:
+  // `RawChip` centres a natural-width pill in whatever it is given, so the
+  // `ChoiceChip` widget's own box fills the row even when the pill does not.
+  testWidgets('filter chip rows span the full width of the sheet', (
+    tester,
+  ) async {
+    await tester.runAsync(() async {
+      await openCollection(tester);
+      await tester.tap(find.text(AppStrings.collectionFiltersButton));
+      await pumpUntilSettled(tester);
+
+      final wrap = find.byType(JustifiedWrap).first;
+      final bounds = tester.getRect(wrap);
+      final rows = <double, List<Rect>>{};
+      for (final element in find
+          .descendant(of: wrap, matching: find.byType(ChoiceChip))
+          .evaluate()) {
+        final rect = tester.getRect(
+          find
+              .descendant(
+                of: find.byWidget(element.widget),
+                matching: find.byType(Material),
+              )
+              .first,
+        );
+        rows.putIfAbsent(rect.top, () => []).add(rect);
+      }
+
+      expect(rows, isNotEmpty);
+      for (final row in rows.values) {
+        row.sort((a, b) => a.left.compareTo(b.left));
+        expect(row.first.left, closeTo(bounds.left, 0.01));
+        expect(row.last.right, closeTo(bounds.right, 0.01));
+      }
     });
   });
 

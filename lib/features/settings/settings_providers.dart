@@ -1,7 +1,9 @@
 import 'package:riverpod_annotation/riverpod_annotation.dart';
 
+import '../../core/constants.dart';
 import '../../data/repositories/card_repository.dart';
 import '../../data/repositories/settings_repository.dart';
+import '../../models/app_language.dart';
 import '../../models/app_settings.dart';
 import '../../models/app_theme_mode.dart';
 import '../../models/card_condition.dart';
@@ -24,8 +26,15 @@ class SettingsController extends _$SettingsController {
   @override
   Future<AppSettings> build() async {
     final repository = await ref.watch(settingsRepositoryProvider.future);
-    return repository.load();
+    final settings = await repository.load();
+    AppStrings.select(settings.appLanguage);
+    return settings;
   }
+
+  /// The interface language. `App` listens for a change and rebuilds every
+  /// screen in place, so it applies at once without leaving the current route.
+  Future<void> setAppLanguage(AppLanguage language) =>
+      _update((s) => s.copyWith(appLanguage: language));
 
   Future<void> setDefaultCondition(CardCondition condition) =>
       _update((s) => s.copyWith(defaultCondition: condition));
@@ -115,6 +124,9 @@ class SettingsController extends _$SettingsController {
       final next = change(current);
       final repository = await ref.read(settingsRepositoryProvider.future);
       await repository.save(next);
+      // Before publishing, never after: publishing is what rebuilds the app, and
+      // every screen reads its text from `AppStrings` as it builds.
+      AppStrings.select(next.appLanguage);
       state = AsyncData(next);
     });
     // The queue swallows failures so one bad write can't wedge every later

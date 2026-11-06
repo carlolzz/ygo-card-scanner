@@ -7,6 +7,7 @@ import 'package:path_provider_platform_interface/path_provider_platform_interfac
 import 'package:plugin_platform_interface/plugin_platform_interface.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:ygo_scanner/core/constants.dart';
+import 'package:ygo_scanner/core/theme/tokens.dart';
 import 'package:ygo_scanner/data/db/dao/collection_dao.dart';
 import 'package:ygo_scanner/data/db/database.dart';
 import 'package:ygo_scanner/data/export/file_share.dart';
@@ -217,6 +218,31 @@ void main() {
           findsOneWidget,
         );
         expect(find.text(AppStrings.statisticsExportDoneMessage), findsNothing);
+        // Reported as lingering: the user dismissed the sheet themselves, so
+        // the notice only has to confirm it, not be read at length.
+        expect(
+          tester.widget<SnackBar>(find.byType(SnackBar)).duration,
+          SnackBarTokens.briefDuration,
+        );
+      });
+    });
+
+    testWidgets('a completed share keeps the default duration', (
+      tester,
+    ) async {
+      useTallViewport(tester);
+
+      await tester.runAsync(() async {
+        await openStatistics(
+          tester,
+          share: _FakeFileShare(ShareOutcome.shared),
+        );
+        await tapExport(tester);
+
+        expect(
+          tester.widget<SnackBar>(find.byType(SnackBar)).duration,
+          isNot(SnackBarTokens.briefDuration),
+        );
       });
     });
 

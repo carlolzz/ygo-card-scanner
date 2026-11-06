@@ -49,11 +49,11 @@ Future<bool> confirmRemoveCard(
       actions: [
         TextButton(
           onPressed: () => Navigator.of(context).pop(false),
-          child: const Text(AppStrings.collectionDeleteDialogCancel),
+          child: Text(AppStrings.collectionDeleteDialogCancel),
         ),
         TextButton(
           onPressed: () => Navigator.of(context).pop(true),
-          child: const Text(AppStrings.collectionDeleteDialogConfirm),
+          child: Text(AppStrings.collectionDeleteDialogConfirm),
         ),
       ],
     ),

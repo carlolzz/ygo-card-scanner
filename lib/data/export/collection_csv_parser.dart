@@ -82,10 +82,18 @@ class CsvParseResult {
 
 /// Thrown when the file is not a collection CSV at all — as opposed to a
 /// collection CSV with some bad rows, which [CsvParseResult] reports instead.
+///
+/// [message] is a developer-facing English description. The screen does not
+/// show it: it words the problem itself from [missingColumn] (null means the
+/// file was empty), so the data layer carries no interface text and the
+/// refusal reads in the user's language.
 class CsvFormatException implements Exception {
-  const CsvFormatException(this.message);
+  const CsvFormatException(this.message, {this.missingColumn});
 
   final String message;
+
+  /// The required column the header lacked, or null for an empty file.
+  final String? missingColumn;
 
   @override
   String toString() => message;
@@ -120,6 +128,7 @@ CsvParseResult parseCollectionCsv(String source) {
       throw CsvFormatException(
         'Missing the "$required" column. Expected a collection CSV with the '
         'columns: ${collectionCsvHeader.join(', ')}.',
+        missingColumn: required,
       );
     }
   }

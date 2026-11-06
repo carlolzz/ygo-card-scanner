@@ -1,3 +1,5 @@
+import '../core/constants.dart';
+
 /// The two-letter language blocks that appear in a set code (`LOB-EN001`),
 /// per `.claude/skills/ygo-domain.md`.
 ///
@@ -36,24 +38,13 @@ const List<String> kSearchLanguages = [kDefaultSearchLanguage, 'IT'];
 /// `cards.name`, which needs no asset and no import.
 const String kDefaultSearchLanguage = 'EN';
 
-/// Human-readable names for the language codes in [kCardLanguages]. Only the
-/// UI reads these — the persisted value stays the two-letter code, so an
-/// unlisted language remains storable (and [languageLabel] echoes it back).
-const Map<String, String> kCardLanguageNames = {
-  'EN': 'English',
-  'DE': 'German',
-  'FR': 'French',
-  'IT': 'Italian',
-  'SP': 'Spanish',
-  'PT': 'Portuguese',
-  'JP': 'Japanese',
-  'KR': 'Korean',
-  'AE': 'Asian-English',
-};
-
-/// The display name for a language [code], falling back to the raw code for
-/// anything [kCardLanguageNames] doesn't cover.
-String languageLabel(String code) => kCardLanguageNames[code] ?? code;
+/// The display name for a language [code] in the current interface language,
+/// falling back to the raw code for anything `AppStrings.cardLanguageNames`
+/// doesn't cover.
+///
+/// Only the UI reads these — the persisted value stays the two-letter code, so
+/// an unlisted language remains storable and is echoed back as-is.
+String languageLabel(String code) => AppStrings.cardLanguageNames[code] ?? code;
 
 /// Flag glyphs (Unicode regional-indicator pairs) for the language codes that
 /// name a country. Deliberately explicit rather than derived from the code:

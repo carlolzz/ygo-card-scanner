@@ -1,18 +1,23 @@
 import 'package:flutter/material.dart';
 
+import '../core/constants.dart';
+
 /// The user's theme preference. Persisted to SQLite by name (in the `meta`
 /// table, not a column), never by ordinal — same rule as every other enum here.
 ///
 /// Distinct from Material's [ThemeMode] so the persistence format is ours and
 /// doesn't drift if Flutter ever reorders or extends its enum.
 enum AppThemeMode {
-  system('System'),
-  light('Light'),
-  dark('Dark');
+  system,
+  light,
+  dark;
 
-  const AppThemeMode(this.label);
-
-  final String label;
+  /// The theme's name in the current interface language.
+  String get label => switch (this) {
+    AppThemeMode.system => AppStrings.themeSystem,
+    AppThemeMode.light => AppStrings.themeLight,
+    AppThemeMode.dark => AppStrings.themeDark,
+  };
 
   ThemeMode toMaterial() => switch (this) {
     AppThemeMode.system => ThemeMode.system,

@@ -50,7 +50,7 @@ class CollectionScreen extends ConsumerWidget {
         appBar: selection.active
             ? _selectionAppBar(context, ref, selection, entriesAsync.value)
             : AppBar(
-                title: const Text(AppStrings.homeTileMyCollection),
+                title: Text(AppStrings.homeTileMyCollection),
                 actions: [
                   // Which language the search box matches names in. First, so
                   // sort and its direction toggle stay adjacent.
@@ -73,7 +73,7 @@ class CollectionScreen extends ConsumerWidget {
                     onSelected: ref
                         .read(collectionFilterControllerProvider.notifier)
                         .setSortBy,
-                    itemBuilder: (context) => const [
+                    itemBuilder: (context) => [
                       PopupMenuItem(
                         value: CollectionSortBy.name,
                         child: Text(AppStrings.collectionSortByName),

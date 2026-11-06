@@ -33,6 +33,15 @@ class AppTapTarget {
   static const double minSize = 56;
 }
 
+class SnackBarTokens {
+  const SnackBarTokens._();
+
+  /// For a notice that only confirms something the user just did themselves,
+  /// such as dismissing the share sheet. Material's 4s default is right for a
+  /// result worth reading; here it lingers over the screen for no reason.
+  static const Duration briefDuration = Duration(seconds: 2);
+}
+
 /// The app's color surfaces, as a [ThemeExtension] so a single set of named
 /// tokens resolves to either palette. Widgets read `AppPalette.of(context).x`
 /// rather than a const — that indirection is what makes the light/dark setting

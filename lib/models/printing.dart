@@ -1,6 +1,7 @@
 import 'package:freezed_annotation/freezed_annotation.dart';
 
 import '../core/search_terms.dart';
+import 'card_terms.dart';
 
 part 'printing.freezed.dart';
 
@@ -48,8 +49,14 @@ abstract class Printing with _$Printing {
   /// [matchesSearchTerms] rule is order-independent, so this reordering does not
   /// change what any query matches. Where rarity is shown as a field of its own,
   /// use [setLabel] instead.
-  String get displayLabel =>
-      [?setCode, if (rarity != null) '($rarity)', ?setName].join(' ');
+  ///
+  /// The rarity is in the interface language, so this is for display and for
+  /// nothing that is stored or exported.
+  String get displayLabel => [
+    ?setCode,
+    if (rarity != null) '(${rarityLabel(rarity!)})',
+    ?setName,
+  ].join(' ');
 
   /// "SET-CODE · Set Name" — [displayLabel] without the rarity, for screens
   /// that give rarity a row of its own rather than trailing it onto the set.
@@ -70,9 +77,17 @@ abstract class Printing with _$Printing {
 /// Matched against [Printing.displayLabel] under the shared
 /// [matchesSearchTerms] rule, so this box and the collection filter sheet's set
 /// box narrow identically.
+///
+/// The raw rarity is matched too, because the label may be translated: in
+/// Italian the row reads "Super Rara", but "super rare" is what Cardmarket and
+/// TCGplayer call it, and typing that must still find the row.
 List<Printing> filterPrintings(List<Printing> printings, String query) => [
   for (final printing in printings)
-    if (matchesSearchTerms(printing.displayLabel, query)) printing,
+    if (matchesSearchTerms(
+      '${printing.displayLabel} ${printing.rarity ?? ''}',
+      query,
+    ))
+      printing,
 ];
 
 /// The printing to preselect when a card is resolved, or null to leave the

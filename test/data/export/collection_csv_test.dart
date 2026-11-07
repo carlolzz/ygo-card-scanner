@@ -1,5 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:ygo_scanner/core/constants.dart';
 import 'package:ygo_scanner/data/export/collection_csv.dart';
+import 'package:ygo_scanner/models/app_language.dart';
 import 'package:ygo_scanner/models/card_condition.dart';
 import 'package:ygo_scanner/models/card_edition.dart';
 import 'package:ygo_scanner/models/collection_entry.dart';
@@ -69,6 +71,31 @@ void main() {
       'Legend of Blue Eyes White Dragon,Ultra Rare,NEAR_MINT,UNLIMITED,DE,2,'
       'nice,1970-01-01T00:00:00.000Z,1970-01-01T00:00:00.000Z',
     );
+  });
+
+  // The rarity is translated on screen, but a file has to mean the same thing
+  // whichever language the phone was in, and importing it back matches on this
+  // exact string.
+  test('rarity stays the raw API value with Italian selected', () {
+    AppStrings.select(AppLanguage.italian);
+    addTearDown(() => AppStrings.select(AppLanguage.english));
+
+    final csv = collectionToCsv([
+      _row(
+        passcode: '44095762',
+        name: 'Mirror Force',
+        printing: const Printing(
+          id: 1,
+          passcode: '44095762',
+          setCode: 'MRD-EN094',
+          setName: 'Metal Raiders',
+          rarity: 'Super Rare',
+        ),
+      ),
+    ]);
+
+    expect(csv, contains('Super Rare'));
+    expect(csv, isNot(contains('Super Rara')));
   });
 
   test('a null printing leaves the set columns empty', () {

@@ -208,16 +208,56 @@ Future<CollectionFilterOptions> collectionFilterOptions(Ref ref) async {
   return repository.filterOptions();
 }
 
-/// Every collection entry for one card (passcode), across languages, conditions
-/// and printings — the source for the detail screen's per-language breakdown.
-/// Reuses the existing `getEntriesForPasscode` passthrough; no new SQL.
+/// One `collection_entries` row with the printing it points at, for the detail
+/// screen's Copies tab.
+class OwnedCopy {
+  const OwnedCopy({required this.entry, this.printing});
+
+  final CollectionEntry entry;
+
+  /// Null when the copy was logged without a set.
+  final Printing? printing;
+}
+
+/// [copies] best grade first, then by set code with no set last, then by
+/// language: the order a person reads a stack of duplicates in. A copy, so the
+/// caller's list is left alone.
+List<OwnedCopy> sortOwnedCopies(List<OwnedCopy> copies) => [...copies]
+  ..sort((a, b) {
+    final byCondition = a.entry.condition.sortOrder.compareTo(
+      b.entry.condition.sortOrder,
+    );
+    if (byCondition != 0) return byCondition;
+    final aSet = a.printing?.setCode;
+    final bSet = b.printing?.setCode;
+    if (aSet != bSet) {
+      if (aSet == null) return 1;
+      if (bSet == null) return -1;
+      return aSet.compareTo(bSet);
+    }
+    return a.entry.language.compareTo(b.entry.language);
+  });
+
+/// Every copy held of one card (passcode), across languages, conditions and
+/// printings, for the detail screen's Copies tab.
+///
+/// Composes two existing repository reads by id, so there is no new SQL. It reads
+/// the repositories directly rather than watching [cardPrintings], because
+/// chaining one async provider onto another that is invalidated mid
+/// route-transition schedules a scope refresh from inside a build (see
+/// [collectionFilterOptions]). A quantity change must invalidate this, or the tab
+/// goes on showing the old count.
 @riverpod
-Future<List<CollectionEntry>> entriesForPasscode(
-  Ref ref,
-  String passcode,
-) async {
-  final repository = await ref.watch(collectionRepositoryProvider.future);
-  return repository.getEntriesForPasscode(passcode);
+Future<List<OwnedCopy>> ownedCopies(Ref ref, String passcode) async {
+  final collection = await ref.watch(collectionRepositoryProvider.future);
+  final cards = await ref.watch(cardRepositoryProvider.future);
+  final entries = await collection.getEntriesForPasscode(passcode);
+  final printings = await cards.getPrintingsForPasscode(passcode);
+  final printingsById = {for (final p in printings) p.id: p};
+  return sortOwnedCopies([
+    for (final entry in entries)
+      OwnedCopy(entry: entry, printing: printingsById[entry.printingId]),
+  ]);
 }
 
 /// The known printings (set + rarity) for a card, for the detail screen's

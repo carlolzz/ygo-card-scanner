@@ -7,6 +7,7 @@ import '../../data/db/dao/collection_dao.dart';
 import '../../models/card_condition.dart';
 import '../../models/card_edition.dart';
 import '../../models/card_language.dart';
+import '../../models/card_terms.dart';
 import '../../shared/widgets/justified_wrap.dart';
 import '../../shared/widgets/labeled_choice_chip.dart';
 import '../../shared/widgets/searchable_text_picker.dart';
@@ -164,7 +165,7 @@ class _CollectionFilterSheetState
                         child: SearchableTextPicker(
                           values: options.setNames,
                           selected: _draft.setName,
-                          anyLabel: AppStrings.collectionFilterAll,
+                          anyLabel: AppStrings.collectionFilterAllMasculine,
                           hintText: AppStrings.collectionFilterSetHint,
                           onSelected: (value) => _update(
                             _draft.copyWith(
@@ -240,6 +241,9 @@ class _CollectionFilterSheetState
     );
   }
 
+  // The chips below show a translated label over a raw API value: the draft, and
+  // so the query, always carries the raw one. Rows are sorted by what they read
+  // as, since the DAO's order is alphabetical in English only.
   List<Widget> _advancedGroups(CollectionFilterOptions options) => [
     if (options.levels.isNotEmpty)
       _Group(
@@ -248,6 +252,7 @@ class _CollectionFilterSheetState
           values: options.levels,
           selected: _draft.level,
           labelOf: (v) => '$v',
+          allLabel: AppStrings.collectionFilterAllMasculine,
           onSelected: (value) =>
               _update(_draft.copyWith(level: value, clearLevel: value == null)),
         ),
@@ -256,9 +261,9 @@ class _CollectionFilterSheetState
       _Group(
         label: AppStrings.collectionFilterFrameTypeLabel,
         child: _ChipRow<String>(
-          values: options.frameTypes,
+          values: sortedByLabel(options.frameTypes, cardFrameLabel),
           selected: _draft.frameType,
-          labelOf: _titleCase,
+          labelOf: cardFrameLabel,
           onSelected: (value) => _update(
             _draft.copyWith(frameType: value, clearFrameType: value == null),
           ),
@@ -268,9 +273,10 @@ class _CollectionFilterSheetState
       _Group(
         label: AppStrings.collectionFilterCardTypeLabel,
         child: _ChipRow<String>(
-          values: options.cardTypes,
+          values: sortedByLabel(options.cardTypes, cardTypeLabel),
           selected: _draft.cardType,
-          labelOf: (v) => v,
+          labelOf: cardTypeLabel,
+          allLabel: AppStrings.collectionFilterAllMasculine,
           onSelected: (value) => _update(
             _draft.copyWith(cardType: value, clearCardType: value == null),
           ),
@@ -283,9 +289,10 @@ class _CollectionFilterSheetState
         // and the label has to say so.
         label: AppStrings.collectionFilterRaceLabel,
         child: _ChipRow<String>(
-          values: options.races,
+          values: sortedByLabel(options.races, cardRaceLabel),
           selected: _draft.race,
-          labelOf: (v) => v,
+          labelOf: cardRaceLabel,
+          allLabel: AppStrings.collectionFilterAllMasculine,
           onSelected: (value) =>
               _update(_draft.copyWith(race: value, clearRace: value == null)),
         ),
@@ -294,14 +301,16 @@ class _CollectionFilterSheetState
       _Group(
         label: AppStrings.collectionFilterAttributeLabel,
         child: _ChipRow<String>(
-          values: options.attributes,
+          values: sortedByLabel(options.attributes, cardAttributeLabel),
           selected: _draft.attribute,
-          labelOf: (v) => v,
+          labelOf: cardAttributeLabel,
+          allLabel: AppStrings.collectionFilterAllMasculine,
           onSelected: (value) => _update(
             _draft.copyWith(attribute: value, clearAttribute: value == null),
           ),
         ),
       ),
+    // Archetypes are proper names, with no Italian source to translate from.
     if (options.archetypes.isNotEmpty)
       _Group(
         label: AppStrings.collectionFilterArchetypeLabel,
@@ -309,6 +318,7 @@ class _CollectionFilterSheetState
           values: options.archetypes,
           selected: _draft.archetype,
           labelOf: (v) => v,
+          allLabel: AppStrings.collectionFilterAllMasculine,
           onSelected: (value) => _update(
             _draft.copyWith(archetype: value, clearArchetype: value == null),
           ),
@@ -330,10 +340,6 @@ class _CollectionFilterSheetState
     ),
   ];
 }
-
-/// `normal` -> `Normal`, for YGOPRODeck's lowercase frame types.
-String _titleCase(String value) =>
-    value.isEmpty ? value : value[0].toUpperCase() + value.substring(1);
 
 /// A labelled block in the sheet.
 class _Group extends StatelessWidget {
@@ -374,12 +380,17 @@ class _ChipRow<T> extends StatefulWidget {
     required this.labelOf,
     required this.onSelected,
     this.colorOf,
+    this.allLabel,
   });
 
   final List<T> values;
   final T? selected;
   final String Function(T) labelOf;
   final Color Function(T)? colorOf;
+
+  /// The "All" chip's text, which has to agree in gender with the group it sits
+  /// under in Italian. Defaults to the feminine [AppStrings.collectionFilterAll].
+  final String? allLabel;
 
   /// Null clears the filter.
   final ValueChanged<T?> onSelected;
@@ -406,7 +417,7 @@ class _ChipRowState<T> extends State<_ChipRow<T>> {
       runSpacing: AppSpacing.xs,
       children: [
         LabeledChoiceChip(
-          label: AppStrings.collectionFilterAll,
+          label: widget.allLabel ?? AppStrings.collectionFilterAll,
           selected: widget.selected == null,
           selectedColor: palette.accent,
           onSelected: () => widget.onSelected(null),
@@ -528,7 +539,9 @@ class _RarityRowState extends State<_RarityRow> {
               final value = _filterFor(rarity);
               final isSelected = widget.selected == value;
               return LabeledChoiceChip(
-                label: rarity ?? AppStrings.collectionFilterNoRarity,
+                label: rarity == null
+                    ? AppStrings.collectionFilterNoRarity
+                    : rarityLabel(rarity),
                 selected: isSelected,
                 selectedColor: palette.accent,
                 onSelected: () => widget.onSelected(isSelected ? null : value),

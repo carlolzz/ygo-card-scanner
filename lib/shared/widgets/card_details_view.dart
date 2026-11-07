@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../core/constants.dart';
 import '../../core/theme/tokens.dart';
+import '../../models/card_terms.dart';
 import '../../models/ygo_card.dart';
 import 'card_art_thumbnail.dart';
 
@@ -45,14 +46,14 @@ class CardDetailsView extends StatelessWidget {
         if (card.type != null)
           CardDetailRow(
             label: AppStrings.collectionCardTypeLabel,
-            value: card.type!,
+            value: cardTypeLabel(card.type!),
           ),
         // A Spell/Trap's `attribute` is just "SPELL"/"TRAP" (redundant with
         // the type row above), so it's only shown for monsters.
         if (card.attribute != null && !card.isSpellOrTrap)
           CardDetailRow(
             label: AppStrings.collectionCardAttributeLabel,
-            value: card.attribute!,
+            value: cardAttributeLabel(card.attribute!),
           ),
         if (card.race != null)
           CardDetailRow(
@@ -64,7 +65,7 @@ class CardDetailsView extends StatelessWidget {
               _ when card.isTrap => AppStrings.collectionCardTrapTypeLabel,
               _ => AppStrings.collectionCardRaceLabel,
             },
-            value: card.race!,
+            value: cardRaceLabel(card.race!),
           ),
         if (card.level != null)
           CardDetailRow(

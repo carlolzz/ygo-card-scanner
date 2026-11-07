@@ -4,6 +4,7 @@ import '../../core/constants.dart';
 import '../../core/money.dart';
 import '../../core/theme/tokens.dart';
 import '../../data/repositories/price_repository.dart';
+import '../../models/card_terms.dart';
 import '../pricing/card_prices_view.dart' show formatFetchedAt;
 import 'stat_tile.dart';
 
@@ -208,7 +209,7 @@ class _ValueLine extends StatelessWidget {
                 ),
                 if (line.rarity != null)
                   Text(
-                    line.rarity!,
+                    rarityLabel(line.rarity!),
                     style: TextStyle(
                       color: palette.onSurfaceMuted,
                       fontSize: PriceTokens.footnoteFontSize,

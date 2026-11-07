@@ -16,6 +16,7 @@ import '../../data/import/csv_file_source.dart';
 import '../../data/repositories/price_repository.dart';
 import '../../models/card_condition.dart';
 import '../../models/card_language.dart';
+import '../../models/card_terms.dart';
 import '../collection/collection_providers.dart';
 import '../pricing/card_prices_view.dart';
 import 'stat_tile.dart';
@@ -149,11 +150,10 @@ class _StatisticsBody extends StatelessWidget {
   }
 
   List<_BreakdownRow> _typeRows(Map<String, int> byType) {
-    final keys = byType.keys.toList()..sort();
     return [
-      for (final key in keys)
+      for (final key in sortedByLabel(byType.keys.toList(), cardTypeLabel))
         _BreakdownRow(
-          key.isEmpty ? AppStrings.statisticsUnknownType : key,
+          key.isEmpty ? AppStrings.statisticsUnknownType : cardTypeLabel(key),
           byType[key]!,
         ),
     ];

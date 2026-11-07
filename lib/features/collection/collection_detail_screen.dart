@@ -7,6 +7,7 @@ import '../../data/repositories/collection_repository.dart';
 import '../../models/card_condition.dart';
 import '../../models/card_edition.dart';
 import '../../models/card_language.dart';
+import '../../models/card_terms.dart';
 import '../../models/collection_entry_with_card.dart';
 import '../../models/printing.dart';
 import '../../shared/widgets/card_details_view.dart';
@@ -14,8 +15,13 @@ import '../../shared/widgets/labeled_choice_chip.dart';
 import '../../shared/widgets/language_flag.dart';
 import '../../shared/widgets/printing_picker.dart';
 import '../pricing/card_prices_view.dart';
+import 'collection_copies_view.dart';
 import 'collection_delete_confirm.dart';
 import 'collection_providers.dart';
+
+/// Where the Prices tab sits, for the price estimate's link to it. Named because
+/// a wrong index here fails silently, landing on a different tab.
+const int _pricesTabIndex = 2;
 
 class CollectionDetailScreen extends ConsumerStatefulWidget {
   const CollectionDetailScreen({super.key, required this.entryWithCard});
@@ -46,7 +52,7 @@ class _CollectionDetailScreenState
 
     final palette = AppPalette.of(context);
     return DefaultTabController(
-      length: 2,
+      length: 3,
       child: Scaffold(
         appBar: AppBar(
           title: Text(card.name),
@@ -65,6 +71,7 @@ class _CollectionDetailScreenState
           bottom: TabBar(
             tabs: [
               Tab(text: AppStrings.cardTabDetails),
+              Tab(text: AppStrings.cardTabCopies),
               Tab(text: AppStrings.cardTabPrices),
             ],
           ),
@@ -112,13 +119,15 @@ class _CollectionDetailScreenState
                           CardPriceEstimate(
                             passcode: entry.passcode,
                             quantity: _quantity,
-                            onTap: () =>
-                                DefaultTabController.of(context).animateTo(1),
+                            onTap: () => DefaultTabController.of(
+                              context,
+                            ).animateTo(_pricesTabIndex),
                           ),
                         ],
                       ),
                     ),
                   ),
+                  const SizedBox(height: AppSpacing.md),
                   // Everything below is about *this entry* rather than the
                   // card, which is why it stays here and not in the shared view.
                   //
@@ -133,7 +142,7 @@ class _CollectionDetailScreenState
                   if (widget.entryWithCard.printing?.rarity != null)
                     CardDetailRow(
                       label: AppStrings.collectionRarityLabel,
-                      value: widget.entryWithCard.printing!.rarity!,
+                      value: rarityLabel(widget.entryWithCard.printing!.rarity!),
                     ),
                   CardDetailRow(
                     label: AppStrings.collectionEditionLabel,
@@ -170,9 +179,12 @@ class _CollectionDetailScreenState
                       ),
                     ],
                   ),
-                  _LanguageBreakdown(passcode: entry.passcode),
                 ],
               ),
+            ),
+            CollectionCopiesView(
+              passcode: entry.passcode,
+              currentEntryId: entry.id,
             ),
             CardPricesView(passcode: entry.passcode),
           ],
@@ -186,6 +198,7 @@ class _CollectionDetailScreenState
     final next = _quantity + 1;
     await repository.setQuantity(id, next);
     ref.invalidate(collectionEntriesProvider);
+    _invalidateCopies();
     setState(() => _quantity = next);
   }
 
@@ -204,8 +217,17 @@ class _CollectionDetailScreenState
     final repository = await ref.read(collectionRepositoryProvider.future);
     await repository.decrement(id);
     ref.invalidate(collectionEntriesProvider);
+    _invalidateCopies();
     setState(() => _quantity -= 1);
   }
+
+  /// The tab's provider is normally disposed while the tab is off screen and so
+  /// re-reads on return, but tap + and swipe straight across and the tab has
+  /// already read the old count by the time the write lands. Without this it
+  /// would go on showing that count.
+  void _invalidateCopies() => ref.invalidate(
+    ownedCopiesProvider(widget.entryWithCard.entry.passcode),
+  );
 
   Future<void> _confirmDelete(int id) async {
     if (!await confirmRemoveCard(context, ref)) return;
@@ -234,9 +256,7 @@ class _CollectionDetailScreenState
     // The edit can move the entry to a different printing, i.e. a different
     // rarity — the one non-delete path that changes the filter row's options.
     ref.invalidate(collectionFilterOptionsProvider);
-    ref.invalidate(
-      entriesForPasscodeProvider(widget.entryWithCard.entry.passcode),
-    );
+    _invalidateCopies();
     final messenger = ScaffoldMessenger.of(context);
     Navigator.of(context).pop();
     messenger.showSnackBar(
@@ -247,53 +267,6 @@ class _CollectionDetailScreenState
               : AppStrings.collectionEditSavedMessage,
         ),
       ),
-    );
-  }
-}
-
-/// Per-language totals for this card, summed across all of its entries. Shown
-/// only when the card is held in more than one language — passcodes are
-/// language-independent, so the same card in English and German lives as two
-/// rows under one passcode, and this is where those rows are reunited.
-class _LanguageBreakdown extends ConsumerWidget {
-  const _LanguageBreakdown({required this.passcode});
-
-  final String passcode;
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final entriesAsync = ref.watch(entriesForPasscodeProvider(passcode));
-    final entries = entriesAsync.value;
-    if (entries == null) return const SizedBox.shrink();
-
-    final byLanguage = <String, int>{};
-    for (final entry in entries) {
-      byLanguage[entry.language] =
-          (byLanguage[entry.language] ?? 0) + entry.quantity;
-    }
-    if (byLanguage.length < 2) return const SizedBox.shrink();
-
-    final languages = byLanguage.keys.toList()..sort();
-    final palette = AppPalette.of(context);
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const SizedBox(height: AppSpacing.md),
-        Text(
-          AppStrings.collectionByLanguageLabel,
-          style: TextStyle(
-            color: palette.onSurface,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-        const SizedBox(height: AppSpacing.xs),
-        for (final language in languages)
-          CardDetailRow(
-            label: languageLabel(language),
-            valueLeading: LanguageFlag(language: language),
-            value: '×${byLanguage[language]}',
-          ),
-      ],
     );
   }
 }

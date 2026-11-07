@@ -6,6 +6,7 @@ import '../../core/theme/tokens.dart';
 import '../../models/card_condition.dart';
 import '../../models/card_edition.dart';
 import '../../models/card_language.dart';
+import '../../models/card_terms.dart';
 import '../../models/fast_log_field.dart';
 import '../../models/printing.dart';
 import '../../models/ygo_card.dart';
@@ -174,53 +175,68 @@ class _PrintingStepState extends ConsumerState<_PrintingStep> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Padding(
-          padding: const EdgeInsets.all(AppSpacing.md),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              _CardIdentity(card: card),
-              const SizedBox(height: AppSpacing.sm),
-              // Type the set instead of scrolling: a reprinted card can carry a
-              // dozen printings, and the user knows which one is in their hand.
-              TextField(
-                controller: _searchController,
-                style: TextStyle(color: palette.onSurface),
-                onChanged: (value) => setState(() => _query = value),
-                decoration: InputDecoration(
-                  isDense: true,
-                  hintText: AppStrings.setPickerSearchHint,
-                  hintStyle: TextStyle(color: palette.onSurfaceMuted),
-                  prefixIcon: Icon(Icons.search, color: palette.onSurfaceMuted),
-                  suffixIcon: _query.isEmpty
-                      ? null
-                      : IconButton(
-                          icon: const Icon(Icons.clear),
-                          color: palette.onSurfaceMuted,
-                          tooltip: AppStrings.setPickerClearTooltip,
-                          onPressed: () {
-                            _searchController.clear();
-                            setState(() => _query = '');
-                          },
+        // One scroll view for the card, the search box and the list, with only
+        // Skip pinned below. The artwork is tall enough that on a small phone
+        // with the keyboard up these no longer fit a fixed layout, and a fixed
+        // list above an `Expanded` would overflow rather than scroll.
+        Expanded(
+          child: CustomScrollView(
+            slivers: [
+              SliverToBoxAdapter(
+                child: Padding(
+                  padding: const EdgeInsets.all(AppSpacing.md),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _CardIdentity(card: card),
+                      const SizedBox(height: AppSpacing.sm),
+                      // Type the set instead of scrolling: a reprinted card can
+                      // carry a dozen printings, and the user knows which one
+                      // is in their hand.
+                      TextField(
+                        controller: _searchController,
+                        style: TextStyle(color: palette.onSurface),
+                        onChanged: (value) => setState(() => _query = value),
+                        decoration: InputDecoration(
+                          isDense: true,
+                          hintText: AppStrings.setPickerSearchHint,
+                          hintStyle: TextStyle(color: palette.onSurfaceMuted),
+                          prefixIcon: Icon(
+                            Icons.search,
+                            color: palette.onSurfaceMuted,
+                          ),
+                          suffixIcon: _query.isEmpty
+                              ? null
+                              : IconButton(
+                                  icon: const Icon(Icons.clear),
+                                  color: palette.onSurfaceMuted,
+                                  tooltip: AppStrings.setPickerClearTooltip,
+                                  onPressed: () {
+                                    _searchController.clear();
+                                    setState(() => _query = '');
+                                  },
+                                ),
+                          border: const OutlineInputBorder(),
                         ),
-                  border: const OutlineInputBorder(),
+                      ),
+                    ],
+                  ),
                 ),
               ),
-            ],
-          ),
-        ),
-        Expanded(
-          child: matches.isEmpty
-              ? Padding(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: AppSpacing.md,
-                  ),
-                  child: Text(
-                    AppStrings.setPickerNoMatches,
-                    style: TextStyle(color: palette.onSurfaceMuted),
+              if (matches.isEmpty)
+                SliverToBoxAdapter(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: AppSpacing.md,
+                    ),
+                    child: Text(
+                      AppStrings.setPickerNoMatches,
+                      style: TextStyle(color: palette.onSurfaceMuted),
+                    ),
                   ),
                 )
-              : ListView.builder(
+              else
+                SliverList.builder(
                   itemCount: matches.length,
                   itemBuilder: (context, index) {
                     final printing = matches[index];
@@ -232,7 +248,8 @@ class _PrintingStepState extends ConsumerState<_PrintingStep> {
                       subtitle: Text(
                         [
                           if (printing.setName != null) printing.setName!,
-                          if (printing.rarity != null) printing.rarity!,
+                          if (printing.rarity != null)
+                            rarityLabel(printing.rarity!),
                         ].join(' · '),
                         style: TextStyle(color: palette.onSurfaceMuted),
                       ),
@@ -240,6 +257,8 @@ class _PrintingStepState extends ConsumerState<_PrintingStep> {
                     );
                   },
                 ),
+            ],
+          ),
         ),
         Padding(
           padding: const EdgeInsets.all(AppSpacing.md),
@@ -269,134 +288,151 @@ class _ConditionStep extends ConsumerWidget {
     final palette = AppPalette.of(context);
     final asked = controller.askedFields;
 
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(AppSpacing.lg),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _CardIdentity(
-            card: card,
-            // Unconditional, and under Fast log it is the only thing naming the
-            // set that was auto-picked. It is information, not a control.
-            setLine: printing == null
-                ? AppStrings.addCardNoPrintingLabel
-                : (printing.setCode ?? printing.setName ?? ''),
+    // Save is pinned below the scroll view rather than at the end of it. With
+    // the artwork this tall it would otherwise fall below the fold on a small
+    // phone, and this flow is used one-handed, one card after another.
+    return Column(
+      children: [
+        Expanded(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(AppSpacing.lg),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _CardIdentity(
+                  card: card,
+                  // Unconditional, and under Fast log it is the only thing
+                  // naming the set that was auto-picked. It is information, not
+                  // a control.
+                  setLine: printing == null
+                      ? AppStrings.addCardNoPrintingLabel
+                      : (printing.setCode ?? printing.setName ?? ''),
+                ),
+                const SizedBox(height: AppSpacing.lg),
+                // Each block below owns its *trailing* gap rather than a leading
+                // one, so a block hidden by Fast log takes its spacing with it.
+                // The off-state is pixel-identical to before because
+                // `lg == md + sm`: three trailing `md`s plus the quantity row's
+                // own leading `sm` is the `md, md, lg` this used to read.
+                if (asked.contains(FastLogField.condition)) ...[
+                  Wrap(
+                    spacing: AppSpacing.xs,
+                    runSpacing: AppSpacing.xs,
+                    children: [
+                      for (final condition in CardCondition.values)
+                        LabeledChoiceChip(
+                          label: condition.shortCode,
+                          selected: selection.condition == condition,
+                          selectedColor: ConditionChipColors
+                              .byShortCode[condition.shortCode]!,
+                          onSelected: () => controller.setCondition(condition),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: AppSpacing.md),
+                ],
+                if (asked.contains(FastLogField.edition)) ...[
+                  Wrap(
+                    spacing: AppSpacing.xs,
+                    runSpacing: AppSpacing.xs,
+                    children: [
+                      for (final edition in CardEdition.values)
+                        LabeledChoiceChip(
+                          label: edition.label,
+                          selected: selection.edition == edition,
+                          selectedColor: palette.accent,
+                          onSelected: () => controller.setEdition(edition),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: AppSpacing.md),
+                ],
+                // The label and its spacer hide with the chips. Unlike the scan
+                // panel, this step labels its language row, so it is easy to
+                // leave orphaned above nothing.
+                if (asked.contains(FastLogField.language)) ...[
+                  Text(
+                    AppStrings.collectionLanguageLabel,
+                    style: TextStyle(color: palette.onSurfaceMuted),
+                  ),
+                  const SizedBox(height: AppSpacing.xs),
+                  Wrap(
+                    spacing: AppSpacing.xs,
+                    runSpacing: AppSpacing.xs,
+                    children: [
+                      for (final language in kCardLanguages)
+                        LabeledChoiceChip(
+                          label: languageLabel(language),
+                          selected: selection.language == language,
+                          selectedColor: palette.accent,
+                          onSelected: () => controller.setLanguage(language),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: AppSpacing.md),
+                ],
+                // What Save is about to write for the fields with no control.
+                if (asked.length < FastLogField.values.length) ...[
+                  FastLogSummary(
+                    askedFields: asked,
+                    condition: selection.condition,
+                    edition: selection.edition,
+                    language: selection.language,
+                  ),
+                  const SizedBox(height: AppSpacing.md),
+                ],
+                const SizedBox(height: AppSpacing.sm),
+                Row(
+                  children: [
+                    Text(
+                      AppStrings.collectionQuantityLabel,
+                      style: TextStyle(color: palette.onSurface),
+                    ),
+                    const Spacer(),
+                    IconButton(
+                      icon: const Icon(Icons.remove_circle_outline),
+                      onPressed: () =>
+                          controller.setQuantity(selection.quantity - 1),
+                    ),
+                    Text(
+                      '${selection.quantity}',
+                      style: TextStyle(color: palette.onSurface, fontSize: 18),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.add_circle_outline),
+                      color: palette.accent,
+                      onPressed: () =>
+                          controller.setQuantity(selection.quantity + 1),
+                    ),
+                  ],
+                ),
+              ],
+            ),
           ),
-          const SizedBox(height: AppSpacing.lg),
-          // Each block below owns its *trailing* gap rather than a leading one,
-          // so a block hidden by Fast log takes its spacing with it. The
-          // off-state is pixel-identical to before because `lg == md + sm`:
-          // three trailing `md`s plus the quantity row's own leading `sm` is
-          // the `md, md, lg` this used to read.
-          if (asked.contains(FastLogField.condition)) ...[
-            Wrap(
-              spacing: AppSpacing.xs,
-              runSpacing: AppSpacing.xs,
-              children: [
-                for (final condition in CardCondition.values)
-                  LabeledChoiceChip(
-                    label: condition.shortCode,
-                    selected: selection.condition == condition,
-                    selectedColor:
-                        ConditionChipColors.byShortCode[condition.shortCode]!,
-                    onSelected: () => controller.setCondition(condition),
-                  ),
-              ],
-            ),
-            const SizedBox(height: AppSpacing.md),
-          ],
-          if (asked.contains(FastLogField.edition)) ...[
-            Wrap(
-              spacing: AppSpacing.xs,
-              runSpacing: AppSpacing.xs,
-              children: [
-                for (final edition in CardEdition.values)
-                  LabeledChoiceChip(
-                    label: edition.label,
-                    selected: selection.edition == edition,
-                    selectedColor: palette.accent,
-                    onSelected: () => controller.setEdition(edition),
-                  ),
-              ],
-            ),
-            const SizedBox(height: AppSpacing.md),
-          ],
-          // The label and its spacer hide with the chips. Unlike the scan
-          // panel, this step labels its language row, so it is easy to leave
-          // orphaned above nothing.
-          if (asked.contains(FastLogField.language)) ...[
-            Text(
-              AppStrings.collectionLanguageLabel,
-              style: TextStyle(color: palette.onSurfaceMuted),
-            ),
-            const SizedBox(height: AppSpacing.xs),
-            Wrap(
-              spacing: AppSpacing.xs,
-              runSpacing: AppSpacing.xs,
-              children: [
-                for (final language in kCardLanguages)
-                  LabeledChoiceChip(
-                    label: languageLabel(language),
-                    selected: selection.language == language,
-                    selectedColor: palette.accent,
-                    onSelected: () => controller.setLanguage(language),
-                  ),
-              ],
-            ),
-            const SizedBox(height: AppSpacing.md),
-          ],
-          // What Save is about to write for the fields with no control.
-          if (asked.length < FastLogField.values.length) ...[
-            FastLogSummary(
-              askedFields: asked,
-              condition: selection.condition,
-              edition: selection.edition,
-              language: selection.language,
-            ),
-            const SizedBox(height: AppSpacing.md),
-          ],
-          const SizedBox(height: AppSpacing.sm),
-          Row(
-            children: [
-              Text(
-                AppStrings.collectionQuantityLabel,
-                style: TextStyle(color: palette.onSurface),
-              ),
-              const Spacer(),
-              IconButton(
-                icon: const Icon(Icons.remove_circle_outline),
-                onPressed: () => controller.setQuantity(selection.quantity - 1),
-              ),
-              Text(
-                '${selection.quantity}',
-                style: TextStyle(color: palette.onSurface, fontSize: 18),
-              ),
-              IconButton(
-                icon: const Icon(Icons.add_circle_outline),
-                color: palette.accent,
-                onPressed: () => controller.setQuantity(selection.quantity + 1),
-              ),
-            ],
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(
+            AppSpacing.lg,
+            0,
+            AppSpacing.lg,
+            AppSpacing.lg,
           ),
-          const SizedBox(height: AppSpacing.lg),
-          SizedBox(
+          child: SizedBox(
             width: double.infinity,
             child: FilledButton(
               onPressed: () async {
                 await controller.save();
                 if (context.mounted) {
                   ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text(AppStrings.addCardSavedMessage),
-                    ),
+                    SnackBar(content: Text(AppStrings.addCardSavedMessage)),
                   );
                 }
               },
               child: Text(AppStrings.addCardSaveButton),
             ),
           ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 }
@@ -431,11 +467,13 @@ class _CardIdentity extends StatelessWidget {
       children: [
         // The whole card, uncropped: without an aspect ratio the thumbnail is a
         // square `cover` crop, which cut the card off at the sides and bottom.
+        // Square corners too, so nothing clips the card's own.
         CardArtThumbnail(
           card: card,
-          size: CardThumbnailSizes.list,
+          size: CardThumbnailSizes.addCard,
           aspectRatio: ScanReticleTokens.cardAspectRatio,
           fit: BoxFit.contain,
+          cornerRadius: 0,
         ),
         const SizedBox(width: AppSpacing.md),
         Expanded(
@@ -452,7 +490,7 @@ class _CardIdentity extends StatelessWidget {
               ),
               if (card.type != null)
                 Text(
-                  card.type!,
+                  cardTypeLabel(card.type!),
                   style: TextStyle(color: palette.onSurfaceMuted),
                 ),
               if (line != null)

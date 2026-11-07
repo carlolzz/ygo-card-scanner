@@ -9,6 +9,7 @@ import 'package:ygo_scanner/data/db/dao/meta_dao.dart';
 import 'package:ygo_scanner/data/repositories/settings_repository.dart';
 import 'package:ygo_scanner/data/seed/fake_collection_seed.dart';
 import 'package:ygo_scanner/features/settings/settings_providers.dart';
+import 'package:ygo_scanner/models/app_language.dart';
 import 'package:ygo_scanner/models/app_settings.dart';
 import 'package:ygo_scanner/models/card_language.dart';
 import 'package:ygo_scanner/features/collection/collection_grid_tile.dart';
@@ -623,6 +624,103 @@ void main() {
 
         expect(find.text('Red-Eyes B. Dragon'), findsOneWidget);
         expect(find.text('Dark Magician'), findsNothing);
+      });
+    });
+  });
+
+  group('the filter sheet in Italian', () {
+    /// Opens the collection with Italian saved as the interface language, the
+    /// sheet open and its advanced section ticked. Saved rather than only
+    /// selected: settings call `AppStrings.select` themselves when they load.
+    Future<void> openItalianSheet(WidgetTester tester) async {
+      tester.view.physicalSize = const Size(800, 2400);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      addTearDown(() => AppStrings.select(AppLanguage.english));
+
+      AppStrings.select(AppLanguage.italian);
+      await SettingsRepository(MetaDao(testDb)).save(
+        const AppSettings(
+          appLanguage: AppLanguage.italian,
+          collectionViewMode: CollectionViewMode.standard,
+        ),
+      );
+      await pumpApp(tester, testDb);
+      await tester.tap(find.text(AppStrings.homeTileMyCollection));
+      await pumpUntilSettled(tester);
+
+      await tester.tap(find.text(AppStrings.collectionFiltersButton));
+      await pumpUntilSettled(tester);
+      await tester.tap(find.text(AppStrings.collectionFiltersAdvanced));
+      await pumpUntilSettled(tester);
+    }
+
+    Finder chip(String label) => find.widgetWithText(ChoiceChip, label);
+
+    testWidgets('API values read in Italian', (tester) async {
+      await tester.runAsync(() async {
+        await openItalianSheet(tester);
+
+        expect(chip('Mostro Normale'), findsOneWidget);
+        expect(chip('Carta Magia'), findsOneWidget);
+        expect(chip('Drago'), findsOneWidget);
+        expect(chip('Incantatore'), findsOneWidget);
+        expect(chip('LUCE'), findsOneWidget);
+        expect(chip('OSCURITÀ'), findsOneWidget);
+        expect(chip('Trappola'), findsOneWidget);
+        expect(chip('Super Rara'), findsOneWidget);
+        expect(chip('Trap Card'), findsNothing);
+        expect(chip('Dragon'), findsNothing);
+        expect(chip('DARK'), findsNothing);
+        expect(chip('Super Rare'), findsNothing);
+      });
+    });
+
+    // The one that could silently break the filter: the chip shows a translation
+    // and the query must still receive the API's raw value, or this finds nothing.
+    testWidgets('a translated chip still filters on the raw value', (
+      tester,
+    ) async {
+      await tester.runAsync(() async {
+        await openItalianSheet(tester);
+
+        await tester.tap(chip('Carta Trappola'));
+        await pumpUntilSettled(tester);
+        await tester.tap(find.text(AppStrings.collectionFiltersApply));
+        await pumpUntilSettled(tester);
+
+        expect(find.text('Mirror Force'), findsNWidgets(2));
+        expect(find.text('Dark Magician'), findsNothing);
+        expect(find.text('Pot of Greed'), findsNothing);
+      });
+    });
+
+    testWidgets('a translated rarity still filters on the raw value', (
+      tester,
+    ) async {
+      await tester.runAsync(() async {
+        await openItalianSheet(tester);
+
+        await tester.tap(chip('Super Rara'));
+        await pumpUntilSettled(tester);
+        await tester.tap(find.text(AppStrings.collectionFiltersApply));
+        await pumpUntilSettled(tester);
+
+        expect(find.text('Mirror Force'), findsOneWidget);
+        expect(find.text('Blue-Eyes White Dragon'), findsNothing);
+      });
+    });
+
+    // "Tutte" under "Attributo" is a grammar mistake English cannot show.
+    testWidgets('the All chip agrees in gender with its group', (tester) async {
+      await tester.runAsync(() async {
+        await openItalianSheet(tester);
+
+        // Condizione, Rarità, Edizione, Lingua, Cornice.
+        expect(chip('Tutte'), findsNWidgets(5));
+        // Livello, Tipo di carta, Tipo di Mostro, Attributo, Archetipo.
+        expect(chip('Tutti'), findsNWidgets(5));
       });
     });
   });

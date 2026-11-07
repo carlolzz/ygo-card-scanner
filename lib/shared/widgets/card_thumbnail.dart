@@ -13,6 +13,7 @@ class CardThumbnail extends StatelessWidget {
     this.size = CardThumbnailSizes.list,
     this.aspectRatio,
     this.fit = BoxFit.cover,
+    this.cornerRadius = AppRadius.sm,
   });
 
   final String? localImagePath;
@@ -36,6 +37,10 @@ class CardThumbnail extends StatelessWidget {
   /// overflow); use [BoxFit.contain] to show the entire image.
   final BoxFit fit;
 
+  /// Rounding on the clip. Pass 0 for a plain rectangle, showing the card's own
+  /// corners rather than cutting them off.
+  final double cornerRadius;
+
   @override
   Widget build(BuildContext context) {
     final path = localImagePath;
@@ -49,7 +54,7 @@ class CardThumbnail extends StatelessWidget {
             errorBuilder: (context, error, stackTrace) => _placeholder(context),
           );
     return ClipRRect(
-      borderRadius: BorderRadius.circular(AppRadius.sm),
+      borderRadius: BorderRadius.circular(cornerRadius),
       child: width == null
           // Sized by the parent — a grid cell. An [AspectRatio] rather than a
           // [SizedBox] so the cell's width drives the height.

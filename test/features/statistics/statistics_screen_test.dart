@@ -15,6 +15,7 @@ import 'package:ygo_scanner/data/import/csv_file_source.dart';
 import 'package:ygo_scanner/data/seed/fake_collection_seed.dart';
 import 'package:ygo_scanner/features/statistics/statistics_providers.dart';
 import 'package:ygo_scanner/features/statistics/statistics_screen.dart';
+import 'package:ygo_scanner/models/app_language.dart';
 import 'package:ygo_scanner/models/card_condition.dart';
 
 import '../../data/db/test_db.dart';
@@ -446,6 +447,47 @@ void main() {
 
       expect(find.text(AppStrings.statisticsEmptyMessage), findsOneWidget);
       expect(find.text(AppStrings.statisticsImportButton), findsOneWidget);
+    });
+  });
+
+  // Sorted by what the rows read as: the keys are English, and sorting on those
+  // would put "Mostro con Effetto" (Effect Monster) above "Carta Magia".
+  testWidgets('card types are translated and sorted by their label', (
+    tester,
+  ) async {
+    useTallViewport(tester);
+    AppStrings.select(AppLanguage.italian);
+    addTearDown(() => AppStrings.select(AppLanguage.english));
+
+    await tester.runAsync(() async {
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            appDatabaseProvider.overrideWith((ref) async => testDb),
+            collectionStatsProvider.overrideWith(
+              (ref) async => const CollectionStats(
+                totalCopies: 6,
+                distinctCards: 3,
+                byCondition: {},
+                byLanguage: {},
+                byCardType: {
+                  'Effect Monster': 1,
+                  'Spell Card': 2,
+                  'Trap Card': 3,
+                },
+              ),
+            ),
+          ],
+          child: const MaterialApp(home: StatisticsScreen()),
+        ),
+      );
+      await pumpUntilSettled(tester);
+
+      final spell = tester.getTopLeft(find.text('Carta Magia')).dy;
+      final trap = tester.getTopLeft(find.text('Carta Trappola')).dy;
+      final effect = tester.getTopLeft(find.text('Mostro con Effetto')).dy;
+      expect(spell, lessThan(trap));
+      expect(trap, lessThan(effect));
     });
   });
 }

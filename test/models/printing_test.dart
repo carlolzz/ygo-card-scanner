@@ -1,4 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:ygo_scanner/core/constants.dart';
+import 'package:ygo_scanner/models/app_language.dart';
 import 'package:ygo_scanner/models/printing.dart';
 
 const _mirrorForceMetalRaiders = Printing(
@@ -96,6 +98,17 @@ void main() {
 
     test('matches on rarity', () {
       expect(filterPrintings(_all, 'ultra'), [_mirrorForceDarkSaviors]);
+    });
+
+    // The row reads "Ultra Rara" in Italian, but "ultra rare" is what Cardmarket
+    // and TCGplayer call it, so typing either has to find it.
+    test('in Italian, matches the rarity in both languages', () {
+      AppStrings.select(AppLanguage.italian);
+      addTearDown(() => AppStrings.select(AppLanguage.english));
+
+      expect(_mirrorForceDarkSaviors.displayLabel, contains('(Ultra Rara)'));
+      expect(filterPrintings(_all, 'ultra rara'), [_mirrorForceDarkSaviors]);
+      expect(filterPrintings(_all, 'ultra rare'), [_mirrorForceDarkSaviors]);
     });
 
     test('every term must match, in any order', () {

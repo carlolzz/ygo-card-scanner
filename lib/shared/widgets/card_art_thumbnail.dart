@@ -60,6 +60,7 @@ class CardArtThumbnail extends ConsumerWidget {
     this.size = CardThumbnailSizes.list,
     this.aspectRatio,
     this.fit = BoxFit.cover,
+    this.cornerRadius = AppRadius.sm,
   });
 
   final YgoCard card;
@@ -71,6 +72,9 @@ class CardArtThumbnail extends ConsumerWidget {
   final double? aspectRatio;
   final BoxFit fit;
 
+  /// As [CardThumbnail.cornerRadius].
+  final double cornerRadius;
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     // Already on disk (an owned card that has been seen before) — render
@@ -81,6 +85,7 @@ class CardArtThumbnail extends ConsumerWidget {
         size: size,
         aspectRatio: aspectRatio,
         fit: fit,
+        cornerRadius: cornerRadius,
       );
     }
     // Not yet downloaded — pull it once. `.value` is null while it resolves (or
@@ -91,6 +96,7 @@ class CardArtThumbnail extends ConsumerWidget {
       size: size,
       aspectRatio: aspectRatio,
       fit: fit,
+      cornerRadius: cornerRadius,
     );
   }
 }

@@ -14,6 +14,7 @@ import '../../data/export/file_share.dart';
 import '../../models/card_condition.dart';
 import '../../models/card_edition.dart';
 import '../../models/card_language.dart';
+import '../../models/card_terms.dart';
 import '../../models/fast_log_field.dart';
 import '../../shared/widgets/card_art_thumbnail.dart';
 import '../../shared/widgets/fast_log_summary.dart';
@@ -1643,7 +1644,7 @@ class _MatchedPanel extends ConsumerWidget {
                       ),
                       if (card.type != null)
                         Text(
-                          card.type!,
+                          cardTypeLabel(card.type!),
                           style: TextStyle(color: palette.onSurfaceMuted),
                         ),
                       // Say so when the app is guessing. Matches past
@@ -1950,7 +1951,7 @@ class _CandidatePanel extends ConsumerWidget {
                   ),
                   subtitle: candidate.card.type != null
                       ? Text(
-                          candidate.card.type!,
+                          cardTypeLabel(candidate.card.type!),
                           style: TextStyle(color: palette.onSurfaceMuted),
                         )
                       : null,

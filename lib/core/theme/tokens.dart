@@ -320,6 +320,13 @@ class CardThumbnailSizes {
   /// At 57.6 (84pt tall) this is comfortably inside that budget.
   static const double collectionTile = list * 1.2;
 
+  /// The manual add-card wizard's artwork, 120 x 175 at the card aspect. Big
+  /// enough to check the picture against the card in hand, because a name in a
+  /// search list is otherwise all that confirms the right card was picked. The
+  /// printing step scrolls for this: at this height a fixed layout overflows a
+  /// small phone once the keyboard is up.
+  static const double addCard = 120;
+
   static const double detail = 200;
 }
 

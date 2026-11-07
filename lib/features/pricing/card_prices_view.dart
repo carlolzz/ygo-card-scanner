@@ -5,6 +5,7 @@ import '../../core/constants.dart';
 import '../../core/money.dart';
 import '../../core/theme/tokens.dart';
 import '../../models/card_prices.dart';
+import '../../models/card_terms.dart';
 import 'price_providers.dart';
 
 /// One card's prices: the card-level figures from every vendor YGOPRODeck
@@ -125,7 +126,7 @@ class _SetPriceRow extends StatelessWidget {
                 ),
                 if (set.rarity != null)
                   Text(
-                    set.rarity!,
+                    rarityLabel(set.rarity!),
                     style: TextStyle(
                       color: palette.onSurfaceMuted,
                       fontSize: PriceTokens.footnoteFontSize,

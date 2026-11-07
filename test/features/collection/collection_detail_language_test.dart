@@ -73,20 +73,26 @@ void main() {
       );
       await pumpUntilSettled(tester);
 
-      // Both languages appear in the breakdown; whichever entry was opened also
-      // shows its own language in the per-entry detail row, so allow >1.
+      // It moved to the Copies tab, so it is not on the one the screen opens on.
+      expect(find.text(AppStrings.collectionByLanguageLabel), findsNothing);
+      await tester.tap(find.text(AppStrings.cardTabCopies));
+      await pumpUntilSettled(tester);
+
+      // Both languages appear in the breakdown and again on their own entry
+      // below it, so allow >1.
       expect(find.text(AppStrings.collectionByLanguageLabel), findsOneWidget);
       expect(find.text(languageLabel('EN')), findsWidgets);
       expect(find.text(languageLabel('DE')), findsWidgets);
-      expect(find.text('×2'), findsOneWidget);
-      expect(find.text('×1'), findsOneWidget);
+      // Once in the breakdown, once on the entry's own block.
+      expect(find.text('×2'), findsNWidgets(2));
+      expect(find.text('×1'), findsNWidgets(2));
 
-      // Both breakdown rows are flagged, plus the per-entry Language row above
-      // them. The names above are the point of these two: the flag is a
-      // *leading widget*, not a prefix folded into the label, so the exact-text
-      // matchers still see the two language names on their own.
-      expect(find.byType(LanguageFlag), findsNWidgets(3));
-      expect(find.text(kCardLanguageFlags['DE']!), findsOneWidget);
+      // Both breakdown rows are flagged, plus each entry's Language row. The
+      // names above are the point of these two: the flag is a *leading widget*,
+      // not a prefix folded into the label, so the exact-text matchers still see
+      // the two language names on their own.
+      expect(find.byType(LanguageFlag), findsNWidgets(4));
+      expect(find.text(kCardLanguageFlags['DE']!), findsNWidgets(2));
     });
   });
 
@@ -117,6 +123,10 @@ void main() {
       );
       await pumpUntilSettled(tester);
 
+      await tester.tap(find.text(AppStrings.cardTabCopies));
+      await pumpUntilSettled(tester);
+
+      expect(find.text(AppStrings.collectionCopiesTotal(1)), findsOneWidget);
       expect(find.text(AppStrings.collectionByLanguageLabel), findsNothing);
     });
   });

@@ -82,6 +82,7 @@ lib/
     card_language.dart
     card_prices.dart
     card_search_hit.dart
+    card_terms.dart                 # API values -> interface language, display only
     collection_sort_by.dart
     app_settings.dart
     app_theme_mode.dart
@@ -3101,7 +3102,8 @@ order):
     New `AppLanguage` enum (`ENGLISH`/`ITALIAN`) and `AppSettings.appLanguage`
     (default English, `settings.app_language` in `meta`, guarded `_parse`). Its
     labels are endonyms and never translated, so someone who switched by mistake
-    can read the way back. **Interface text only** (decided with the user): card
+    can read the way back. **Interface text only** (decided with the user, and
+    **reversed by step 35** for the API's type/race/attribute values): card
     names, effect text and the API's type/race/attribute values stay as
     YGOPRODeck supplies them. Also deliberately untranslated: the scan
     diagnostics lines (a developer readout, kept comparable with the code that
@@ -3174,6 +3176,87 @@ order):
     uncalibrated on device, and whether `kPriceTtl` at 24 h is right. New: the
     Italian wording has only been checked by its author, so it wants a native
     read on device, and the overflow check above used the test font, not Roboto.
+
+35. Seventeenth on-device feedback pass — Italian card terms, Copies tab, wizard
+    artwork ← done (verified: `flutter analyze` clean, full `flutter test` green
+    at **909 tests**, `pytest tools/` green; **not yet checked on a device**). **No
+    DB migration, no schema change, no new dependency.** Nothing here touches the
+    descriptor, `assets/card_hashes.json`, the detection algorithm or any
+    scan/matching/quality threshold.
+    **Italian card terms, reversing step 34's "interface text only"** (decided with
+    the user, because a chip reading "Mostro con Effetto" over a card reading
+    "Effect Monster" is worse than either). The report was that some filters had no
+    translation. Every `AppStrings` entry did; the gap was the values the API
+    supplies, rendered raw. **YGOPRODeck's `language=it` response translates only
+    `name` and `desc`** (measured: `type`, `race`, `attribute`, `set_name` and
+    `set_rarity` all stay English), so re-fetching can never fix this and the tables
+    are hand-written, in `AppStrings` beside `cardLanguageNames`. New
+    `lib/models/card_terms.dart` is the one way to read them (`cardTypeLabel`,
+    `cardFrameLabel`, `cardRaceLabel`, `cardAttributeLabel`, `rarityLabel`), each
+    echoing an unknown value like `languageLabel` does, since the API's lists are
+    open-ended. The English maps are empty except frame, whose raw values are
+    identifiers: `_titleCase` rendered `Effect_pendulum` **in English too**.
+    **The wording is Konami's**, from the raw HTML of its Italian card database, not
+    a summary of it: a summarising fetch reported "Spirit" where the card pages say
+    "Spirito". Two things are **not** officially verified. `Creator God` →
+    `Divinità Creatrice` is by analogy (one card in the game, absent from Konami's
+    form), and the full card-type phrases ("Mostro Pendulum Fusione con Effetto")
+    are composed from Konami's verified parts, so they want a native read.
+    Rarities (decided with the user): Konami publishes only codes (C, SR, UR, SE),
+    so the 8 with real Italian shop usage are translated (about 85% of printings)
+    and trade names and junk ("Starlight Rare", "force-SMW") stay as sent. Set names
+    (1,034) and archetypes (668) stay English: proper names with no Italian source.
+    **Labels only, and that is the load-bearing rule.** `CollectionFilter`, every
+    `WHERE` and both CSV writers keep raw API values, so a translated chip still
+    selects `Trap Card` and an export means the same thing in either language; the
+    filter case was **verified to fail** with the chip storing its label. Two
+    consequences: chip rows and the Statistics type rows sort through
+    `sortedByLabel` (the DAO's order is alphabetical in English only), and
+    `filterPrintings` matches the label **plus the raw rarity**, so "super rare"
+    still finds a row reading "Super Rara" in the picker. `Printing.displayLabel` is
+    now language-dependent, so it is for display and nothing stored.
+    **"All" has gender.** `Tutte` under Attributo or Archetipo is a mistake English
+    cannot show, so `_ChipRow` gained `allLabel` for the masculine groups, and
+    `collectionFilterShowAll` became a neutral `Mostra tutto`.
+    **New Copies tab on the collection's card screen** (Details | Copies | Prices;
+    the first two answer locally, Prices needs the network), in
+    `collection_copies_view.dart`: a total, then one block per `collection_entries`
+    row with grade, count, set, rarity, edition, language, date added and notes.
+    `_LanguageBreakdown` moved here from Details. The row the screen was opened on is
+    outlined and labelled, because the app bar's edit and delete act on that row
+    alone. `ownedCopies` replaced `entriesForPasscode` and composes two existing
+    repository reads by id, so **no new SQL**, reading the repositories rather than
+    chaining async providers (step 14's gotcha). `CardPriceEstimate`'s
+    `animateTo(1)` would have landed on Copies with no error, hence
+    `_pricesTabIndex`, **verified to fail** at 1. The card-search detail screen keeps
+    two tabs.
+    **Gotcha on the quantity invalidate**: the obvious test ("+ on Details, then open
+    Copies") **passes with the invalidate removed**, because leaving the tab disposes
+    the autoDispose provider and it simply re-reads. It only matters if the provider
+    is alive when the write lands (tap + and swipe straight across), so the test
+    holds it alive with `container.listen`, and fails without the line.
+    **Wizard artwork**: `CardThumbnail`/`CardArtThumbnail` gained `cornerRadius`
+    (default unchanged, so only this screen is square) and
+    `CardThumbnailSizes.addCard` = 120 (120 x 175, was 48 wide). **The taller card
+    forced two layout changes.** The printing step was a fixed `Column` over an
+    `Expanded` list, which overflowed by 39pt on a 360x640 phone with the keyboard up
+    (**verified**, against the old layout); it is now one `CustomScrollView` with Skip
+    pinned below. And on the condition step Save fell below the fold at 600pt, caught
+    by eight existing tests missing their tap. That was a real regression for a
+    one-handed flow, not a test problem, so Save is pinned below the scroll view too.
+    **Details spacing**: `AppSpacing.md` between `CardDetailsView` and the entry rows,
+    4pt → 20pt, matching the gap above the "Card Effect" heading.
+    **Overflow check, as in step 34**: the whole suite run with Italian as a temporary
+    default gave **no overflows**, and all 26 failures were tests pinning English
+    literals ("Ultra Rare", "€9.00"). Same caveat: the test font, not Roboto.
+    **Noticed, not changed**: iOS `NSCameraUsageDescription` is English only (it would
+    need `InfoPlist.strings`). Rows in the Copies tab are not tappable; opening that
+    entry from there is an easy follow-up, since the rows already hold the data.
+    **Still open**, unchanged: `maxHammingDistance` at 72,
+    `CardDetectionTuning.innerQuadMinAreaRatio` at 0.78, the passcode ROI filter off,
+    `artAgreementFrames` at 2, every `FrameQualityTuning` threshold still uncalibrated
+    on device, and whether `kPriceTtl` at 24 h is right. New: picture sharpness at
+    120pt (the source is the 168px `image_url_small`).
 
 ## Standing rules
 

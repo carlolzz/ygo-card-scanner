@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../core/theme/tokens.dart';
+import '../../models/card_terms.dart';
 import '../../models/collection_entry_with_card.dart';
 import '../../shared/widgets/card_art_thumbnail.dart';
 import '../../shared/widgets/language_flag.dart';
@@ -48,7 +49,10 @@ class CollectionListTile extends StatelessWidget {
   /// The rarity, on its own line below the set. Rarity — not edition — is what
   /// the eye looks for when scanning a list of reprints; the edition lives on
   /// the detail screen.
-  String? get _rarityLine => entryWithCard.printing?.rarity;
+  String? get _rarityLine {
+    final rarity = entryWithCard.printing?.rarity;
+    return rarity == null ? null : rarityLabel(rarity);
+  }
 
   @override
   Widget build(BuildContext context) {

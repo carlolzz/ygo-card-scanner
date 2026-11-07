@@ -126,8 +126,64 @@ void main() {
       );
       expect(art.aspectRatio, ScanReticleTokens.cardAspectRatio);
       expect(art.fit, BoxFit.contain);
+      // Bigger than the list thumbnail, and a plain rectangle: the default
+      // radius clips the card's own corners.
+      expect(art.size, CardThumbnailSizes.addCard);
+      expect(art.cornerRadius, 0);
+      final clip = tester.widget<ClipRRect>(
+        find.descendant(
+          of: find.byType(CardArtThumbnail),
+          matching: find.byType(ClipRRect),
+        ),
+      );
+      expect(clip.borderRadius, BorderRadius.zero);
     });
   });
+
+  // At this height the artwork, search box and Skip button no longer fit a fixed
+  // layout on a small phone with the keyboard up, so everything but Skip scrolls.
+  // An overflow fails this by itself; the taps prove Skip and the list still work.
+  testWidgets(
+    'the printing step does not overflow a small phone with the keyboard up',
+    (tester) async {
+      tester.view.physicalSize = const Size(360, 640);
+      tester.view.devicePixelRatio = 1.0;
+      tester.view.viewInsets = const FakeViewPadding(bottom: 280);
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      addTearDown(tester.view.resetViewInsets);
+
+      await tester.runAsync(() async {
+        await openAddCard(tester);
+        await search(tester, 'Mirror Force');
+        await tapSearchResult(tester, 'Mirror Force');
+
+        expect(tester.takeException(), isNull);
+        expect(find.byType(CardArtThumbnail), findsOneWidget);
+
+        // The list scrolls with the card, so it is reachable.
+        final printing = find.text('MRD-EN094');
+        await tester.scrollUntilVisible(
+          printing,
+          100,
+          // The search box is a scrollable too, so name the list's.
+          scrollable: find
+              .descendant(
+                of: find.byType(CustomScrollView),
+                matching: find.byType(Scrollable),
+              )
+              .first,
+        );
+        await pumpUntilSettled(tester);
+        expect(printing.hitTestable(), findsOneWidget);
+
+        // Pinned below the scroll view, wherever it has got to.
+        await tester.tap(find.text(AppStrings.addCardPrintingSkip));
+        await pumpUntilSettled(tester);
+        expect(find.text(AppStrings.addCardSaveButton), findsOneWidget);
+      });
+    },
+  );
 
   testWidgets(
     'selecting a card with zero printings skips straight to condition',

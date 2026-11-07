@@ -14,10 +14,17 @@ import '../models/app_language.dart';
 /// setting is published) and `App` then rebuilds every element in place, so
 /// each screen re-reads its text here.
 ///
-/// What is deliberately *not* translated: card data from YGOPRODeck (names,
-/// effect text, type/race/attribute values, set names, rarities), the
-/// developer-only scan diagnostics lines, and the grade names on
-/// `CardCondition`, which Cardmarket uses as-is in every language.
+/// Card data from YGOPRODeck is translated **only where the game has fixed
+/// terminology**: card type, frame, monster/Spell/Trap type, attribute and the
+/// common rarities, through the tables at the end of this class, read via
+/// `models/card_terms.dart`. Those are display labels only. Filters, queries and
+/// CSV exports keep the API's raw English values.
+///
+/// What is deliberately *not* translated: card names and effect text (the search
+/// language handles names, and the API has no Italian type data to fetch), set
+/// names and archetypes (proper names, with no Italian source), the rarities
+/// that are trade names, the developer-only scan diagnostics lines, and the
+/// grade names on `CardCondition`, which Cardmarket uses as-is in every language.
 class AppStrings {
   const AppStrings._();
 
@@ -67,6 +74,22 @@ class AppStrings {
   // The two tabs both card screens carry.
   static String get cardTabDetails => _t('Details', 'Dettagli');
   static String get cardTabPrices => _t('Prices', 'Prezzi');
+
+  // The third tab, on the collection's card screen only: every copy held.
+  static String get cardTabCopies => _t('Copies', 'Copie');
+  static String collectionCopiesTotal(int count) => _t(
+    'You own $count ${count == 1 ? 'copy' : 'copies'} of this card',
+    'Possiedi $count ${count == 1 ? 'copia' : 'copie'} di questa carta',
+  );
+
+  /// Marks the row the screen was opened on, which is the one the app bar's edit
+  /// and delete act on. With several rows on screen that needs saying.
+  static String get collectionCopiesThisEntry =>
+      _t('This entry', 'Questa voce');
+  static String get collectionCopiesNoSet =>
+      _t('No set recorded', 'Nessun set registrato');
+  static String get collectionCopiesAddedLabel => _t('Added', 'Aggiunta');
+  static String get collectionCopiesNotesLabel => _t('Notes', 'Note');
 
   static String get pricesMarketSection =>
       _t('Market prices', 'Prezzi di mercato');
@@ -129,6 +152,11 @@ class AppStrings {
     'Ancora nessuna carta nella tua collezione.',
   );
   static String get collectionFilterAll => _t('All', 'Tutte');
+
+  /// [collectionFilterAll] for the groups whose Italian name is masculine (Set,
+  /// Livello, Tipo, Attributo, Archetipo). "Tutte" under "Attributo" is a
+  /// grammar mistake that English cannot show.
+  static String get collectionFilterAllMasculine => _t('All', 'Tutti');
   // The rarity filter row's chip for entries whose printing carries no rarity
   // (including cards logged without a printing at all) — otherwise that group
   // would only ever be reachable under "All".
@@ -138,9 +166,10 @@ class AppStrings {
   /// The chip that expands a filter row collapsed past
   /// `CollectionFilterTokens.chipCollapseThreshold`. Carries the total so the
   /// user knows whether it is worth opening — "Show all (12)" and
-  /// "Show all (240)" are different decisions.
+  /// "Show all (240)" are different decisions. "Tutto" because this one chip
+  /// serves feminine and masculine groups alike.
   static String collectionFilterShowAll(int total) =>
-      _t('Show all ($total)', 'Mostra tutte ($total)');
+      _t('Show all ($total)', 'Mostra tutto ($total)');
   static String get collectionFilterShowLess => _t('Show less', 'Mostra meno');
 
   // The fast-browse slider's bubble, which names where a drag has reached under
@@ -994,6 +1023,174 @@ class AppStrings {
       'JP': 'Giapponese',
       'KR': 'Coreano',
       'AE': 'Inglese asiatico',
+    },
+  };
+
+  // Card terminology, keyed by the raw value YGOPRODeck sends. The API's
+  // `language=it` response translates only `name` and `desc`, so these tables
+  // are hand-written. The wording is Konami's, from its Italian card database,
+  // except where noted. Read through `models/card_terms.dart`, which echoes any
+  // value missing here unchanged, so an English map can simply be empty.
+
+  /// `cards.type`. Each phrase is composed from the parts Konami prints on a
+  /// card's type line ("Drago / Synchro / Effetto").
+  static Map<String, String> get cardTypeNames => switch (_language) {
+    AppLanguage.english => const {},
+    AppLanguage.italian => const {
+      'Effect Monster': 'Mostro con Effetto',
+      'Flip Effect Monster': 'Mostro Scoperta con Effetto',
+      'Flip Tuner Effect Monster': 'Mostro Scoperta Tuner con Effetto',
+      'Fusion Monster': 'Mostro Fusione',
+      'Gemini Monster': 'Mostro Gemello',
+      'Link Monster': 'Mostro Link',
+      'Normal Monster': 'Mostro Normale',
+      'Normal Tuner Monster': 'Mostro Normale Tuner',
+      'Pendulum Effect Fusion Monster': 'Mostro Pendulum Fusione con Effetto',
+      'Pendulum Effect Monster': 'Mostro Pendulum con Effetto',
+      'Pendulum Effect Ritual Monster': 'Mostro Pendulum Rituale con Effetto',
+      'Pendulum Flip Effect Monster': 'Mostro Pendulum Scoperta con Effetto',
+      'Pendulum Normal Monster': 'Mostro Pendulum Normale',
+      'Pendulum Tuner Effect Monster': 'Mostro Pendulum Tuner con Effetto',
+      'Ritual Effect Monster': 'Mostro Rituale con Effetto',
+      'Ritual Monster': 'Mostro Rituale',
+      'Skill Card': 'Carta Abilità',
+      'Spell Card': 'Carta Magia',
+      'Spirit Monster': 'Mostro Spirito',
+      'Synchro Monster': 'Mostro Synchro',
+      'Synchro Pendulum Effect Monster': 'Mostro Synchro Pendulum con Effetto',
+      'Synchro Tuner Monster': 'Mostro Synchro Tuner',
+      'Token': 'Segna-Mostro',
+      'Toon Monster': 'Mostro Toon',
+      'Trap Card': 'Carta Trappola',
+      'Tuner Monster': 'Mostro Tuner',
+      'Union Effect Monster': 'Mostro Unione con Effetto',
+      'XYZ Monster': 'Mostro Xyz',
+      'XYZ Pendulum Effect Monster': 'Mostro Xyz Pendulum con Effetto',
+    },
+  };
+
+  /// `cards.frame_type`. The one table with English entries too: the raw values
+  /// are lowercase identifiers (`effect_pendulum`), not words anyone should read
+  /// in either language.
+  static Map<String, String> get cardFrameNames => switch (_language) {
+    AppLanguage.english => const {
+      'effect': 'Effect',
+      'effect_pendulum': 'Effect Pendulum',
+      'fusion': 'Fusion',
+      'fusion_pendulum': 'Fusion Pendulum',
+      'link': 'Link',
+      'normal': 'Normal',
+      'normal_pendulum': 'Normal Pendulum',
+      'ritual': 'Ritual',
+      'ritual_pendulum': 'Ritual Pendulum',
+      'skill': 'Skill',
+      'spell': 'Spell',
+      'synchro': 'Synchro',
+      'synchro_pendulum': 'Synchro Pendulum',
+      'token': 'Token',
+      'trap': 'Trap',
+      'xyz': 'Xyz',
+      'xyz_pendulum': 'Xyz Pendulum',
+    },
+    AppLanguage.italian => const {
+      'effect': 'Effetto',
+      'effect_pendulum': 'Effetto Pendulum',
+      'fusion': 'Fusione',
+      'fusion_pendulum': 'Fusione Pendulum',
+      'link': 'Link',
+      'normal': 'Normale',
+      'normal_pendulum': 'Normale Pendulum',
+      'ritual': 'Rituale',
+      'ritual_pendulum': 'Rituale Pendulum',
+      'skill': 'Abilità',
+      'spell': 'Magia',
+      'synchro': 'Synchro',
+      'synchro_pendulum': 'Synchro Pendulum',
+      'token': 'Segna-Mostro',
+      'trap': 'Trappola',
+      'xyz': 'Xyz',
+      'xyz_pendulum': 'Xyz Pendulum',
+    },
+  };
+
+  /// `cards.race`, which YGOPRODeck overloads: the monster type on a monster,
+  /// the icon on a Spell or Trap, and the character's name on a Skill card
+  /// ("Joey", "Kaiba"). Those names are absent here on purpose and pass through.
+  ///
+  /// `Creator God` is the one guess: Konami's search form does not list it (it
+  /// belongs to a single card), so this follows "Divinità-Bestia" by analogy.
+  static Map<String, String> get cardRaceNames => switch (_language) {
+    AppLanguage.english => const {},
+    AppLanguage.italian => const {
+      'Aqua': 'Acqua',
+      'Beast': 'Bestia',
+      'Beast-Warrior': 'Guerriero-Bestia',
+      'Creator God': 'Divinità Creatrice',
+      'Cyberse': 'Cyberso',
+      'Dinosaur': 'Dinosauro',
+      'Divine-Beast': 'Divinità-Bestia',
+      'Dragon': 'Drago',
+      'Fairy': 'Fata',
+      'Fiend': 'Demone',
+      'Fish': 'Pesce',
+      'Illusion': 'Illusione',
+      'Insect': 'Insetto',
+      'Machine': 'Macchina',
+      'Plant': 'Pianta',
+      'Psychic': 'Psichico',
+      'Pyro': 'Pyro',
+      'Reptile': 'Rettile',
+      'Rock': 'Roccia',
+      'Sea Serpent': 'Serpente Marino',
+      'Spellcaster': 'Incantatore',
+      'Thunder': 'Tuono',
+      'Warrior': 'Guerriero',
+      'Winged Beast': 'Bestia Alata',
+      'Wyrm': 'Wyrm',
+      'Zombie': 'Zombie',
+      // Spell and Trap icons.
+      'Continuous': 'Continua',
+      'Counter': 'Contro',
+      'Equip': 'Equipaggiamento',
+      'Field': 'Terreno',
+      'Normal': 'Normale',
+      'Quick-Play': 'Rapida',
+      'Ritual': 'Rituale',
+    },
+  };
+
+  /// `cards.attribute`, in capitals as Konami prints them.
+  static Map<String, String> get cardAttributeNames => switch (_language) {
+    AppLanguage.english => const {},
+    AppLanguage.italian => const {
+      'DARK': 'OSCURITÀ',
+      'DIVINE': 'DIVINO',
+      'EARTH': 'TERRA',
+      'FIRE': 'FUOCO',
+      'LIGHT': 'LUCE',
+      'SPELL': 'MAGIA',
+      'TRAP': 'TRAPPOLA',
+      'WATER': 'ACQUA',
+      'WIND': 'VENTO',
+    },
+  };
+
+  /// `printings.rarity`, for the rarities with established Italian usage. Konami
+  /// publishes only codes (C, SR, UR, SE), so this follows how Italian shops
+  /// write them. Everything else the API sends is either a trade name
+  /// ("Starlight Rare", "Quarter Century Secret Rare") or junk ("2", "force-SMW"),
+  /// and stays as it is rather than getting a name nobody uses.
+  static Map<String, String> get cardRarityNames => switch (_language) {
+    AppLanguage.english => const {},
+    AppLanguage.italian => const {
+      'Common': 'Comune',
+      'Ghost Rare': 'Ghost Rara',
+      'Gold Rare': 'Gold Rara',
+      'Rare': 'Rara',
+      'Secret Rare': 'Rara Segreta',
+      'Super Rare': 'Super Rara',
+      'Ultimate Rare': 'Ultimate Rara',
+      'Ultra Rare': 'Ultra Rara',
     },
   };
 }
